@@ -214,7 +214,7 @@ function renderCartDrawer(drawer) {
         : items.map((i) => `
             <div class="cart-item" data-pid="${esc(i.productId)}">
               <img class="cart-thumb" src="${esc(i.imageUrl || '')}" alt="" loading="lazy"
-                onerror="this.style.background='var(--surface-2)';this.removeAttribute('src')">
+                data-img-fallback="class">
               <div class="cart-info">
                 <div class="cart-name">${esc(i.name)}</div>
                 <div class="cart-price">${fmtVnd(i.price)}</div>

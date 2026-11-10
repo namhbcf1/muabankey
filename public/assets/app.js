@@ -1,5 +1,5 @@
 /** MuaBanKey SPA — bộ định tuyến & khởi tạo. */
-import { parseRoute, navigate, toast, loadingBlock, esc } from './lib.js';
+import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks } from './lib.js';
 import { state, loadUser, loadCategories, refreshBalance } from './state.js';
 import { icon } from './icons.js';
 import {
@@ -125,9 +125,15 @@ async function router() {
     }
   }
 
+  /*
+   * Gắn fallback ảnh sau khi trang render xong. CSP đặt `script-src 'self'`
+   * nên không thể dùng thuộc tính onerror trong HTML; đây là chỗ duy nhất
+   * đảm bảo mọi <img data-img-fallback> đều có xử lý lỗi.
+   */
+  bindImageFallbacks(app);
+
   // Cuộn tới anchor nếu có (#/support#warranty)
-  if (route.anchor) {
-    const el = document.getElementById(route.anchor);
+  if (route.anchor) {    const el = document.getElementById(route.anchor);
     if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
   }
   // Dọn toast cũ khi chuyển trang

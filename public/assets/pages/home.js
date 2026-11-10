@@ -18,7 +18,7 @@ export function productCard(p) {
   <article class="product-card" data-slug="${esc(p.slug)}">
     <a href="#/product/${esc(p.slug)}" class="product-thumb" aria-label="${esc(p.name)}">
       <img src="${esc(p.imageUrl || '')}" alt="" loading="lazy"
-        onerror="this.style.opacity='0'">
+        data-img-fallback="hide">
       ${p.badge ? `<span class="badge ${badgeMap[p.badge] || 'badge-new'}">${esc(p.badge)}</span>` : ''}
       ${p.discountPercent > 0 ? `<span class="disc-tag">−${p.discountPercent}%</span>` : ''}
       <span class="stock-pill ${stockClass}"><span class="dot"></span>${stockText}</span>

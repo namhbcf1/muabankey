@@ -62,7 +62,7 @@ export async function mountProductDetail(root, slug) {
       <div>
         <div class="pd-image">
           ${p.imageUrl
-            ? `<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" onerror="this.remove()">`
+            ? `<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" data-img-fallback="class">`
             : ''}
           <span class="pd-image-fallback" aria-hidden="true">${icon('package', { size: 34 })}</span>
         </div>

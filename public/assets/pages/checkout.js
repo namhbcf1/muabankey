@@ -134,7 +134,7 @@ export async function mountCheckout(root, query = {}) {
               <div class="ck-item">
                 <span class="ck-item-thumb">
                   ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy"
-                    onerror="this.remove()">` : ''}
+                    data-img-fallback="class">` : ''}
                   ${icon('package', { size: 18 })}
                 </span>
                 <div class="ck-item-main">

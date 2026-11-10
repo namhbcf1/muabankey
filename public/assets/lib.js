@@ -206,6 +206,31 @@ export function navigate(to, { replace = false } = {}) {
   }
 }
 
+/* ---------- Ảnh sản phẩm: fallback không dùng inline handler ---------- */
+/**
+ * Gắn xử lý lỗi tải ảnh cho mọi <img data-img-fallback> trong `root`.
+ *
+ * CSP của site đặt `script-src 'self'` nên thuộc tính `onerror="..."` trong
+ * HTML bị chặn — ảnh hỏng sẽ để lại khung vỡ thay vì ẩn đi. Gắn listener bằng
+ * JS vừa hợp CSP vừa không cần nới lỏng chính sách bảo mật.
+ */
+export function bindImageFallbacks(root = document) {
+  root.querySelectorAll('img[data-img-fallback]').forEach((img) => {
+    if (img.dataset.fbBound === '1') return;
+    img.dataset.fbBound = '1';
+    const onFail = () => {
+      if (img.dataset.fbApplied === '1') return;
+      img.dataset.fbApplied = '1';
+      const mode = img.dataset.imgFallback;
+      if (mode === 'hide') img.style.opacity = '0';
+      else img.classList.add('img-failed');
+    };
+    img.addEventListener('error', onFail);
+    // Ảnh đã lỗi trước khi listener gắn xong
+    if (img.complete && img.naturalWidth === 0) onFail();
+  });
+}
+
 /* ---------- Skeleton helpers ---------- */
 export function skeletonCards(n = 8) {
   return `<div class="grid-products">${Array.from({ length: n }, () => `

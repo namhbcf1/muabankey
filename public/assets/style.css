@@ -885,6 +885,13 @@ tbody tr:hover{background:var(--surface)}
 .mobile-nav-link .i{color:var(--text-mute)}
 .mobile-nav-link.active .i{color:var(--text)}
 
+/* ---------- Ảnh lỗi ---------- */
+/*
+ * Ảnh sản phẩm hỏng thì ẩn hẳn thay vì để biểu tượng "ảnh vỡ" của trình duyệt.
+ * Khung chứa vẫn giữ kích thước nên bố cục không nhảy.
+ */
+img.img-failed{opacity:0;pointer-events:none}
+
 /* ---------- Utilities ---------- */
 .mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
 .text-dim{color:var(--text-dim)}
