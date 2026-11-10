@@ -10,7 +10,6 @@ const NAV = [
   ['keys', '🔑', 'Kho key'],
   ['licenses', '🎫', 'License'],
   ['users', '👥', 'Người dùng'],
-  ['coupons', '🎟️', 'Mã giảm giá'],
   ['settings', '⚙️', 'Cài đặt'],
   ['logs', '📜', 'Nhật ký'],
 ];
@@ -63,7 +62,6 @@ export async function mountAdmin(root, query) {
     else if (tab === 'keys') await renderKeys(host, query);
     else if (tab === 'licenses') await renderLicenses(host);
     else if (tab === 'users') await renderUsers(host);
-    else if (tab === 'coupons') await renderCoupons(host);
     else if (tab === 'settings') await renderSettings(host);
     else if (tab === 'logs') await renderLogs(host);
   } catch (e) {
@@ -786,92 +784,6 @@ async function renderUsers(host) {
         });
         toast('Đã cập nhật trạng thái', 'success');
         renderUsers(host);
-      } catch (e) { toast(e.message, 'error'); }
-    };
-  });
-}
-
-/* ---------------- Coupons ---------------- */
-async function renderCoupons(host) {
-  const d = await api('/api/admin/coupons');
-  host.innerHTML = `
-    <div class="panel">
-      <div class="flex justify-between items-center mb-2">
-        <div class="panel-title" style="margin:0">🎟️ Mã giảm giá (${d.coupons.length})</div>
-        <button class="btn btn-primary btn-sm" id="add-coupon">+ Tạo mã</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Mã</th><th>Loại</th><th>Giá trị</th><th>Điều kiện</th><th>Đã dùng</th><th>Trạng thái</th><th></th></tr></thead>
-          <tbody>
-            ${d.coupons.map((c) => `
-              <tr>
-                <td><span class="mono" style="font-weight:700;color:#a99cff">${esc(c.code)}</span></td>
-                <td>${c.type === 'percent' ? 'Phần trăm' : 'Cố định'}</td>
-                <td><strong>${c.type === 'percent' ? c.value + '%' : fmtVnd(c.value)}</strong></td>
-                <td style="font-size:12px;color:var(--text-mute)">Tối thiểu ${fmtVnd(c.minSubtotal)}</td>
-                <td>${c.usedCount}${c.usageLimit ? ' / ' + c.usageLimit : ''}</td>
-                <td><span class="pill ${c.active ? 'pill-green' : 'pill-gray'}">${c.active ? 'Hoạt động' : 'Tắt'}</span></td>
-                <td>${c.active ? `<button class="btn btn-danger btn-sm" data-delc="${esc(c.id)}">Tắt</button>` : ''}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-
-  host.querySelector('#add-coupon').onclick = () => {
-    openModal(`
-      <div class="modal-title">Tạo mã giảm giá</div>
-      <div class="field"><label class="label">Mã <span class="req">*</span></label>
-        <input class="input" id="cp-code" placeholder="SALE20" style="text-transform:uppercase"></div>
-      <div class="flex gap-2">
-        <div class="field" style="flex:1"><label class="label">Loại</label>
-          <select class="select" id="cp-type" style="width:100%">
-            <option value="percent">Phần trăm (%)</option>
-            <option value="fixed">Số tiền cố định (₫)</option>
-          </select></div>
-        <div class="field" style="flex:1"><label class="label">Giá trị <span class="req">*</span></label>
-          <input class="input" id="cp-value" type="number" placeholder="10"></div>
-      </div>
-      <div class="flex gap-2">
-        <div class="field" style="flex:1"><label class="label">Đơn tối thiểu (₫)</label>
-          <input class="input" id="cp-min" type="number" value="0"></div>
-        <div class="field" style="flex:1"><label class="label">Giảm tối đa (₫)</label>
-          <input class="input" id="cp-max" type="number" placeholder="Không giới hạn"></div>
-      </div>
-      <div class="flex gap-1" style="justify-content:flex-end">
-        <button class="btn btn-ghost" data-cancel>Huỷ</button>
-        <button class="btn btn-primary" data-ok>Tạo</button>
-      </div>
-    `, {
-      onMount(overlay, close) {
-        overlay.querySelector('[data-cancel]').onclick = close;
-        overlay.querySelector('[data-ok]').onclick = async () => {
-          const body = {
-            code: overlay.querySelector('#cp-code').value.trim().toUpperCase(),
-            type: overlay.querySelector('#cp-type').value,
-            value: Number(overlay.querySelector('#cp-value').value),
-            minSubtotal: Number(overlay.querySelector('#cp-min').value) || 0,
-            maxDiscount: Number(overlay.querySelector('#cp-max').value) || null,
-          };
-          if (!body.code || !body.value) { toast('Nhập mã và giá trị', 'error'); return; }
-          try {
-            await api('/api/admin/coupons', { method: 'POST', body });
-            toast('Đã tạo mã giảm giá', 'success');
-            close();
-            renderCoupons(host);
-          } catch (e) { toast(e.message, 'error'); }
-        };
-      },
-    });
-  };
-
-  host.querySelectorAll('[data-delc]').forEach((b) => {
-    b.onclick = async () => {
-      try {
-        await api('/api/admin/coupons/' + b.dataset.delc, { method: 'DELETE' });
-        toast('Đã tắt mã', 'success');
-        renderCoupons(host);
       } catch (e) { toast(e.message, 'error'); }
     };
   });

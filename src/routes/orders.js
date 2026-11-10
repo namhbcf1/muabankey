@@ -39,39 +39,24 @@ export async function releaseCoupon(env, code, orderId) {
   } catch { /* không chặn luồng chính */ }
 }
 
-/** Lấy & kiểm tra coupon, trả về số tiền giảm. */
+/**
+ * Mã giảm giá đã BỊ GỠ theo yêu cầu chủ shop.
+ *
+ * Mọi nỗ lực dùng coupon — qua UI hay gọi thẳng API — đều bị từ chối.
+ * Giữ hàm để không phải sửa mọi nơi gọi, nhưng luôn trả 0 giảm giá.
+ */
 async function resolveCoupon(env, code, subtotal) {
   if (!code) return { discount: 0, coupon: null };
-  const row = await env.DB.prepare('SELECT * FROM coupons WHERE code = ? AND active = 1').bind(code.toUpperCase()).first();
-  if (!row) throw new ApiError(400, 'Mã giảm giá không tồn tại', 'INVALID_COUPON');
-  const now = Date.now();
-  if (row.starts_at && now < row.starts_at) throw new ApiError(400, 'Mã giảm giá chưa có hiệu lực', 'INVALID_COUPON');
-  if (row.expires_at && now > row.expires_at) throw new ApiError(400, 'Mã giảm giá đã hết hạn', 'INVALID_COUPON');
-  if (row.usage_limit !== null && row.used_count >= row.usage_limit) {
-    throw new ApiError(400, 'Mã giảm giá đã hết lượt sử dụng', 'INVALID_COUPON');
-  }
-  if (subtotal < row.min_subtotal) {
-    throw new ApiError(400, `Đơn hàng tối thiểu ${row.min_subtotal.toLocaleString('vi-VN')}đ để dùng mã này`, 'INVALID_COUPON');
-  }
-  let discount = row.type === 'percent' ? Math.floor((subtotal * row.value) / 100) : row.value;
-  if (row.max_discount) discount = Math.min(discount, row.max_discount);
-  discount = Math.min(discount, subtotal);
-  return { discount, coupon: row };
+  throw new ApiError(400,
+    'Cửa hàng không áp dụng mã giảm giá. Giá hiển thị là giá cuối cùng.',
+    'COUPON_DISABLED');
 }
 
 export async function checkCoupon(env, request) {
   await requireUser(env, request);
-  const body = await readJson(request);
-  const code = str(body.code, 'code', { min: 2, max: 40 });
-  const subtotal = int(body.subtotal, 'subtotal', { min: 0 });
-  const { discount, coupon } = await resolveCoupon(env, code, subtotal);
-  return ok({
-    code: coupon.code,
-    type: coupon.type,
-    value: coupon.value,
-    discount,
-    total: subtotal - discount,
-  });
+  throw new ApiError(400,
+    'Cửa hàng không áp dụng mã giảm giá.',
+    'COUPON_DISABLED');
 }
 
 /** Tạo đơn hàng ở trạng thái pending. */

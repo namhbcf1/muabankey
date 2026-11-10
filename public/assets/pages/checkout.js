@@ -139,19 +139,6 @@ export async function mountCheckout(root, query = {}) {
         </div>
 
         <div class="panel mt-2">
-          <div class="panel-title">🎟️ Mã giảm giá</div>
-          <div class="flex gap-1" style="flex-wrap:wrap">
-            <input class="input" id="coupon-input" placeholder="Nhập mã giảm giá" style="flex:1;min-width:160px" aria-label="Mã giảm giá">
-            <button class="btn btn-ghost" id="apply-coupon">Áp dụng</button>
-          </div>
-          <div id="coupon-msg" style="margin-top:10px;font-size:13px;display:none"></div>
-          <div style="margin-top:12px;font-size:12.5px;color:var(--text-mute)">
-            Thử mã: <span class="mono" style="color:#a99cff">WELCOME10</span> (giảm 10%),
-            <span class="mono" style="color:#a99cff">GIAM50K</span> (giảm 50.000₫)
-          </div>
-        </div>
-
-        <div class="panel mt-2">
           <div class="panel-title" style="margin-bottom:10px">
             <label for="order-note" style="cursor:pointer">📝 Ghi chú đơn hàng</label>
           </div>
@@ -194,27 +181,8 @@ export async function mountCheckout(root, query = {}) {
     </div>
   `;
 
-  const couponInput = host.querySelector('#coupon-input');
-  const couponMsg = host.querySelector('#coupon-msg');
-  host.querySelector('#apply-coupon').onclick = async () => {
-    const code = couponInput.value.trim();
-    if (!code) return;
-    try {
-      const data = await api('/api/coupons/check', { method: 'POST', body: { code, subtotal } });
-      discount = data.discount;
-      appliedCoupon = data.code;
-      couponMsg.style.display = 'block';
-      couponMsg.innerHTML = `<span class="text-green">✓ Đã áp dụng <strong>${esc(data.code)}</strong> — giảm ${fmtVnd(discount)}</span>`;
-      updateTotals();
-      toast('Áp dụng mã giảm giá thành công', 'success');
-    } catch (e) {
-      discount = 0;
-      appliedCoupon = null;
-      couponMsg.style.display = 'block';
-      couponMsg.innerHTML = `<span class="text-red">✕ ${esc(e.message)}</span>`;
-      updateTotals();
-    }
-  };
+  // Mã giảm giá đã bị gỡ — không còn coupon trong hệ thống.
+  // discount luôn = 0, appliedCoupon luôn = null.
 
   function updateTotals() {
     const total = subtotal - discount;
