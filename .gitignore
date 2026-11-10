@@ -1,0 +1,22 @@
+node_modules/
+.wrangler/
+*.log
+shots/
+backup-*.sql
+db/backup-*.sql
+
+# SECRETS - tuyet doi khong commit
+.webhook-secret.txt
+WEBHOOK_SECRET.txt
+ADMIN_CREDENTIALS.txt
+.secret-only.txt
+.env
+.env.*
+*.pem
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500" role="img" aria-label="YouTube Premium">
+  <defs>
+    <linearGradient id="g5dac60" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8b0000"/>
+      <stop offset="100%" stop-color="#ff0000"/>
+    </linearGradient>
+    <radialGradient id="g5dac60g" cx="0.72" cy="0.18" r="0.85">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="g5dac60s" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.45"/>
+    </linearGradient>
+    <filter id="g5dac60b"><feGaussianBlur stdDeviation="42"/></filter>
+  </defs>
+
+  <rect width="800" height="500" fill="url(#g5dac60)"/>
+  <rect width="800" height="500" fill="url(#g5dac60g)"/>
+
+  <!-- Vệt sáng trang trí -->
+  <g opacity="0.16" filter="url(#g5dac60b)">
+    <circle cx="130" cy="420" r="120" fill="#ffffff"/>
+    <circle cx="700" cy="90" r="100" fill="#ffffff"/>
+  </g>
+
+  <!-- Lưới mờ -->
+  <g stroke="#ffffff" stroke-opacity="0.07" stroke-width="1">
+    <line x1="0" y1="0" x2="0" y2="500"/><line x1="100" y1="0" x2="100" y2="500"/><line x1="200" y1="0" x2="200" y2="500"/><line x1="300" y1="0" x2="300" y2="500"/><line x1="400" y1="0" x2="400" y2="500"/><line x1="500" y1="0" x2="500" y2="500"/><line x1="600" y1="0" x2="600" y2="500"/><line x1="700" y1="0" x2="700" y2="500"/><line x1="800" y1="0" x2="800" y2="500"/>
+    <line x1="0" y1="0" x2="800" y2="0"/><line x1="0" y1="100" x2="800" y2="100"/><line x1="0" y1="200" x2="800" y2="200"/><line x1="0" y1="300" x2="800" y2="300"/><line x1="0" y1="400" x2="800" y2="400"/><line x1="0" y1="500" x2="800" y2="500"/>
+  </g>
+
+  <!-- Icon sản phẩm -->
+  <g transform="translate(400,215)">
+    <circle r="86" fill="#ffffff" fill-opacity="0.14"/>
+    <circle r="86" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="2"/>
+    <g transform="translate(-46,-46) scale(3.833)">
+      <path d="M21.6 7.2a2.5 2.5 0 0 0-1.8-1.8C18.2 5 12 5 12 5s-6.2 0-7.8.4A2.5 2.5 0 0 0 2.4 7.2C2 8.8 2 12 2 12s0 3.2.4 4.8a2.5 2.5 0 0 0 1.8 1.8C5.8 19 12 19 12 19s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8C22 15.2 22 12 22 12s0-3.2-.4-4.8zM10 15V9l5.2 3z" fill="#ffffff"/>
+    </g>
+  </g>
+
+  <!-- Nhãn -->
+  <text x="400" y="365" text-anchor="middle" fill="#ffffff" fill-opacity="0.96"
+        font-family="'Segoe UI',system-ui,-apple-system,sans-serif" font-size="34" font-weight="700"
+        letter-spacing="1">YouTube Premium</text>
+  <text x="400" y="404" text-anchor="middle" fill="#ffffff" fill-opacity="0.62"
+        font-family="'Segoe UI',system-ui,-apple-system,sans-serif" font-size="17" font-weight="600"
+        letter-spacing="4.5">YOUTUBE</text>
+
+  <!-- Chân trang -->
+  <g opacity="0.55">
+    <text x="400" y="460" text-anchor="middle" fill="#ffffff"
+          font-family="'Segoe UI',system-ui,sans-serif" font-size="14" font-weight="600"
+          letter-spacing="2.5">MUABANKEY · BẢN QUYỀN CHÍNH HÃNG</text>
+  </g>
+  <rect y="330" width="800" height="170" fill="url(#g5dac60s)"/>
+</svg>
