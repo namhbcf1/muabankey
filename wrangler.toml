@@ -4,6 +4,11 @@ compatibility_date = "2025-11-10"
 
 workers_dev = true
 
+# Tên miền chính
+routes = [
+  { pattern = "xienhl.com", custom_domain = true }
+]
+
 [assets]
 directory = "./public"
 binding = "ASSETS"

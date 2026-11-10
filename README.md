@@ -3,7 +3,8 @@
 Toàn bộ hệ thống chạy trên **một Cloudflare Worker duy nhất**.
 
 ```
-https://muabankey.bangachieu2.workers.dev
+https://xienhl.com                          ← tên miền chính
+https://muabankey.bangachieu2.workers.dev   ← dự phòng
 ```
 
 ---
@@ -19,6 +20,18 @@ https://muabankey.bangachieu2.workers.dev
 | Workers AI | `@cf/meta/llama-3.1-8b-instruct` | Chatbot tư vấn Key Bot |
 
 **Không còn worker riêng cho license** — API `/api/activate`, `/api/check`, `/api/rebind` nằm chung trong worker này.
+
+### Tên miền
+
+`xienhl.com` gắn làm **Custom Domain** của worker (không phải DNS CNAME thủ công). Cấu hình trong `wrangler.toml`:
+
+```toml
+routes = [
+  { pattern = "xienhl.com", custom_domain = true }
+]
+```
+
+Deploy lại để áp dụng: `npx wrangler deploy`
 
 ---
 
