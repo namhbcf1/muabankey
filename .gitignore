@@ -34,3 +34,7 @@ ADMIN_CREDENTIALS.txt
 Thumbs.db
 .vscode/
 .idea/
+
+# Kho key - KHONG commit
+keys/
+
