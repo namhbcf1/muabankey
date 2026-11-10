@@ -173,22 +173,39 @@ export async function mountProductDetail(root, slug) {
   const buyBtn = host.querySelector('#btn-buy-now');
   if (buyBtn) {
     buyBtn.onclick = () => {
-      // "Mua ngay" chỉ mua sản phẩm này, KHÔNG gộp với giỏ hàng hiện có
+      // "Mua ngay" chỉ mua sản phẩm này, KHÔNG gộp với giỏ hàng hiện có.
       const saved = state.cart.slice();
       const qty = getQty();
-      if (!addToCart(p, qty)) return;
-      const bought = state.cart.filter((i) => i.productId !== p.id);
-      // Giữ lại các món khác trong giỏ, chỉ đưa sản phẩm này sang thanh toán
+
+      // Lấy đúng item VỪA thêm (không phụ thuộc addToCart có ghi vào state.cart
+      // hay không). Trước đây dùng state.cart.filter(i => i.productId !== p.id)
+      // rồi lấy [0] -> đó là món KHÁC hoặc undefined -> giỏ thanh toán rỗng.
+      const item = {
+        productId: p.id,
+        slug: p.slug,
+        name: p.name,
+        price: p.price,
+        // checkout.js đọc i.imageUrl (KHONG phai i.image) -> phai set dung ten
+        imageUrl: p.imageUrl || p.image || p.thumbnail || null,
+        quantity: qty,
+        deliveryType: p.deliveryType,
+        licenseDays: p.licenseDays,
+      };
+
+      if (!state.user) {
+        // Chưa đăng nhập: giữ cart cũ, chỉ lưu buynow để dùng sau khi login
+        store.set('mbk_buynow', [item]);
+        toast('Vui lòng đăng nhập để thanh toán', 'info');
+        navigate('/login?redirect=/checkout?mode=buynow');
+        return;
+      }
+
+      // Đã đăng nhập: khôi phục cart cũ rồi sang checkout riêng
       store.set('mbk_cart', saved);
       state.cart = saved.slice();
       notify();
-      store.set('mbk_buynow', [{ ...bought[0] }]);
-      if (!state.user) {
-        toast('Vui lòng đăng nhập để thanh toán', 'info');
-        navigate('/login?redirect=/checkout?mode=buynow');
-      } else {
-        navigate('/checkout?mode=buynow');
-      }
+      store.set('mbk_buynow', [item]);
+      navigate('/checkout?mode=buynow');
     };
   }
 

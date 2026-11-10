@@ -860,6 +860,7 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
   .hero-stats{grid-template-columns:repeat(2,1fr);gap:20px;padding:22px}
   .info-strips{grid-template-columns:1fr}
   .footer-grid{grid-template-columns:1fr}
+  .trial-grid{grid-template-columns:1fr!important;gap:20px!important}
 }
 @media(max-width:640px){
   :root{--header-h:64px}

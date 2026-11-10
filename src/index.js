@@ -97,6 +97,9 @@ r.get('/api/admin/orders', orders.adminListOrders);
 r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManual(env, req, p.id));
 r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, req, p.id));
 r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
+r.get('/api/admin/topups', wallet.adminListTopups);
+r.post('/api/admin/topups/:id/approve', (env, req, p) => wallet.adminApproveTopup(env, req, p.id));
+r.post('/api/admin/topups/:id/reject', (env, req, p) => wallet.adminRejectTopup(env, req, p.id));
 
 r.get('/api/admin/licenses', license.adminLicenses);
 r.post('/api/admin/licenses', license.adminIssueLicenses);

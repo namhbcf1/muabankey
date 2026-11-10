@@ -81,6 +81,11 @@ if ($Clean) {
 Write-Host '  [*] Dang build EXE (co the mat 1-2 phut)...'
 Push-Location $srcDir
 try {
+    # KHONG dung --uac-admin: source da tu elevate bang ShellExecuteW 'runas'
+    # khi that su can quyen (xem require_admin trong xa_nofog_pro.py).
+    # Neu nhung manifest requireAdministrator:
+    #   - moi lenh --status / --deactivate / --buy / --help deu bi hoi UAC vo ich
+    #   - them 1 tin hieu nghi ngo voi SmartScreen/antivirus
     python -m PyInstaller `
         --onefile `
         --name xa_nofog_pro `
@@ -89,7 +94,6 @@ try {
         --specpath $buildDir `
         --noconfirm `
         --clean `
-        --uac-admin `
         xa_nofog_pro.py 2>&1 | Out-Null
 } finally {
     Pop-Location

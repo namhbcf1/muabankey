@@ -100,13 +100,20 @@ export async function issueInstallToken(env, request, key) {
   ).bind(tokenHash, k, user.id, now, now + 86400).run();
 
   const base = siteBase(request);
+  const ps1Url = `${base}/i/${k}.ps1?t=${token}`;
   return ok({
     key: k,
     token,
     expiresIn: 86400,
+    // MỘT LỆNH, không ma sát: Win+R -> dán -> Enter -> Yes (UAC).
+    // Dùng "iex (irm URL)" chứ KHÔNG phải "irm URL | iex":
+    // pipe truyen TUNG DONG, dong trong thanh chuoi rong -> iex loi
+    // "Cannot bind argument to parameter 'Command' because it is an empty string".
+    oneLiner: `powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm ${ps1Url})"`,
+    // Dành cho ai quen CMD
     cmd: `curl -L -o "%TEMP%\\xa.cmd" "${base}/i/${k}.cmd?t=${token}" && "%TEMP%\\xa.cmd"`,
     downloadCmd: `${base}/i/${k}.cmd?t=${token}`,
-    downloadPs1: `${base}/i/${k}.ps1?t=${token}`,
+    downloadPs1: ps1Url,
     exeUrl: `${base}/download/${EXE_NAME}`,
     expiresAt: lic.expires_at,
   });
@@ -378,12 +385,22 @@ exit /b 9
 
 /* ============================ Mẫu PowerShell ============================ */
 
-function buildPs1({ key, base, installDir }) {
-  return `<#
-  XArena No Fog - Bo cai dat tu dong (PowerShell)
-  Ma license: ${key}
-  Chay: powershell -NoProfile -ExecutionPolicy Bypass -File cai-dat.ps1
-#>
+function buildPs1({ key, base, installDir, selfUrl, token }) {
+  // CHU Y: KHONG dung comment khoi <# ... #> o dau file.
+  // Khi chay qua "irm ... | iex", PowerShell doc theo TUNG DONG, nen comment
+  // khoi nhieu dong lam vo parser ("The terminator '#>' is missing").
+  // Dung comment tung dong '#' thay the.
+  return `# XArena No Fog - Bo cai dat tu dong (PowerShell)
+# Ma license: ${key}
+#
+# Cach dung 1 lenh (khuyen dung):
+#   irm ${selfUrl} | iex
+#
+# Hoac tai file roi chay:
+#   powershell -NoProfile -ExecutionPolicy Bypass -File cai-dat.ps1
+#
+# Script KHONG co BOM va KHONG dung $PSCommandPath, de chay duoc ca khi
+# pipe vao iex. Khi can quyen admin, no tu tai lai chinh minh bang URL.
 
 $ErrorActionPreference = 'Stop'
 $Key      = '${key}'
@@ -398,6 +415,18 @@ $WantSize = ${EXE_SIZE}
 function Step($m) { Write-Host "  $m" -ForegroundColor Cyan }
 function Good($m) { Write-Host "  [OK] $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "  [!] $m" -ForegroundColor Yellow }
+# Read-Host crash khi PowerShell chay o che do NonInteractive (irm | iex,
+# hoac -NonInteractive). Halt() chi hoi khi that su co console.
+function Halt([int]$code, [string]$msg) {
+  if ($msg) { Write-Host "  [!] $msg" -ForegroundColor Yellow }
+  try {
+    if (-not [Console]::IsInputRedirected) {
+      Write-Host ''
+      Read-Host 'Nhan Enter de thoat' | Out-Null
+    }
+  } catch { }
+  exit $code
+}
 
 Write-Host ''
 Write-Host '  ============================================================' -ForegroundColor Cyan
@@ -409,13 +438,28 @@ Write-Host ''
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
   Step 'Can quyen Administrator. Dang yeu cau...'
+  # KHONG dung $PSCommandPath: no rong khi chay qua "irm ... | iex".
+  # Thay vao do tu tai lai chinh script nay bang URL roi chay lai o che do admin.
+  $selfTmp = Join-Path $env:TEMP ('xa-install-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.ps1')
+  $ok = $false
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    (New-Object Net.WebClient).DownloadFile('${selfUrl}', $selfTmp)
+    $ok = (Test-Path -LiteralPath $selfTmp)
+  } catch { }
+  if (-not $ok -and (Test-Path -LiteralPath $PSCommandPath)) {
+    Copy-Item -LiteralPath $PSCommandPath -Destination $selfTmp -Force
+    $ok = $true
+  }
+  if (-not $ok) {
+    Halt 6 'Khong chuan bi duoc bo cai dat. Kiem tra mang roi chay lai.'
+  }
   try {
     Start-Process powershell -Verb RunAs -ArgumentList @(
-      '-NoProfile','-ExecutionPolicy','Bypass','-File', $PSCommandPath
+      '-NoProfile','-ExecutionPolicy','Bypass','-File', $selfTmp
     ) | Out-Null
   } catch {
-    Warn 'Khong lay duoc quyen admin. Chuot phai -> Run as administrator.'
-    Read-Host 'Nhan Enter de thoat'
+    Halt 5 'Khong lay duoc quyen admin. Chuot phai file .ps1 -> Run as administrator.'
   }
   exit
 }
@@ -451,18 +495,14 @@ if ($needDownload) {
     }
   }
   if (-not $ok) {
-    Warn 'Khong tai duoc bo xu ly (hoac file bi thieu). Kiem tra mang roi chay lai.'
     Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
-    Read-Host 'Nhan Enter de thoat'
-    exit 7
+    Halt 7 'Khong tai duoc bo xu ly. Kiem tra mang roi chay lai.'
   }
 
   $sha = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
   if ($sha -ine $WantSha) {
-    Warn 'FILE TAI VE KHONG DUNG CHU KY. Da huy cai dat.'
     Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
-    Read-Host 'Nhan Enter de thoat'
-    exit 9
+    Halt 9 'FILE TAI VE KHONG DUNG CHU KY. Da huy cai dat.'
   }
   Good 'Chu ky file khop.'
 
@@ -487,8 +527,7 @@ if ($LASTEXITCODE -ne 0) {
   Warn "KICH HOAT THAT BAI (ma $LASTEXITCODE)."
   Warn 'Kiem tra trang thai key tai muc "License cua toi" tren website.'
   Remove-Item -Force -LiteralPath (Join-Path $env:LOCALAPPDATA 'XArenaNoFog/lic.bin') -ErrorAction SilentlyContinue
-  Read-Host 'Nhan Enter de thoat'
-  exit 10
+  Halt 10 "KICH HOAT THAT BAI (ma $LASTEXITCODE). Kiem tra key tren website."
 }
 Good 'Kich hoat thanh cong.'
 Write-Host ''
@@ -531,7 +570,7 @@ foreach ($hive in @('HKCU:','HKLM:')) {
 }
 Write-Host '  Da xoa cau hinh RUNASADMIN.'
 Write-Host 'Xong.'
-Read-Host 'Nhan Enter'
+try { if (-not [Console]::IsInputRedirected) { Read-Host 'Nhan Enter' | Out-Null } } catch { }
 '@
 $ub | Set-Content -LiteralPath $uninst -Encoding UTF8
 
@@ -546,7 +585,7 @@ Write-Host "   - Go cai dat: $uninst"
 Write-Host ''
 Warn 'Key chi dung duoc tren 1 may tinh.'
 Write-Host ''
-Read-Host 'Nhan Enter de dong'
+try { if (-not [Console]::IsInputRedirected) { Read-Host 'Nhan Enter de dong' | Out-Null } } catch { }
 `;
 }
 
@@ -580,13 +619,23 @@ export async function servePs1(env, request, rawKey) {
   const lic = await requireUsableLicense(env, rawKey);
   await assertCanInstall(env, request, lic.key);
 
-  const body = buildPs1({ key: lic.key, base: siteBase(request), installDir: INSTALL_DIR });
-  return new Response('\uFEFF' + body, {
+  const url = new URL(request.url);
+  const token = url.searchParams.get('t') || '';
+  const base = siteBase(request);
+  const selfUrl = `${base}/i/${lic.key}.ps1?t=${token}`;
+  const body = buildPs1({
+    key: lic.key, base, installDir: INSTALL_DIR, selfUrl, token,
+  });
+  // KHONG co BOM: '\uFEFF' lam hong tokenizer khi chay qua "irm | iex".
+  // Content-Type phai la text/plain: neu la application/octet-stream thi
+  // Invoke-RestMethod nhan byte[] thay vi string -> iex khong chay duoc.
+  return new Response(body, {
     status: 200,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Content-Disposition': `attachment; filename="cai-dat-XArena-${lic.key}.ps1"`,
       'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
     },
   });
 }

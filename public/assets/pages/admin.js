@@ -5,6 +5,7 @@ import { state } from '../state.js';
 const NAV = [
   ['dashboard', '📊', 'Tổng quan'],
   ['orders', '📦', 'Đơn hàng'],
+  ['topups', '💰', 'Nạp tiền'],
   ['products', '🛍️', 'Sản phẩm'],
   ['keys', '🔑', 'Kho key'],
   ['licenses', '🎫', 'License'],
@@ -57,6 +58,7 @@ export async function mountAdmin(root, query) {
   try {
     if (tab === 'dashboard') await renderDashboard(host);
     else if (tab === 'orders') await renderOrders(host);
+    else if (tab === 'topups') await renderTopups(host);
     else if (tab === 'products') await renderProducts(host);
     else if (tab === 'keys') await renderKeys(host, query);
     else if (tab === 'licenses') await renderLicenses(host);
@@ -191,6 +193,159 @@ async function renderOrders(host) {
         try {
           await api(`/api/admin/orders/${b.dataset.refund}/refund`, { method: 'POST' });
           toast('Đã hoàn tiền', 'success');
+          load();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+  };
+  await load();
+}
+
+/* ---------------- Topups (nạp tiền) ---------------- */
+const TOPUP_STATUS = {
+  pending: ['pill-yellow', '⏳ Chờ'],
+  paid: ['pill-green', '✅ Đã nhận'],
+  partial: ['pill-blue', '◐ Một phần'],
+  expired: ['pill-gray', '✕ Hết hạn'],
+  cancelled: ['pill-red', '⊘ Đã huỷ'],
+};
+
+async function renderTopups(host) {
+  let filter = 'pending';
+  const load = async () => {
+    const d = await api('/api/admin/topups' + (filter ? '?status=' + filter : ''));
+    const s = d.stats || {};
+
+    host.innerHTML = `
+      <div class="stat-grid">
+        ${[
+          ['📊', fmtNum(s.total || 0), 'Tổng lệnh nạp'],
+          ['⏳', fmtNum(s.pending || 0), 'Chờ duyệt'],
+          ['✅', fmtNum(s.paid || 0), 'Đã nhận'],
+          ['💰', fmtVnd(s.totalAmount || 0), 'Tổng đã nạp'],
+        ].map(([ico, v, l]) => `
+          <div class="stat-card">
+            <div class="ico">${ico}</div>
+            <div class="v">${v}</div>
+            <div class="l">${l}</div>
+          </div>`).join('')}
+      </div>
+
+      ${s.pending > 0 ? `
+      <div class="alert alert-warn">
+        <span class="ico">⚠️</span>
+        <span>Có <strong>${s.pending}</strong> lệnh nạp đang chờ.
+        Mở app ngân hàng, đối chiếu nội dung <code class="mono">NAPxxxxx</code>,
+        rồi bấm <strong>Duyệt</strong>.</span>
+      </div>` : ''}
+
+      <div class="panel">
+        <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:10px">
+          <div class="panel-title" style="margin:0">💰 Lệnh nạp tiền (${d.topups.length})</div>
+          <select class="select" id="tp-filter">
+            <option value="">Tất cả</option>
+            ${['pending', 'paid', 'partial', 'expired', 'cancelled'].map((k) =>
+              `<option value="${k}"${filter === k ? ' selected' : ''}>${TOPUP_STATUS[k][1]}</option>`).join('')}
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nội dung CK</th><th>Số tiền</th><th>Khách</th><th>Trạng thái</th><th>Tạo</th><th>Thao tác</th></tr></thead>
+            <tbody>
+              ${d.topups.length === 0
+                ? `<tr><td colspan="6" style="text-align:center;padding:28px;color:var(--text-mute)">Không có lệnh nạp</td></tr>`
+                : d.topups.map((t) => {
+                  const [cls, label] = TOPUP_STATUS[t.status] || ['pill-gray', t.status];
+                  return `<tr>
+                    <td>
+                      <span class="mono" style="font-weight:800;color:#fbbf24;cursor:pointer"
+                        data-copy-memo="${esc(t.memo)}" title="Bấm để copy">${esc(t.memo)}</span>
+                    </td>
+                    <td><strong>${fmtVnd(t.amount)}</strong></td>
+                    <td>
+                      <div style="font-size:12.5px">${esc(t.customer || '—')}</div>
+                      <div style="font-size:11px;color:var(--text-mute)">${esc(t.email || '')}</div>
+                    </td>
+                    <td><span class="pill ${cls}">${label}</span></td>
+                    <td style="font-size:11.5px;color:var(--text-mute)">${fmtDate(t.createdAt)}</td>
+                    <td>
+                      <div class="flex gap-1" style="flex-wrap:wrap">
+                        ${t.status !== 'paid'
+                          ? `<button class="btn btn-primary btn-sm" data-approve="${esc(t.id)}" data-amt="${t.amount}">✓ Duyệt</button>` : ''}
+                        ${['pending', 'expired'].includes(t.status)
+                          ? `<button class="btn btn-ghost btn-sm" data-reject="${esc(t.id)}">Huỷ</button>` : ''}
+                      </div>
+                    </td>
+                  </tr>`;
+                }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+
+    host.querySelector('#tp-filter').onchange = (e) => {
+      filter = e.target.value;
+      load();
+    };
+
+    host.querySelectorAll('[data-copy-memo]').forEach((el) => {
+      el.onclick = async () => {
+        const { copyText } = await import('../lib.js');
+        const okc = await copyText(el.dataset.copyMemo);
+        toast(okc ? 'Đã copy nội dung CK: ' + el.dataset.copyMemo : 'Không copy được',
+          okc ? 'success' : 'error');
+      };
+    });
+
+    host.querySelectorAll('[data-approve]').forEach((b) => {
+      b.onclick = () => {
+        openModal(`
+          <div class="modal-title">Duyệt lệnh nạp</div>
+          <div class="modal-sub">
+            Chỉ duyệt sau khi đã <strong>tự kiểm tra app ngân hàng</strong> và thấy
+            giao dịch với đúng nội dung này.
+          </div>
+          <div class="field">
+            <label class="label">Số tiền cộng vào ví (₫)</label>
+            <input class="input" id="ap-amt" type="number" value="${b.dataset.amt}">
+            <div class="form-hint">Sửa nếu khách chuyển số khác.</div>
+          </div>
+          <div class="field">
+            <label class="label">Ghi chú</label>
+            <input class="input" id="ap-note" placeholder="VD: MB 1234 500k luc 18:30">
+          </div>
+          <div class="flex gap-1" style="justify-content:flex-end">
+            <button class="btn btn-ghost" data-cancel>Huỷ</button>
+            <button class="btn btn-primary" data-ok>✓ Xác nhận đã nhận tiền</button>
+          </div>
+        `, {
+          onMount(overlay, close) {
+            overlay.querySelector('[data-cancel]').onclick = close;
+            overlay.querySelector('[data-ok]').onclick = async () => {
+              const body = {
+                amount: Number(overlay.querySelector('#ap-amt').value) || undefined,
+                note: overlay.querySelector('#ap-note').value.trim() || undefined,
+              };
+              try {
+                const r = await api(`/api/admin/topups/${b.dataset.approve}/approve`, {
+                  method: 'POST', body,
+                });
+                toast(`Đã cộng ${fmtVnd(r.credited)} vào ví`, 'success', 5000);
+                close();
+                load();
+              } catch (e) { toast(e.message, 'error'); }
+            };
+          },
+        });
+      };
+    });
+
+    host.querySelectorAll('[data-reject]').forEach((b) => {
+      b.onclick = async () => {
+        if (!await confirmDialog('Huỷ lệnh nạp?', 'Không cộng tiền. Chỉ dùng khi chắc chắn không có giao dịch.', 'Huỷ lệnh')) return;
+        try {
+          await api(`/api/admin/topups/${b.dataset.reject}/reject`, { method: 'POST', body: {} });
+          toast('Đã huỷ lệnh nạp', 'success');
           load();
         } catch (e) { toast(e.message, 'error'); }
       };

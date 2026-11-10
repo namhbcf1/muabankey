@@ -199,6 +199,137 @@ export async function sepayWebhook(env, request) {
   });
 }
 
+/* ============================================================
+   ADMIN: QUẢN LÝ NẠP TIỀN
+   Cần thiết vì webhook ngân hàng có thể chưa nối / bị lỗi /
+   khách chuyển sai nội dung. Không có UI này thì admin phải
+   sửa DB tay -> dễ sai sổ cái.
+   ============================================================ */
+
+/** GET /api/admin/topups?status=pending — danh sách lệnh nạp. */
+export async function adminListTopups(env, request) {
+  const { requireAdmin } = await import('../lib/auth.js');
+  const { ok } = await import('../lib/http.js');
+  await requireAdmin(env, request);
+
+  const url = new URL(request.url);
+  const status = url.searchParams.get('status') || '';
+  const q = (url.searchParams.get('q') || '').trim();
+
+  const where = ['1=1'];
+  const binds = [];
+  if (status) { where.push('t.status = ?'); binds.push(status); }
+  if (q) { where.push('(t.code LIKE ? OR u.email LIKE ?)'); binds.push(`%${q}%`, `%${q}%`); }
+
+  const { results } = await env.DB.prepare(
+    `SELECT t.*, u.email, u.full_name, u.balance
+     FROM topups t LEFT JOIN users u ON u.id = t.user_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY t.created_at DESC LIMIT 200`
+  ).bind(...binds).all();
+
+  const stats = await env.DB.prepare(
+    `SELECT
+       COUNT(*) AS total,
+       SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+       SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END) AS paid,
+       SUM(CASE WHEN status='partial' THEN 1 ELSE 0 END) AS partial,
+       SUM(CASE WHEN status='expired' THEN 1 ELSE 0 END) AS expired,
+       COALESCE(SUM(CASE WHEN status='paid' THEN amount ELSE 0 END),0) AS total_amount
+     FROM topups`
+  ).first();
+
+  return ok({
+    topups: (results || []).map((t) => ({
+      id: t.id,
+      code: t.code,
+      memo: `NAP${t.code}`,
+      amount: t.amount,
+      status: t.status,
+      provider: t.provider,
+      txnRef: t.txn_ref,
+      email: t.email,
+      customer: t.full_name,
+      balance: t.balance,
+      createdAt: t.created_at,
+      expiresAt: t.expires_at,
+      paidAt: t.paid_at,
+    })),
+    stats: {
+      total: stats?.total || 0,
+      pending: stats?.pending || 0,
+      paid: stats?.paid || 0,
+      partial: stats?.partial || 0,
+      expired: stats?.expired || 0,
+      totalAmount: stats?.total_amount || 0,
+    },
+  });
+}
+
+/**
+ * POST /api/admin/topups/:id/approve
+ * Admin xác nhận đã nhận được tiền (dùng khi webhook chưa nối
+ * hoặc khách chuyển sai nội dung). Cộng tiền + ghi sổ cái đầy đủ.
+ */
+export async function adminApproveTopup(env, request, topupId) {
+  const { requireAdmin } = await import('../lib/auth.js');
+  const { ok, ApiError: AE } = await import('../lib/http.js');
+  const { uuid } = await import('../lib/crypto.js');
+  const admin = await requireAdmin(env, request);
+  const body = await readJson(request).catch(() => ({}));
+
+  const t = await env.DB.prepare('SELECT * FROM topups WHERE id = ?').bind(topupId).first();
+  if (!t) throw new AE(404, 'Lệnh nạp không tồn tại', 'NOT_FOUND');
+  if (t.status === 'paid') throw new AE(409, 'Lệnh nạp đã được duyệt rồi', 'BAD_STATE');
+
+  // Số tiền thực nhận: cho admin nhập nếu khách chuyển khác
+  let credited = t.amount;
+  if (body.amount !== undefined) {
+    credited = int(body.amount, 'amount', { min: 1000, max: 500_000_000 });
+  }
+  const note = str(body.note, 'note', { required: false, max: 300 }) || 'Admin duyệt tay';
+
+  // Giành nguyên tử: chỉ 1 request duyệt được
+  const claim = await env.DB.prepare(
+    `UPDATE topups SET status = 'paid', paid_at = ?, txn_ref = COALESCE(txn_ref, ?)
+     WHERE id = ? AND status != 'paid'`
+  ).bind(Date.now(), 'ADMIN-' + admin.id.slice(0, 8), topupId).run();
+  if (!claim.meta || claim.meta.changes !== 1) {
+    throw new AE(409, 'Lệnh nạp đã được duyệt rồi', 'BAD_STATE');
+  }
+
+  const now = Date.now();
+  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+    .bind(credited, now, t.user_id).run();
+
+  const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(t.user_id).first();
+  await env.DB.prepare(
+    `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+     VALUES (?,?,'topup',?,?,'success',?,?,?)`
+  ).bind(uuid(), t.user_id, credited, bal.balance, t.code,
+    `Nạp tiền duyệt tay (${t.code}) — ${note}`, now).run();
+
+  await audit(env, admin.id, 'topup.approve', topupId, { credited, note, by: admin.email });
+  return ok({ id: topupId, credited, balance: bal.balance });
+}
+
+/** POST /api/admin/topups/:id/reject — huỷ lệnh nạp (không cộng tiền). */
+export async function adminRejectTopup(env, request, topupId) {
+  const { requireAdmin } = await import('../lib/auth.js');
+  const { ok, ApiError: AE } = await import('../lib/http.js');
+  const admin = await requireAdmin(env, request);
+  const body = await readJson(request).catch(() => ({}));
+
+  const t = await env.DB.prepare('SELECT * FROM topups WHERE id = ?').bind(topupId).first();
+  if (!t) throw new AE(404, 'Lệnh nạp không tồn tại', 'NOT_FOUND');
+  if (t.status === 'paid') throw new AE(409, 'Không thể huỷ lệnh đã thanh toán', 'BAD_STATE');
+
+  await env.DB.prepare("UPDATE topups SET status='cancelled' WHERE id = ?").bind(topupId).run();
+  await audit(env, admin.id, 'topup.reject', topupId,
+    { note: str(body.note, 'note', { required: false, max: 300 }) || '' });
+  return ok({ id: topupId });
+}
+
 /** Admin: điều chỉnh số dư thủ công. */
 export async function adminAdjustBalance(env, request) {
   const admin = await requireAdmin(env, request);

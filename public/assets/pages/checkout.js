@@ -1,5 +1,5 @@
 /** Trang thanh toán. */
-import { api, esc, fmtVnd, toast, navigate, loadingBlock, decodeKey, copyText } from '../lib.js';
+import { api, esc, fmtVnd, toast, navigate, loadingBlock, decodeKey, copyText, store } from '../lib.js';
 import { state, cartSubtotal, clearCart, refreshBalance, removeFromCart, saveCart } from '../state.js';
 
 export function renderCheckout() {

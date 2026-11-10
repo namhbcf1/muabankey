@@ -5,6 +5,12 @@ shots/
 backup-*.sql
 db/backup-*.sql
 
+# File tam khi test
+oneliner.txt
+ps1url.txt
+cmdurl.txt
+*.ps1.tmp
+
 # Tool build
 tool/dist/
 tool/.build/
@@ -12,9 +18,6 @@ tool/src/__pycache__/
 __pycache__/
 *.pyc
 *.spec
-
-# Docs nghien cuu (giu lai)
-# docs/
 
 # SECRETS
 .webhook-secret.txt
