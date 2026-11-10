@@ -410,6 +410,71 @@ def _post(path, payload, timeout=None, retries=0):
 
 
 # --------------------------------------------------------------- flow -------
+def rebind_key(key, token, verbose=True):
+    """Doi may bang token do web cap. Tra (ok, msg).
+
+    Luong:
+      1. Web: khach bam "Doi may" -> server sinh token 1 lan, han 30 phut
+      2. Khach chay: xa_nofog_pro.exe --rebind <KEY> <TOKEN> tren MAY MOI
+      3. Client gui HWID may moi + token -> server doi HWID, tang rebinds
+      4. Client luu state moi de dung ngay
+
+    Truoc day client KHONG co ham nay -> --rebind bi bo qua im lang.
+    """
+    key = (key or '').strip().upper()
+    token = (token or '').strip()
+    if not key or not token:
+        return False, 'can ca KEY va TOKEN'
+
+    hwid = compute_hwid()
+    if verbose:
+        print('  Dang doi may...')
+        print('  HWID may moi: %s' % mask_key(hwid))
+
+    r = _post('/api/rebind', {
+        'key': key, 'hwid': hwid, 'token': token, 'app': APP_NAME,
+    }, timeout=HTTP_TIMEOUT, retries=1)
+
+    if not r.get('ok'):
+        code = str(r.get('code') or '')
+        msg = r.get('msg') or code or 'khong ro loi'
+        if code == 'invalid_token':
+            return False, 'Token khong dung hoac da het han. Lay token moi tren web.'
+        if code == 'token_used':
+            return False, 'Token da duoc dung roi. Lay token moi tren web.'
+        if code == 'REBIND_LIMIT' or code == 'rebind_limit':
+            return False, 'Da het so lan doi may. Lien he ho tro.'
+        if code == 'forbidden':
+            return False, 'Ban khong so huu ma nay.'
+        if code == 'revoked':
+            return False, 'Ma da bi thu hoi.'
+        return False, msg
+
+    # Luu state: HWID moi, han moi tu server
+    st = load_state()
+    anchor_server_time(st, r.get('now'))
+    st.update({
+        'key': key,
+        'hwid': hwid,
+        'expires_at': r.get('expires_at', st.get('expires_at', 0)),
+        'activated_at': r.get('activated_at', st.get('activated_at', 0)),
+        'plan': r.get('plan') or st.get('plan') or 'aoe1',
+        'grace_hours': r.get('grace_hours', 24),
+        'last_ok': time.time(),
+        'mono_last_ok': _mono(),
+        'mode': 'server',
+    })
+    for _k in ('is_trial', 'trial_weak', 'trial_started', 'trial_days'):
+        st.pop(_k, None)
+    if not save_state(st):
+        return False, 'doi may xong nhung khong ghi duoc file license'
+
+    left = r.get('rebinds_left')
+    if left is None:
+        return True, 'Doi may thanh cong.'
+    return True, 'Doi may thanh cong (con %s luot doi may).' % left
+
+
 def activate(key, verbose=True):
     """Kich hoat qua server. Server gan HWID + bat dau tinh han TU BAY GIO."""
     hwid = compute_hwid()
@@ -1828,6 +1893,26 @@ def run():
     if opts['buy']:
         print(BUY_URL)
         return 0 if open_buy_page() else 1
+
+    # --rebind <key> <token>: doi may bang token do web cap
+    # Truoc day parse_args nhan --rebind nhung run() KHONG xu ly ->
+    # tham so bi bo qua im lang, khach tuong da doi may nhung khong.
+    if opts.get('rebind'):
+        key, token = opts['rebind']
+        ok, m = rebind_key(key, token)
+        print('  ' + m)
+        if ok:
+            print('')
+            print('Doi may thanh cong. Chay lai khong tham so de va game.')
+            return 0
+        print('')
+        print('  ============================================================')
+        print('   DOI MAY THAT BAI')
+        print('  ------------------------------------------------------------')
+        print('   Vao https://xienhl.com/#/licenses, bam "Doi may" de lay')
+        print('   token moi (token chi dung 1 lan, het han sau 30 phut).')
+        print('  ============================================================')
+        return EXIT_NO_LICENSE
 
     # --trial: bat dung thu roi thoat
     if opts['trial']:
