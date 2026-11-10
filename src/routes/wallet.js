@@ -123,6 +123,249 @@ export async function getTopup(env, request, topupId) {
   });
 }
 
+/* ============================================================
+   PAYOS WEBHOOK
+   ============================================================ */
+
+/**
+ * Tính HMAC-SHA256 theo chuẩn payOS.
+ *
+ * Thuật toán (theo docs payOS):
+ *   1. Sắp xếp key theo alphabet
+ *   2. value = null/undefined -> ""
+ *   3. value là array -> ksort từng phần tử rồi JSON.stringify
+ *   4. Nối thành "key1=value1&key2=value2..."
+ *   5. HMAC-SHA256(chuỗi, checksumKey) -> hex
+ */
+async function payosSignature(data, checksumKey) {
+  const keys = Object.keys(data).sort();
+  const parts = [];
+  for (const k of keys) {
+    let v = data[k];
+    if (v === null || v === undefined || v === 'undefined' || v === 'null') {
+      v = '';
+    } else if (Array.isArray(v)) {
+      v = JSON.stringify(v.map((el) => {
+        if (el && typeof el === 'object' && !Array.isArray(el)) {
+          const s = {};
+          for (const kk of Object.keys(el).sort()) s[kk] = el[kk];
+          return s;
+        }
+        return el;
+      }));
+    } else if (typeof v === 'object') {
+      const s = {};
+      for (const kk of Object.keys(v).sort()) s[kk] = v[kk];
+      v = JSON.stringify(s);
+    }
+    parts.push(`${k}=${v}`);
+  }
+  const payload = parts.join('&');
+
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(checksumKey),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(payload));
+  return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Đọc checksum key: ưu tiên Worker secret, sau đó tới settings. */
+async function payosChecksumKey(env) {
+  if (env.PAYOS_CHECKSUM_KEY) return env.PAYOS_CHECKSUM_KEY;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT value FROM settings WHERE key = 'payos_checksum_key'"
+    ).first();
+    return row?.value || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * POST /api/webhooks/payos
+ * Nhận thông báo thanh toán từ payOS.
+ *
+ * payOS gửi:
+ *   { code, desc, success, data: {...}, signature }
+ * Signature tính trên `data`, không phải object ngoài.
+ */
+export async function payosWebhook(env, request) {
+  const checksumKey = await payosChecksumKey(env);
+  if (!checksumKey) {
+    throw new ApiError(503, 'payOS chưa được cấu hình (thiếu checksum key)', 'NOT_CONFIGURED');
+  }
+
+  const body = await readJson(request);
+  if (!body || typeof body !== 'object') {
+    throw new ApiError(400, 'Body không hợp lệ', 'VALIDATION');
+  }
+
+  const data = body.data;
+  const signature = String(body.signature || '');
+
+  // ---- 1. Xác thực chữ ký ----
+  if (!data || !signature) {
+    throw new ApiError(400, 'Thiếu data hoặc signature', 'VALIDATION');
+  }
+  const expected = await payosSignature(data, checksumKey);
+  const { timingSafeEqual } = await import('../lib/crypto.js');
+  if (!timingSafeEqual(expected, signature)) {
+    await audit(env, null, 'payos.invalid_signature', null, {
+      orderCode: data.orderCode, ip: clientIp(request),
+    });
+    throw new ApiError(401, 'Chữ ký webhook không hợp lệ', 'UNAUTHORIZED');
+  }
+
+  // ---- 2. Kiểm tra trạng thái giao dịch ----
+  // code "00" = thành công. Nếu khác -> ghi nhận nhưng không cộng tiền.
+  const txCode = String(data.code || body.code || '');
+  if (txCode !== '00') {
+    return ok({ matched: false, reason: 'NOT_SUCCESS', code: txCode, desc: data.desc || body.desc });
+  }
+
+  const amountIn = Number(data.amount || 0);
+  const ref = String(data.reference || data.paymentLinkId || `PAYOS-${data.orderCode}`);
+  const content = String(data.description || '');
+
+  if (!amountIn) return ok({ matched: false, reason: 'NO_AMOUNT' });
+
+  // ---- 3. Khớp với topup ----
+  // Ưu tiên mã NAP trong nội dung CK (QR tĩnh).
+  // Nếu không có, thử khớp theo orderCode (payment link động).
+  let topup = null;
+
+  const m = content.toUpperCase().match(/NAP([A-Z0-9]{5})/);
+  if (m) {
+    topup = await env.DB.prepare('SELECT * FROM topups WHERE code = ? LIMIT 1')
+      .bind(m[1]).first();
+  }
+
+  if (!topup && data.orderCode) {
+    // Khớp theo payment link động: orderCode được lưu vào txn_ref khi tạo link
+    topup = await env.DB.prepare(
+      'SELECT * FROM topups WHERE txn_ref = ? LIMIT 1'
+    ).bind(String(data.orderCode)).first();
+  }
+
+  if (!topup) {
+    // Đối soát: ghi lại để admin xem, không chặn webhook (payOS sẽ retry)
+    await audit(env, null, 'payos.unmatched', null, {
+      orderCode: data.orderCode, amount: amountIn, content, ref,
+    });
+    return ok({ matched: false, reason: 'TOPUP_NOT_FOUND', content });
+  }
+
+  if (topup.status === 'paid') {
+    return ok({ matched: true, duplicated: true, reason: 'ALREADY_PAID', code: topup.code });
+  }
+
+  const now = Date.now();
+
+  // ---- 4. Cộng tiền ----
+  if (amountIn < topup.amount) {
+    // Chuyển thiếu -> cộng phần đã nhận
+    const credited = Math.floor(amountIn);
+    const claim = await env.DB.prepare(
+      "UPDATE topups SET status='partial', txn_ref = ?, provider='payos' WHERE id = ? AND status != 'paid'"
+    ).bind(ref, topup.id).run();
+    if (!claim.meta || claim.meta.changes !== 1) {
+      return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
+    }
+
+    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+      .bind(credited, now, topup.user_id).run();
+    const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
+      .bind(topup.user_id).first();
+    await env.DB.prepare(
+      `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+       VALUES (?,?,'topup',?,?,'success',?,?,?)`
+    ).bind(uuid(), topup.user_id, credited, balP.balance, ref,
+      `Nạp một phần ${credited.toLocaleString('vi-VN')}đ / ${topup.amount.toLocaleString('vi-VN')}đ (${topup.code})`, now).run();
+    await audit(env, null, 'topup.partial', topup.id, { expected: topup.amount, received: amountIn, via: 'payos' });
+    return ok({
+      matched: true, reason: 'PARTIAL', expected: topup.amount,
+      received: amountIn, credited, balance: balP.balance,
+    });
+  }
+
+  const credited = topup.amount;
+  const excess = Math.floor(amountIn) - topup.amount;
+
+  const claim = await env.DB.prepare(
+    "UPDATE topups SET status='paid', txn_ref = ?, paid_at = ?, provider='payos' WHERE id = ? AND status != 'paid'"
+  ).bind(ref, now, topup.id).run();
+  if (!claim.meta || claim.meta.changes !== 1) {
+    return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
+  }
+
+  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+    .bind(credited, now, topup.user_id).run();
+  const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
+    .bind(topup.user_id).first();
+  await env.DB.prepare(
+    `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+     VALUES (?,?,'topup',?,?,'success',?,?,?)`
+  ).bind(uuid(), topup.user_id, credited, bal.balance, ref,
+    `Nạp tiền qua payOS (${topup.code})`, now).run();
+
+  await audit(env, null, 'topup.paid', topup.id, {
+    amount: credited, ref, excess, via: 'payos', orderCode: data.orderCode,
+  });
+
+  return ok({
+    matched: true, credited, balance: bal.balance,
+    ...(excess > 0 ? { reason: 'OVERPAID', excess, note: 'Phần dư đã ghi nhận để đối soát' } : {}),
+  });
+}
+
+/** GET /api/webhooks/health — kiểm tra cấu hình webhook (không lộ secret). */
+export async function webhookHealth(env) {
+  const payosKey = await payosChecksumKey(env);
+  return ok({
+    sepay: {
+      configured: !!env.WEBHOOK_SECRET,
+      source: env.WEBHOOK_SECRET ? 'secret' : 'none',
+      url: '/api/webhooks/sepay',
+    },
+    payos: {
+      configured: !!payosKey,
+      source: env.PAYOS_CHECKSUM_KEY ? 'secret' : (payosKey ? 'settings' : 'none'),
+      url: '/api/webhooks/payos',
+    },
+  });
+}
+
+/**
+ * POST /api/admin/settings/payos — lưu checksum key vào settings.
+ * (Khuyến nghị dùng `wrangler secret put PAYOS_CHECKSUM_KEY` để bảo mật hơn.)
+ */
+export async function adminSetPayosKey(env, request) {
+  const admin = await requireAdmin(env, request);
+  const body = await readJson(request);
+  const key = String(body.checksumKey || '').trim();
+
+  if (!key) {
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'payos_checksum_key'").run();
+    await audit(env, admin.id, 'payos.key_cleared', null, {});
+    return ok({ cleared: true });
+  }
+  if (key.length < 16) {
+    throw new ApiError(400, 'Checksum key quá ngắn', 'VALIDATION');
+  }
+
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('payos_checksum_key', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).bind(key, now).run();
+
+  await audit(env, admin.id, 'payos.key_set', null, { len: key.length });
+  return ok({ saved: true, source: 'settings' });
+}
+
 /**
  * Webhook nhận thông báo chuyển khoản (tương thích SePay / Casso / MB API).
  * Xác thực bằng header Authorization: Apikey <WEBHOOK_SECRET>.

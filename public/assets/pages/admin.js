@@ -1,5 +1,5 @@
 /** Trang quản trị (admin). */
-import { api, esc, fmtVnd, fmtNum, fmtDate, toast, navigate, openModal, confirmDialog, loadingBlock, debounce } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, fmtDate, toast, navigate, openModal, confirmDialog, loadingBlock, debounce, copyText } from '../lib.js';
 import { state } from '../state.js';
 
 const NAV = [
@@ -903,6 +903,45 @@ async function renderSettings(host) {
         <span class="ico">ℹ️</span>
         <span>Thông tin ngân hàng dùng để tạo mã VietQR cho khách nạp tiền. Cần khớp với tài khoản đã kết nối webhook.</span>
       </div>
+
+      <div style="margin-top:26px;padding-top:26px;border-top:1px solid var(--border)">
+        <div class="panel-title" style="margin-bottom:6px">🔗 Kết nối webhook tự động</div>
+        <p style="font-size:13px;color:var(--text-mute);line-height:1.7;margin-bottom:16px">
+          Dán URL bên dưới vào dashboard dịch vụ để tiền tự vào ví khi khách chuyển khoản.
+          Không nối thì phải duyệt tay ở tab <strong>Nạp tiền</strong>.
+        </p>
+
+        <div id="wh-status" style="margin-bottom:18px">Đang kiểm tra...</div>
+
+        <div style="padding:16px;border-radius:12px;background:rgba(124,92,255,.06);border:1px solid rgba(124,92,255,.24);margin-bottom:14px">
+          <div style="font-size:13.5px;font-weight:800;margin-bottom:8px">SePay / Casso</div>
+          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.9">
+            URL:
+            <code class="mono" id="wh-sepay-url" style="background:rgba(0,0,0,.4);padding:3px 8px;border-radius:6px;cursor:pointer"
+              title="Bấm để copy">${esc(location.origin)}/api/webhooks/sepay</code>
+          </div>
+          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.9">
+            Xác thực: <code class="mono">Authorization: Apikey &lt;WEBHOOK_SECRET&gt;</code>
+          </div>
+        </div>
+
+        <div style="padding:16px;border-radius:12px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.24)">
+          <div style="font-size:13.5px;font-weight:800;margin-bottom:8px">payOS</div>
+          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.9;margin-bottom:10px">
+            URL:
+            <code class="mono" id="wh-payos-url" style="background:rgba(0,0,0,.4);padding:3px 8px;border-radius:6px;cursor:pointer"
+              title="Bấm để copy">${esc(location.origin)}/api/webhooks/payos</code>
+          </div>
+          <div class="field" style="margin-bottom:10px">
+            <label class="label">Checksum Key</label>
+            <input class="input" id="wh-payos-key" type="password" placeholder="Dán checksum key từ my.payos.vn">
+            <div class="form-hint">Lấy ở my.payos.vn → Kênh thanh toán → Checksum Key. Khuyến nghị dùng
+              <code class="mono">wrangler secret put PAYOS_CHECKSUM_KEY</code> để bảo mật hơn.</div>
+          </div>
+          <button class="btn btn-primary btn-sm" id="wh-save-payos">Lưu checksum key</button>
+          <button class="btn btn-ghost btn-sm" id="wh-clear-payos" style="margin-left:6px">Xoá</button>
+        </div>
+      </div>
     </div>`;
 
   host.querySelector('#settings-form').onsubmit = async (e) => {
@@ -921,6 +960,69 @@ async function renderSettings(host) {
       toast('Đã lưu cài đặt', 'success');
     } catch (err) { toast(err.message, 'error'); }
   };
+
+  /* ---------- Webhook status ---------- */
+  const loadWh = async () => {
+    try {
+      const h = await api('/api/webhooks/health');
+      const badge = (c) => c
+        ? '<span class="pill pill-green">✅ Đã nối</span>'
+        : '<span class="pill pill-yellow">⚠️ Chưa nối</span>';
+      host.querySelector('#wh-status').innerHTML = `
+        <div class="flex gap-2" style="flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
+            SePay: ${badge(h.sepay?.configured)}
+            ${h.sepay?.source !== 'none' ? `<span style="color:var(--text-mute)">(${esc(h.sepay.source)})</span>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
+            payOS: ${badge(h.payos?.configured)}
+            ${h.payos?.source !== 'none' ? `<span style="color:var(--text-mute)">(${esc(h.payos.source)})</span>` : ''}
+          </div>
+        </div>`;
+    } catch {
+      host.querySelector('#wh-status').innerHTML =
+        '<span class="pill pill-red">Không kiểm tra được</span>';
+    }
+  };
+  await loadWh();
+
+  // Copy URL khi bấm
+  for (const id of ['wh-sepay-url', 'wh-payos-url']) {
+    const el = host.querySelector('#' + id);
+    if (el) {
+      el.onclick = async () => {
+        const okc = await copyText(el.textContent.trim());
+        toast(okc ? 'Đã copy URL webhook' : 'Không copy được', okc ? 'success' : 'error');
+      };
+    }
+  }
+
+  // Lưu checksum key payOS
+  const savePayos = host.querySelector('#wh-save-payos');
+  if (savePayos) {
+    savePayos.onclick = async () => {
+      const key = host.querySelector('#wh-payos-key').value.trim();
+      if (!key) { toast('Chưa nhập checksum key', 'error'); return; }
+      try {
+        await api('/api/admin/settings/payos', { method: 'POST', body: { checksumKey: key } });
+        toast('Đã lưu checksum key payOS', 'success', 5000);
+        host.querySelector('#wh-payos-key').value = '';
+        await loadWh();
+      } catch (err) { toast(err.message, 'error'); }
+    };
+  }
+
+  const clearPayos = host.querySelector('#wh-clear-payos');
+  if (clearPayos) {
+    clearPayos.onclick = async () => {
+      if (!await confirmDialog('Xoá checksum key payOS?', 'Webhook payOS sẽ ngừng hoạt động.', 'Xoá')) return;
+      try {
+        await api('/api/admin/settings/payos', { method: 'POST', body: { checksumKey: '' } });
+        toast('Đã xoá', 'success');
+        await loadWh();
+      } catch (err) { toast(err.message, 'error'); }
+    };
+  }
 }
 
 /* ---------------- Logs ---------------- */

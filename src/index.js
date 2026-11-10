@@ -55,6 +55,8 @@ r.get('/api/wallet', wallet.getWallet);
 r.post('/api/wallet/topup', wallet.createTopup);
 r.get('/api/wallet/topup/:id', (env, req, p) => wallet.getTopup(env, req, p.id));
 r.post('/api/webhooks/sepay', wallet.sepayWebhook);
+r.post('/api/webhooks/payos', wallet.payosWebhook);
+r.get('/api/webhooks/health', (env) => wallet.webhookHealth(env));
 
 /* ---------- License client API (cho tool XArena) ---------- */
 r.post('/api/activate', licenseServer.apiActivate);
@@ -97,6 +99,7 @@ r.get('/api/admin/orders', orders.adminListOrders);
 r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManual(env, req, p.id));
 r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, req, p.id));
 r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
+r.post('/api/admin/settings/payos', wallet.adminSetPayosKey);
 r.get('/api/admin/topups', wallet.adminListTopups);
 r.post('/api/admin/topups/:id/approve', (env, req, p) => wallet.adminApproveTopup(env, req, p.id));
 r.post('/api/admin/topups/:id/reject', (env, req, p) => wallet.adminRejectTopup(env, req, p.id));
