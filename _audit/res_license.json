@@ -1,0 +1,197 @@
+[
+ {
+  "case": "B7 no-lic co mang -> auto trial",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B7_no-lic_co_mang_->_auto_trial",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B8 co lic.bin hop le -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: HOAT DONG\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:28:57\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B9 key het han -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (Mã đã hết hạn)\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:28:57\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B10 key revoked -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.16,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (Mã đã bị thu hồi)\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:28:58\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B11 hwid mismatch -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (Mã đã dùng trên máy khác)\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:28:58\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B12 khong co mang -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 2.18,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (khong ket noi duoc server (bat buoc online))\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:01\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "B12b DNS fail -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.17,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (khong ket noi duoc server (bat buoc online))\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:01\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "https://khong-ton-tai-abcxyz-12345.example"
+  }
+ },
+ {
+  "case": "B13 server 500 -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.14,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (khong ket noi duoc server (bat buoc online))\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:01\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B13b server 502 HTML -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (khong ket noi duoc server (bat buoc online))\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:02\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B14 JSON hong -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (khong ket noi duoc server (bat buoc online))\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:03\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B14b body rong -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.16,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (khong ket noi duoc server (bat buoc online))\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:03\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B14c rate_limit -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (Quá nhiều lần thử)\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:04\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ },
+ {
+  "case": "B14d server treo (timeout 10s)",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 10.16,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (khong ket noi duoc server (bat buoc online))\r\nBat dau   : 2026-11-10 19:28:57\r\nHet han   : 2026-12-10 20:28:57\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:29:14\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B8",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53302"
+  }
+ }
+]

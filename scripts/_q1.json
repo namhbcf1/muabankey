@@ -1,0 +1,821 @@
+[
+ {
+  "label": "Tổng hợp schema (sqlite_master)",
+  "sql": "SELECT type, name,\n       tbl_name,\n       REPLACE(REPLACE(COALESCE(sql,''),char(10),' '),char(9),' ') AS ddl\nFROM sqlite_master\nWHERE name NOT LIKE 'sqlite_%'\nORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name",
+  "rows": [
+   {
+    "type": "table",
+    "name": "_cf_KV",
+    "tbl_name": "_cf_KV",
+    "ddl": "CREATE TABLE _cf_KV (         key TEXT PRIMARY KEY,         value BLOB       ) WITHOUT ROWID"
+   },
+   {
+    "type": "table",
+    "name": "audit_logs",
+    "tbl_name": "audit_logs",
+    "ddl": "CREATE TABLE audit_logs (   id         TEXT PRIMARY KEY,   actor_id   TEXT,   action     TEXT NOT NULL,   target     TEXT,   meta       TEXT,   ip         TEXT,   created_at INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "banned_devices",
+    "tbl_name": "banned_devices",
+    "ddl": "CREATE TABLE banned_devices (   weak_hwid  TEXT PRIMARY KEY,   reason     TEXT,   banned_at  INTEGER NOT NULL,   banned_by  TEXT )"
+   },
+   {
+    "type": "table",
+    "name": "categories",
+    "tbl_name": "categories",
+    "ddl": "CREATE TABLE categories (   id          TEXT PRIMARY KEY,   slug        TEXT NOT NULL UNIQUE,   name        TEXT NOT NULL,   description TEXT,   icon        TEXT,   sort_order  INTEGER NOT NULL DEFAULT 0,   active      INTEGER NOT NULL DEFAULT 1,   created_at  INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "coupons",
+    "tbl_name": "coupons",
+    "ddl": "CREATE TABLE coupons (   id          TEXT PRIMARY KEY,   code        TEXT NOT NULL UNIQUE,   type        TEXT NOT NULL DEFAULT 'percent',   -- percent | fixed   value       INTEGER NOT NULL,   min_subtotal INTEGER NOT NULL DEFAULT 0,   max_discount INTEGER,   usage_limit INTEGER,   used_count  INTEGER NOT NULL DEFAULT 0,   starts_at   INTEGER,   expires_at  INTEGER,   active      INTEGER NOT NULL DEFAULT 1,   created_at  INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "install_tokens",
+    "tbl_name": "install_tokens",
+    "ddl": "CREATE TABLE install_tokens (   token_hash TEXT PRIMARY KEY,   key        TEXT NOT NULL,   user_id    TEXT NOT NULL,   created_at INTEGER NOT NULL,   expires_at INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "lic_attempts",
+    "tbl_name": "lic_attempts",
+    "ddl": "CREATE TABLE lic_attempts (   ip TEXT NOT NULL,   at INTEGER NOT NULL,   ok INTEGER NOT NULL DEFAULT 0 )"
+   },
+   {
+    "type": "table",
+    "name": "lic_events",
+    "tbl_name": "lic_events",
+    "ddl": "CREATE TABLE lic_events (   id     INTEGER PRIMARY KEY AUTOINCREMENT,   key    TEXT NOT NULL,   hwid   TEXT,   kind   TEXT NOT NULL,          -- activate | check | rebind | revoke | deny   detail TEXT,   ip     TEXT,   at     INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "license_issues",
+    "tbl_name": "license_issues",
+    "ddl": "CREATE TABLE license_issues (   id          TEXT PRIMARY KEY,   order_id    TEXT NOT NULL,   user_id     TEXT NOT NULL,   product_id  TEXT NOT NULL,   license_key TEXT NOT NULL,   term_days   INTEGER NOT NULL DEFAULT 0,   expires_at  INTEGER NOT NULL DEFAULT 0,   created_at  INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "licenses",
+    "tbl_name": "licenses",
+    "ddl": "CREATE TABLE licenses (   key          TEXT PRIMARY KEY,   hwid         TEXT,   plan         TEXT NOT NULL DEFAULT 'aoe1',   note         TEXT,   created_at   INTEGER NOT NULL,   activated_at INTEGER,   expires_at   INTEGER NOT NULL DEFAULT 0,   -- unix GIÂY, 0 = vĩnh viễn   last_seen    INTEGER,   last_ip      TEXT,   revoked      INTEGER NOT NULL DEFAULT 0,   max_rebind   INTEGER NOT NULL DEFAULT 1,   rebinds      INTEGER NOT NULL DEFAULT 0 )"
+   },
+   {
+    "type": "table",
+    "name": "order_items",
+    "tbl_name": "order_items",
+    "ddl": "CREATE TABLE order_items (   id            TEXT PRIMARY KEY,   order_id      TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,   product_id    TEXT NOT NULL,   product_name  TEXT NOT NULL,   unit_price    INTEGER NOT NULL,   quantity      INTEGER NOT NULL DEFAULT 1,   line_total    INTEGER NOT NULL,   delivered_keys TEXT                            -- JSON array )"
+   },
+   {
+    "type": "table",
+    "name": "orders",
+    "tbl_name": "orders",
+    "ddl": "CREATE TABLE orders (   id           TEXT PRIMARY KEY,   code         TEXT NOT NULL UNIQUE,   user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,   status       TEXT NOT NULL DEFAULT 'pending',   -- pending | paid | delivered | cancelled | refunded   subtotal     INTEGER NOT NULL DEFAULT 0,   discount     INTEGER NOT NULL DEFAULT 0,   total        INTEGER NOT NULL DEFAULT 0,   coupon_code  TEXT,   payment_method TEXT NOT NULL DEFAULT 'wallet',  -- wallet | sepay | manual   payment_ref  TEXT,   note         TEXT,   created_at   INTEGER NOT NULL,   paid_at      INTEGER,   delivered_at INTEGER )"
+   },
+   {
+    "type": "table",
+    "name": "product_keys",
+    "tbl_name": "product_keys",
+    "ddl": "CREATE TABLE product_keys (   id           TEXT PRIMARY KEY,   product_id   TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,   secret       TEXT NOT NULL,                -- key / tài khoản (mã hoá base64 + che)   note         TEXT,   status       TEXT NOT NULL DEFAULT 'available',  -- available | reserved | sold | disabled   order_id     TEXT,   delivered_at INTEGER,   created_at   INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "products",
+    "tbl_name": "products",
+    "ddl": "CREATE TABLE products (   id             TEXT PRIMARY KEY,   slug           TEXT NOT NULL UNIQUE,   category_id    TEXT REFERENCES categories(id) ON DELETE SET NULL,   name           TEXT NOT NULL,   short_desc     TEXT,   description    TEXT,   image_url      TEXT,   badge          TEXT,                              -- HOT | NEW | SALE | null   price          INTEGER NOT NULL DEFAULT 0,        -- VND   compare_price  INTEGER,                           -- giá gốc để gạch   delivery_type  TEXT NOT NULL DEFAULT 'key',       -- key | account | file | manual   stock_count    INTEGER NOT NULL DEFAULT 0,   sold_count     INTEGER NOT NULL DEFAULT 0,   rating         REAL NOT NULL DEFAULT 5,   rating_count   INTEGER NOT NULL DEFAULT 0,   warranty_days  INTEGER NOT NULL DEFAULT 0,   duration_label TEXT,                              -- \"1 năm\", \"Vĩnh viễn\"   features       TEXT,                              -- JSON array string   active         INTEGER NOT NULL DEFAULT 1,   featured       INTEGER NOT NULL DEFAULT 0,   sort_order     INTEGER NOT NULL DEFAULT 0,   created_at     INTEGER NOT NULL,   updated_at     INTEGER NOT NULL , license_prefix TEXT, license_days   INTEGER NOT NULL DEFAULT 0)"
+   },
+   {
+    "type": "table",
+    "name": "rate_limits",
+    "tbl_name": "rate_limits",
+    "ddl": "CREATE TABLE rate_limits (   key        TEXT NOT NULL,   window_at  INTEGER NOT NULL,   count      INTEGER NOT NULL DEFAULT 0,   PRIMARY KEY (key, window_at) )"
+   },
+   {
+    "type": "table",
+    "name": "rebind_tokens",
+    "tbl_name": "rebind_tokens",
+    "ddl": "CREATE TABLE rebind_tokens (   token_hash TEXT PRIMARY KEY,   key        TEXT NOT NULL,   user_id    TEXT NOT NULL,   created_at INTEGER NOT NULL,   expires_at INTEGER NOT NULL,   used       INTEGER NOT NULL DEFAULT 0 )"
+   },
+   {
+    "type": "table",
+    "name": "reviews",
+    "tbl_name": "reviews",
+    "ddl": "CREATE TABLE reviews (   id         TEXT PRIMARY KEY,   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,   rating     INTEGER NOT NULL,   comment    TEXT,   created_at INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "sessions",
+    "tbl_name": "sessions",
+    "ddl": "CREATE TABLE sessions (   token_hash TEXT PRIMARY KEY,   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,   created_at INTEGER NOT NULL,   expires_at INTEGER NOT NULL,   ip         TEXT,   ua         TEXT )"
+   },
+   {
+    "type": "table",
+    "name": "settings",
+    "tbl_name": "settings",
+    "ddl": "CREATE TABLE settings (   key        TEXT PRIMARY KEY,   value      TEXT,   updated_at INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "topups",
+    "tbl_name": "topups",
+    "ddl": "CREATE TABLE topups (   id         TEXT PRIMARY KEY,   code       TEXT NOT NULL UNIQUE,               -- nội dung CK: NAP + code   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,   amount     INTEGER NOT NULL,   status     TEXT NOT NULL DEFAULT 'pending',    -- pending | paid | expired | cancelled   provider   TEXT NOT NULL DEFAULT 'sepay',   txn_ref    TEXT,   created_at INTEGER NOT NULL,   expires_at INTEGER NOT NULL,   paid_at    INTEGER , notified_at INTEGER, tg_message_id INTEGER)"
+   },
+   {
+    "type": "table",
+    "name": "trial_attempts",
+    "tbl_name": "trial_attempts",
+    "ddl": "CREATE TABLE trial_attempts (   id      INTEGER PRIMARY KEY AUTOINCREMENT,   weak    TEXT,   hwid    TEXT,   ip      TEXT,   action  TEXT NOT NULL,   -- start | resume | denied_expired | denied_device | denied_ip | denied_global   detail  TEXT,   at      INTEGER NOT NULL )"
+   },
+   {
+    "type": "table",
+    "name": "trial_grants",
+    "tbl_name": "trial_grants",
+    "ddl": "CREATE TABLE trial_grants (   weak_hwid   TEXT PRIMARY KEY,   -- sha256(machineguid|bios|cpu) — KHÔNG có volume serial   lic_key     TEXT NOT NULL,      -- trỏ tới licenses.key   hwid        TEXT NOT NULL,      -- HWID đầy đủ lần đầu   ip_first    TEXT,   ua_first    TEXT,   first_at    INTEGER NOT NULL,   expires_at  INTEGER NOT NULL,   resume_count INTEGER NOT NULL DEFAULT 0,   last_at     INTEGER,   converted_key TEXT,             -- key trả tiền nếu khách mua sau trial   converted_at  INTEGER,   suspect     INTEGER NOT NULL DEFAULT 0   -- 1 = có dấu hiệu đổi HWID )"
+   },
+   {
+    "type": "table",
+    "name": "users",
+    "tbl_name": "users",
+    "ddl": "CREATE TABLE users (   id            TEXT PRIMARY KEY,   email         TEXT NOT NULL UNIQUE,   password_hash TEXT NOT NULL,   password_salt TEXT NOT NULL,   full_name     TEXT,   phone         TEXT,   role          TEXT NOT NULL DEFAULT 'user',      -- user | staff | admin   status        TEXT NOT NULL DEFAULT 'active',    -- active | locked   balance       INTEGER NOT NULL DEFAULT 0,        -- VND   created_at    INTEGER NOT NULL,   updated_at    INTEGER NOT NULL,   last_login_at INTEGER , username TEXT)"
+   },
+   {
+    "type": "table",
+    "name": "wallet_transactions",
+    "tbl_name": "wallet_transactions",
+    "ddl": "CREATE TABLE wallet_transactions (   id          TEXT PRIMARY KEY,   user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,   type        TEXT NOT NULL,                     -- topup | purchase | refund | admin_credit | admin_debit   amount      INTEGER NOT NULL,                  -- dương = cộng, âm = trừ   balance_after INTEGER NOT NULL,   status      TEXT NOT NULL DEFAULT 'success',   -- pending | success | failed   reference   TEXT,                              -- mã chuyển khoản / order code   description TEXT,   created_at  INTEGER NOT NULL )"
+   },
+   {
+    "type": "index",
+    "name": "idx_audit_created",
+    "tbl_name": "audit_logs",
+    "ddl": "CREATE INDEX idx_audit_created ON audit_logs(created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_it_key",
+    "tbl_name": "install_tokens",
+    "ddl": "CREATE INDEX idx_it_key ON install_tokens(key, expires_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_it_user",
+    "tbl_name": "install_tokens",
+    "ddl": "CREATE INDEX idx_it_user ON install_tokens(user_id, created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_keys_fifo",
+    "tbl_name": "product_keys",
+    "ddl": "CREATE INDEX idx_keys_fifo ON product_keys(product_id, status, created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_keys_order",
+    "tbl_name": "product_keys",
+    "ddl": "CREATE INDEX idx_keys_order ON product_keys(order_id)"
+   },
+   {
+    "type": "index",
+    "name": "idx_li_key",
+    "tbl_name": "license_issues",
+    "ddl": "CREATE INDEX idx_li_key   ON license_issues(license_key)"
+   },
+   {
+    "type": "index",
+    "name": "idx_li_order",
+    "tbl_name": "license_issues",
+    "ddl": "CREATE INDEX idx_li_order ON license_issues(order_id)"
+   },
+   {
+    "type": "index",
+    "name": "idx_li_order_key",
+    "tbl_name": "license_issues",
+    "ddl": "CREATE INDEX idx_li_order_key ON license_issues(order_id, license_key)"
+   },
+   {
+    "type": "index",
+    "name": "idx_li_user",
+    "tbl_name": "license_issues",
+    "ddl": "CREATE INDEX idx_li_user  ON license_issues(user_id, created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_lic_created",
+    "tbl_name": "licenses",
+    "ddl": "CREATE INDEX idx_lic_created ON licenses(created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_lic_expires",
+    "tbl_name": "licenses",
+    "ddl": "CREATE INDEX idx_lic_expires ON licenses(expires_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_lic_hwid",
+    "tbl_name": "licenses",
+    "ddl": "CREATE INDEX idx_lic_hwid    ON licenses(hwid)"
+   },
+   {
+    "type": "index",
+    "name": "idx_licatt_ip",
+    "tbl_name": "lic_attempts",
+    "ddl": "CREATE INDEX idx_licatt_ip ON lic_attempts(ip, at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_licev_key",
+    "tbl_name": "lic_events",
+    "ddl": "CREATE INDEX idx_licev_key ON lic_events(key, at DESC)"
+   },
+   {
+    "type": "index",
+    "name": "idx_order_items_order",
+    "tbl_name": "order_items",
+    "ddl": "CREATE INDEX idx_order_items_order ON order_items(order_id)"
+   },
+   {
+    "type": "index",
+    "name": "idx_orders_code",
+    "tbl_name": "orders",
+    "ddl": "CREATE INDEX idx_orders_code ON orders(code)"
+   },
+   {
+    "type": "index",
+    "name": "idx_orders_status",
+    "tbl_name": "orders",
+    "ddl": "CREATE INDEX idx_orders_status ON orders(status)"
+   },
+   {
+    "type": "index",
+    "name": "idx_orders_status_created",
+    "tbl_name": "orders",
+    "ddl": "CREATE INDEX idx_orders_status_created ON orders(status, created_at, total)"
+   },
+   {
+    "type": "index",
+    "name": "idx_orders_user",
+    "tbl_name": "orders",
+    "ddl": "CREATE INDEX idx_orders_user ON orders(user_id, created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_products_active",
+    "tbl_name": "products",
+    "ddl": "CREATE INDEX idx_products_active ON products(active, sort_order)"
+   },
+   {
+    "type": "index",
+    "name": "idx_products_cat",
+    "tbl_name": "products",
+    "ddl": "CREATE INDEX idx_products_cat ON products(category_id)"
+   },
+   {
+    "type": "index",
+    "name": "idx_products_slug",
+    "tbl_name": "products",
+    "ddl": "CREATE INDEX idx_products_slug ON products(slug)"
+   },
+   {
+    "type": "index",
+    "name": "idx_reviews_product",
+    "tbl_name": "reviews",
+    "ddl": "CREATE INDEX idx_reviews_product ON reviews(product_id, created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_rt_key",
+    "tbl_name": "rebind_tokens",
+    "ddl": "CREATE INDEX idx_rt_key ON rebind_tokens(key, expires_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_rt_user",
+    "tbl_name": "rebind_tokens",
+    "ddl": "CREATE INDEX idx_rt_user ON rebind_tokens(user_id, created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_sessions_user",
+    "tbl_name": "sessions",
+    "ddl": "CREATE INDEX idx_sessions_user ON sessions(user_id)"
+   },
+   {
+    "type": "index",
+    "name": "idx_ta_at",
+    "tbl_name": "trial_attempts",
+    "ddl": "CREATE INDEX idx_ta_at   ON trial_attempts(at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_ta_ip",
+    "tbl_name": "trial_attempts",
+    "ddl": "CREATE INDEX idx_ta_ip   ON trial_attempts(ip, at DESC)"
+   },
+   {
+    "type": "index",
+    "name": "idx_ta_weak",
+    "tbl_name": "trial_attempts",
+    "ddl": "CREATE INDEX idx_ta_weak ON trial_attempts(weak, at DESC)"
+   },
+   {
+    "type": "index",
+    "name": "idx_tg_exp",
+    "tbl_name": "trial_grants",
+    "ddl": "CREATE INDEX idx_tg_exp  ON trial_grants(expires_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_tg_hwid",
+    "tbl_name": "trial_grants",
+    "ddl": "CREATE INDEX idx_tg_hwid ON trial_grants(hwid)"
+   },
+   {
+    "type": "index",
+    "name": "idx_tg_ip",
+    "tbl_name": "trial_grants",
+    "ddl": "CREATE INDEX idx_tg_ip   ON trial_grants(ip_first, first_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_topups_code",
+    "tbl_name": "topups",
+    "ddl": "CREATE INDEX idx_topups_code ON topups(code)"
+   },
+   {
+    "type": "index",
+    "name": "idx_topups_pending",
+    "tbl_name": "topups",
+    "ddl": "CREATE INDEX idx_topups_pending   ON topups(status, created_at DESC)"
+   },
+   {
+    "type": "index",
+    "name": "idx_topups_user",
+    "tbl_name": "topups",
+    "ddl": "CREATE INDEX idx_topups_user ON topups(user_id, created_at)"
+   },
+   {
+    "type": "index",
+    "name": "idx_users_email",
+    "tbl_name": "users",
+    "ddl": "CREATE INDEX idx_users_email ON users(email)"
+   },
+   {
+    "type": "index",
+    "name": "idx_users_username",
+    "tbl_name": "users",
+    "ddl": "CREATE UNIQUE INDEX idx_users_username ON users(username) WHERE username IS NOT NULL"
+   },
+   {
+    "type": "index",
+    "name": "idx_wallet_user",
+    "tbl_name": "wallet_transactions",
+    "ddl": "CREATE INDEX idx_wallet_user ON wallet_transactions(user_id, created_at)"
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "Danh sách cột mọi bảng",
+  "sql": "SELECT m.name AS tbl, p.cid, p.name AS col, p.type, p.\"notnull\", p.dflt_value, p.pk\nFROM sqlite_master m\nJOIN pragma_table_info(m.name) p\nWHERE m.type='table' AND m.name NOT LIKE 'sqlite_%'\nORDER BY m.name, p.cid",
+  "rows": null,
+  "error": "[{\"code\":7500,\"message\":\"not authorized: SQLITE_AUTH\"}]"
+ },
+ {
+  "label": "Index của mọi bảng (kèm cột)",
+  "sql": "SELECT m.name AS tbl, il.name AS idx, il.\"unique\", il.origin, group_concat(ii.name, ',') AS cols, il.partial\nFROM sqlite_master m\nJOIN pragma_index_list(m.name) il\nJOIN pragma_index_info(il.name) ii\nWHERE m.type='table' AND m.name NOT LIKE 'sqlite_%'\nGROUP BY m.name, il.name\nORDER BY m.name, il.name",
+  "rows": null,
+  "error": "[{\"code\":7500,\"message\":\"not authorized: SQLITE_AUTH\"}]"
+ },
+ {
+  "label": "Foreign key thực tế",
+  "sql": "SELECT m.name AS tbl, f.\"table\" AS ref_tbl, f.\"from\" AS col, f.\"to\" AS ref_col, f.on_delete, f.on_update\nFROM sqlite_master m\nJOIN pragma_foreign_key_list(m.name) f\nWHERE m.type='table' AND m.name NOT LIKE 'sqlite_%'\nORDER BY m.name, f.id",
+  "rows": null,
+  "error": "[{\"code\":7500,\"message\":\"not authorized: SQLITE_AUTH\"}]"
+ },
+ {
+  "label": "Đếm dòng từng bảng",
+  "sql": "SELECT 'users' t, COUNT(*) n FROM users\nUNION ALL SELECT 'sessions', COUNT(*) FROM sessions\nUNION ALL SELECT 'categories', COUNT(*) FROM categories\nUNION ALL SELECT 'products', COUNT(*) FROM products\nUNION ALL SELECT 'product_keys', COUNT(*) FROM product_keys\nUNION ALL SELECT 'orders', COUNT(*) FROM orders\nUNION ALL SELECT 'order_items', COUNT(*) FROM order_items\nUNION ALL SELECT 'wallet_transactions', COUNT(*) FROM wallet_transactions\nUNION ALL SELECT 'topups', COUNT(*) FROM topups\nUNION ALL SELECT 'coupons', COUNT(*) FROM coupons\nUNION ALL SELECT 'reviews', COUNT(*) FROM reviews\nUNION ALL SELECT 'audit_logs', COUNT(*) FROM audit_logs\nUNION ALL SELECT 'settings', COUNT(*) FROM settings\nUNION ALL SELECT 'rate_limits', COUNT(*) FROM rate_limits\nUNION ALL SELECT 'licenses', COUNT(*) FROM licenses\nUNION ALL SELECT 'lic_events', COUNT(*) FROM lic_events\nUNION ALL SELECT 'lic_attempts', COUNT(*) FROM lic_attempts\nUNION ALL SELECT 'license_issues', COUNT(*) FROM license_issues\nUNION ALL SELECT 'install_tokens', COUNT(*) FROM install_tokens\nUNION ALL SELECT 'rebind_tokens', COUNT(*) FROM rebind_tokens\nUNION ALL SELECT 'trial_grants', COUNT(*) FROM trial_grants\nUNION ALL SELECT 'trial_attempts', COUNT(*) FROM trial_attempts\nUNION ALL SELECT 'banned_devices', COUNT(*) FROM banned_devices",
+  "rows": null,
+  "error": "[{\"code\":7500,\"message\":\"too many terms in compound SELECT: SQLITE_ERROR\"}]"
+ },
+ {
+  "label": "PRAGMA integrity + foreign_key_check",
+  "sql": "PRAGMA foreign_key_check",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "pragma compile options / version",
+  "sql": "SELECT sqlite_version() AS ver",
+  "rows": null,
+  "error": "[{\"code\":7500,\"message\":\"not authorized to use function: sqlite_version at offset 7: SQLITE_ERROR\"}]"
+ },
+ {
+  "label": "journal mode + page info",
+  "sql": "PRAGMA journal_mode",
+  "rows": null,
+  "error": "[{\"code\":7500,\"message\":\"not authorized: SQLITE_AUTH\"}]"
+ },
+ {
+  "label": "Số trang + kích thước",
+  "sql": "PRAGMA page_count",
+  "rows": null,
+  "error": "[{\"code\":7500,\"message\":\"not authorized: SQLITE_AUTH\"}]"
+ },
+ {
+  "label": "Dữ liệu test còn sót",
+  "sql": "SELECT id, email, role, status, balance, created_at FROM users\nWHERE email LIKE '%mailinator%' OR email LIKE '%test%' OR email LIKE '%example%'\n   OR email LIKE '%@test.vn' OR email LIKE '%localhost%' OR email LIKE '%demo%'\nORDER BY created_at DESC LIMIT 100",
+  "rows": [
+   {
+    "id": "31326100-3190-44e0-98d1-76a6a7d1b048",
+    "email": "xmwao9epr@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794314076468
+   },
+   {
+    "id": "a71b07d1-da58-47d4-8c5a-3f64ac105a04",
+    "email": "e2emwao9epr@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794314062822
+   },
+   {
+    "id": "b20de343-7518-45cc-963e-3c81b3917637",
+    "email": "xmwamx4hz@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794311828690
+   },
+   {
+    "id": "86759e3d-d27e-470d-91dc-391d435dae42",
+    "email": "e2emwamx4hz@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794311810269
+   },
+   {
+    "id": "b017cba7-f0c8-456d-841f-d1d203ec000c",
+    "email": "xmwalwj6u@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794310120505
+   },
+   {
+    "id": "84bb305e-6ed4-4b63-aa70-f8cc51bbdca6",
+    "email": "e2emwalwj6u@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794310103248
+   },
+   {
+    "id": "0b861804-4637-400c-ba28-fd3b5e96676a",
+    "email": "uxff2mwalucwj@mailinator.com",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794310005859
+   },
+   {
+    "id": "de8fde09-d273-43e0-bf58-976ac197aeff",
+    "email": "uxff1mwaljpw2@mailinator.com",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794309509461
+   },
+   {
+    "id": "37c42cec-6a8e-48ce-99ea-5383dc4fa60b",
+    "email": "uxe2e1mwal4du9@mailinator.com",
+    "role": "user",
+    "status": "active",
+    "balance": 500000,
+    "created_at": 1794308787692
+   },
+   {
+    "id": "372baaf9-f2ba-47dd-bfec-9c9178c3f913",
+    "email": "uxlive3mwal1m2e@mailinator.com",
+    "role": "user",
+    "status": "active",
+    "balance": 200000,
+    "created_at": 1794308658141
+   },
+   {
+    "id": "be01f4ad-54c6-4afc-8118-982c7553c89b",
+    "email": "uxlive2mwakzxqb@mailinator.com",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794308580051
+   },
+   {
+    "id": "5130377d-21a7-4e74-bc4e-2d92ea744f98",
+    "email": "uxlive1mwakz0n1@mailinator.com",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794308538504
+   },
+   {
+    "id": "bf5238f4-8759-47e0-81d2-cd33d648da3e",
+    "email": "xmwakp9hb@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794308098319
+   },
+   {
+    "id": "766398c2-54d3-4bf7-93a8-180958a672a1",
+    "email": "e2emwakp9hb@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794308084068
+   },
+   {
+    "id": "dde2429a-35ee-4021-82df-1c9030e11fc5",
+    "email": "xmwajwhw0@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794306757087
+   },
+   {
+    "id": "c343bc35-d77b-4316-9351-d733e29618c3",
+    "email": "e2emwajwhw0@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794306741782
+   },
+   {
+    "id": "3985d24b-6519-49d1-9675-57b144077632",
+    "email": "xmwaj3aux@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794305395150
+   },
+   {
+    "id": "a13409a7-8e88-467f-89d4-2a45b06227f8",
+    "email": "e2emwaj3aux@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794305379662
+   },
+   {
+    "id": "bc3a6bba-00e6-4717-914f-7ffc0c3550c2",
+    "email": "xmwagestb@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794300891975
+   },
+   {
+    "id": "e7c7cc63-fe5e-4b7f-9074-620d2312c9e1",
+    "email": "e2emwagestb@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794300877269
+   },
+   {
+    "id": "f7eb9b0f-99ad-41bf-9302-a7f341ce8e1e",
+    "email": "bl5mwadc3g2@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794295707152
+   },
+   {
+    "id": "aeda0714-c7aa-418f-8e5e-517fdce6c0df",
+    "email": "xmwadbdy0@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794295697954
+   },
+   {
+    "id": "28cc6c2b-3cfc-49aa-9d27-8056464699cc",
+    "email": "e2emwadbdy0@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794295679511
+   },
+   {
+    "id": "d9846362-f8fa-4eac-b056-d49f814cb158",
+    "email": "xmwacxmvv@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794295058849
+   },
+   {
+    "id": "97c4983a-9878-40b0-b061-1097ca5d2ba4",
+    "email": "e2emwacxmvv@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794295038338
+   },
+   {
+    "id": "8bc35f37-7c68-4d51-9f03-ccd8bb72e5ef",
+    "email": "xmwabajru@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794292296093
+   },
+   {
+    "id": "fe8f0f82-2631-4912-ad70-15b5097970b9",
+    "email": "e2emwabajru@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794292280797
+   },
+   {
+    "id": "f7f84a3c-7a0e-4418-a0c9-ea263981eb0d",
+    "email": "bl5mwab8ot7@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794292189328
+   },
+   {
+    "id": "a2d03477-ddfe-4ef2-a8b2-a5a3796470fd",
+    "email": "licmwab8lcc@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794292184919
+   },
+   {
+    "id": "23f963b4-4425-4798-b12a-5586238819c6",
+    "email": "xmwab7zy2@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794292177447
+   },
+   {
+    "id": "b0830279-b520-42ff-948d-b6ad320d3310",
+    "email": "e2emwab7zy2@test.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 0,
+    "created_at": 1794292162367
+   },
+   {
+    "id": "u-demo",
+    "email": "demo@muabankey.vn",
+    "role": "user",
+    "status": "active",
+    "balance": 4319000,
+    "created_at": 1794265066719
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "User balance âm",
+  "sql": "SELECT id, email, balance FROM users WHERE balance < 0",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "Topup status lạ",
+  "sql": "SELECT status, COUNT(*) n FROM topups GROUP BY status ORDER BY n DESC",
+  "rows": [
+   {
+    "status": "expired",
+    "n": 29
+   },
+   {
+    "status": "paid",
+    "n": 10
+   },
+   {
+    "status": "cancelled",
+    "n": 4
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "Order status lạ",
+  "sql": "SELECT status, COUNT(*) n FROM orders GROUP BY status ORDER BY n DESC",
+  "rows": [
+   {
+    "status": "cancelled",
+    "n": 18
+   },
+   {
+    "status": "refunded",
+    "n": 4
+   },
+   {
+    "status": "delivered",
+    "n": 1
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "product_keys status",
+  "sql": "SELECT status, COUNT(*) n, SUM(CASE WHEN order_id IS NULL THEN 1 ELSE 0 END) no_order,\n       SUM(CASE WHEN order_id IS NOT NULL THEN 1 ELSE 0 END) has_order\nFROM product_keys GROUP BY status",
+  "rows": [
+   {
+    "status": "available",
+    "n": 84,
+    "no_order": 84,
+    "has_order": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "license revoked=0 mà đã hết hạn (giây)",
+  "sql": "SELECT COUNT(*) AS expired_not_marked FROM licenses\nWHERE revoked = 0 AND expires_at > 0 AND expires_at < CAST(strftime('%s','now') AS INTEGER)",
+  "rows": [
+   {
+    "expired_not_marked": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "trial_grants mồ côi",
+  "sql": "SELECT COUNT(*) AS orphan_trial_grants FROM trial_grants g\nWHERE NOT EXISTS (SELECT 1 FROM licenses l WHERE l.key = g.lic_key)",
+  "rows": [
+   {
+    "orphan_trial_grants": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "license_issues trỏ order không tồn tại",
+  "sql": "SELECT COUNT(*) AS orphan_li_order FROM license_issues li\nWHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = li.order_id)",
+  "rows": [
+   {
+    "orphan_li_order": 15
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "license_issues trỏ license không tồn tại",
+  "sql": "SELECT COUNT(*) AS orphan_li_lic FROM license_issues li\nWHERE NOT EXISTS (SELECT 1 FROM licenses l WHERE l.key = li.license_key)",
+  "rows": [
+   {
+    "orphan_li_lic": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "wallet_transactions mồ côi",
+  "sql": "SELECT COUNT(*) AS orphan_wt FROM wallet_transactions w\nWHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = w.user_id)",
+  "rows": [
+   {
+    "orphan_wt": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "session hết hạn chưa xoá (ms)",
+  "sql": "SELECT COUNT(*) AS expired_sessions FROM sessions\nWHERE expires_at < CAST(strftime('%s','now') AS INTEGER) * 1000",
+  "rows": [
+   {
+    "expired_sessions": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "install/rebind token hết hạn chưa xoá (giây)",
+  "sql": "SELECT (SELECT COUNT(*) FROM install_tokens WHERE expires_at < CAST(strftime('%s','now') AS INTEGER)) AS it_expired,\n       (SELECT COUNT(*) FROM rebind_tokens WHERE expires_at < CAST(strftime('%s','now') AS INTEGER)) AS rt_expired,\n       (SELECT COUNT(*) FROM rebind_tokens WHERE used = 1) AS rt_used",
+  "rows": [
+   {
+    "it_expired": 0,
+    "rt_expired": 0,
+    "rt_used": 0
+   }
+  ],
+  "error": null
+ }
+]

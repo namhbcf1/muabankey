@@ -77,10 +77,10 @@ export function renderHome() {
       </div>
 
       <div class="hero-stats">
-        <div class="hero-stat"><div class="val" data-count="12480">0</div><div class="lbl">Đơn hàng thành công</div></div>
-        <div class="hero-stat"><div class="val" data-count="215">0</div><div class="lbl">Sản phẩm đang bán</div></div>
-        <div class="hero-stat"><div class="val" data-count="99">0</div><div class="lbl">% khách hài lòng</div></div>
-        <div class="hero-stat"><div class="val" data-count="30">0</div><div class="lbl">Giây giao key trung bình</div></div>
+        <div class="hero-stat"><div class="val" data-stat="orders">—</div><div class="lbl">Đơn hàng thành công</div></div>
+        <div class="hero-stat"><div class="val" data-stat="products">—</div><div class="lbl">Sản phẩm đang bán</div></div>
+        <div class="hero-stat"><div class="val" data-stat="licenses">—</div><div class="lbl">License đã cấp</div></div>
+        <div class="hero-stat"><div class="val" data-stat="customers">—</div><div class="lbl">Khách hàng</div></div>
       </div>
     </div>
   </section>
@@ -294,10 +294,11 @@ export async function mountHome(root) {
     trialBtn.onclick = () => showTrialModal();
   }
 
-  // Animate counters
-  root.querySelectorAll('[data-count]').forEach((el) => {
-    const target = Number(el.dataset.count);
-    const dur = 1400;
+  // ===== SỐ LIỆU THẬT =====
+  // Trước đây là số bịa (12.480 đơn / 215 sản phẩm / 99% / 30 giây)
+  // trong khi DB thật chỉ có vài đơn — rủi ro mất uy tín nếu khách kiểm tra.
+  const animateCount = (el, target) => {
+    const dur = 1200;
     const start = performance.now();
     const tick = (now) => {
       const prog = Math.min(1, (now - start) / dur);
@@ -306,6 +307,20 @@ export async function mountHome(root) {
       if (prog < 1) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
+  };
+
+  api('/api/stats').then((s) => {
+    const set = (name, val) => {
+      const el = root.querySelector(`[data-stat="${name}"]`);
+      if (el) animateCount(el, Number(val) || 0);
+    };
+    set('orders', s.orders);
+    set('products', s.products);
+    set('licenses', s.licenses);
+    set('customers', s.customers);
+  }).catch(() => {
+    // Không lấy được số -> ẩn cả khối thay vì hiện "—"
+    root.querySelectorAll('[data-stat]').forEach((el) => { el.textContent = '—'; });
   });
 
   // Categories

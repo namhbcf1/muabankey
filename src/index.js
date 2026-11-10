@@ -16,6 +16,7 @@ import * as ai from './routes/ai.js';
 import * as license from './routes/license.js';
 import * as licenseServer from './routes/license-server.js';
 import * as trial from './routes/trial.js';
+import * as stats from './routes/stats.js';
 import * as installer from './routes/installer.js';
 
 const r = new Router();
@@ -38,6 +39,7 @@ r.patch('/api/auth/profile', auth.updateProfile);
 r.post('/api/auth/change-password', auth.changePassword);
 
 /* ---------- Catalog ---------- */
+r.get('/api/stats', (env) => stats.publicStats(env));
 r.get('/api/categories', products.listCategories);
 r.get('/api/products', products.listProducts);
 r.get('/api/products/featured', products.getFeatured);

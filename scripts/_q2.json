@@ -1,0 +1,2828 @@
+[
+ {
+  "label": "count users",
+  "sql": "SELECT COUNT(*) n FROM users",
+  "rows": [
+   {
+    "n": 33
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count sessions",
+  "sql": "SELECT COUNT(*) n FROM sessions",
+  "rows": [
+   {
+    "n": 155
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count products",
+  "sql": "SELECT COUNT(*) n FROM products",
+  "rows": [
+   {
+    "n": 22
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count product_keys",
+  "sql": "SELECT COUNT(*) n FROM product_keys",
+  "rows": [
+   {
+    "n": 84
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count orders",
+  "sql": "SELECT COUNT(*) n FROM orders",
+  "rows": [
+   {
+    "n": 23
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count order_items",
+  "sql": "SELECT COUNT(*) n FROM order_items",
+  "rows": [
+   {
+    "n": 25
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count wallet_transactions",
+  "sql": "SELECT COUNT(*) n FROM wallet_transactions",
+  "rows": [
+   {
+    "n": 21
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count topups",
+  "sql": "SELECT COUNT(*) n FROM topups",
+  "rows": [
+   {
+    "n": 43
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count licenses",
+  "sql": "SELECT COUNT(*) n FROM licenses",
+  "rows": [
+   {
+    "n": 4047
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count license_issues",
+  "sql": "SELECT COUNT(*) n FROM license_issues",
+  "rows": [
+   {
+    "n": 18
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count lic_events",
+  "sql": "SELECT COUNT(*) n FROM lic_events",
+  "rows": [
+   {
+    "n": 134
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count trial_grants",
+  "sql": "SELECT COUNT(*) n FROM trial_grants",
+  "rows": [
+   {
+    "n": 2
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count trial_attempts",
+  "sql": "SELECT COUNT(*) n FROM trial_attempts",
+  "rows": [
+   {
+    "n": 5
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count audit_logs",
+  "sql": "SELECT COUNT(*) n FROM audit_logs",
+  "rows": [
+   {
+    "n": 423
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count rate_limits",
+  "sql": "SELECT COUNT(*) n FROM rate_limits",
+  "rows": [
+   {
+    "n": 41
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count settings",
+  "sql": "SELECT COUNT(*) n FROM settings",
+  "rows": [
+   {
+    "n": 11
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count install_tokens",
+  "sql": "SELECT COUNT(*) n FROM install_tokens",
+  "rows": [
+   {
+    "n": 33
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count rebind_tokens",
+  "sql": "SELECT COUNT(*) n FROM rebind_tokens",
+  "rows": [
+   {
+    "n": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count banned_devices",
+  "sql": "SELECT COUNT(*) n FROM banned_devices",
+  "rows": [
+   {
+    "n": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count categories",
+  "sql": "SELECT COUNT(*) n FROM categories",
+  "rows": [
+   {
+    "n": 7
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count coupons",
+  "sql": "SELECT COUNT(*) n FROM coupons",
+  "rows": [
+   {
+    "n": 4
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "count reviews",
+  "sql": "SELECT COUNT(*) n FROM reviews",
+  "rows": [
+   {
+    "n": 3
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "orders — toàn bộ",
+  "sql": "SELECT id, code, user_id, status, subtotal, discount, total, coupon_code, payment_method, created_at, paid_at, delivered_at FROM orders ORDER BY created_at DESC",
+  "rows": [
+   {
+    "id": "ad20eacc-938c-4022-8e4e-4e6583805df7",
+    "code": "MBK-ED4NA4",
+    "user_id": "a71b07d1-da58-47d4-8c5a-3f64ac105a04",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794314069598,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "cd796e84-1498-4870-a548-4d49fa42ac58",
+    "code": "MBK-AJQ4WK",
+    "user_id": "86759e3d-d27e-470d-91dc-391d435dae42",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794311818393,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "a2b95bf9-0952-4e80-aadb-5beba5fb91ea",
+    "code": "MBK-KZ9AJV",
+    "user_id": "84bb305e-6ed4-4b63-aa70-f8cc51bbdca6",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794310111363,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "4c836302-1dbe-4790-975b-1795f0f331f8",
+    "code": "MBK-AZF9QZ",
+    "user_id": "37c42cec-6a8e-48ce-99ea-5383dc4fa60b",
+    "status": "refunded",
+    "subtotal": 180000,
+    "discount": 0,
+    "total": 180000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794309983883,
+    "paid_at": 1794309985073,
+    "delivered_at": 1794309985337
+   },
+   {
+    "id": "f32237e6-4bef-4f4f-b6f3-ff1be953aa58",
+    "code": "MBK-JJMF5F",
+    "user_id": "37c42cec-6a8e-48ce-99ea-5383dc4fa60b",
+    "status": "refunded",
+    "subtotal": 180000,
+    "discount": 0,
+    "total": 180000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794309104117,
+    "paid_at": 1794309105196,
+    "delivered_at": 1794309105490
+   },
+   {
+    "id": "9802d6a1-af55-4115-a130-c828cdd44081",
+    "code": "MBK-KXAKJF",
+    "user_id": "37c42cec-6a8e-48ce-99ea-5383dc4fa60b",
+    "status": "cancelled",
+    "subtotal": 540000,
+    "discount": 0,
+    "total": 540000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794309049071,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "c2f5d80b-948a-4d95-8026-cea87da703db",
+    "code": "MBK-EJAT3B",
+    "user_id": "37c42cec-6a8e-48ce-99ea-5383dc4fa60b",
+    "status": "cancelled",
+    "subtotal": 360000,
+    "discount": 0,
+    "total": 360000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794308981219,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "2da352d4-8df8-4993-bc71-3835474bae3c",
+    "code": "MBK-3RTFWJ",
+    "user_id": "37c42cec-6a8e-48ce-99ea-5383dc4fa60b",
+    "status": "cancelled",
+    "subtotal": 180000,
+    "discount": 0,
+    "total": 180000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794308828254,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "9872f6d7-4a4c-4fee-ad1e-5256f6266158",
+    "code": "MBK-4FKGBL",
+    "user_id": "766398c2-54d3-4bf7-93a8-180958a672a1",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794308091143,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "86df9011-e59e-4f1d-b6cb-48bd0401f636",
+    "code": "MBK-C3H5BK",
+    "user_id": "c343bc35-d77b-4316-9351-d733e29618c3",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794306749474,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "352f60c2-efc4-4186-bc99-40764b14df0f",
+    "code": "MBK-QWK7WV",
+    "user_id": "a13409a7-8e88-467f-89d4-2a45b06227f8",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794305387408,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "f9c62e4a-958c-4da8-b5ec-1487ebb99fb4",
+    "code": "MBK-PDX788",
+    "user_id": "e7c7cc63-fe5e-4b7f-9074-620d2312c9e1",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794300884215,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "4f0356f0-491b-4f2b-b7d2-abb6f3cc0687",
+    "code": "MBK-SBG5S8",
+    "user_id": "f7eb9b0f-99ad-41bf-9302-a7f341ce8e1e",
+    "status": "cancelled",
+    "subtotal": 3600000,
+    "discount": 0,
+    "total": 3600000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794295710454,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "73b70ee7-ced3-4f73-a5bf-3f4bf9f438fe",
+    "code": "MBK-UMX9TX",
+    "user_id": "28cc6c2b-3cfc-49aa-9d27-8056464699cc",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794295689125,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "3a5c05a1-97f9-4f0b-b5be-8f067fbdd2dc",
+    "code": "MBK-JAXESA",
+    "user_id": "97c4983a-9878-40b0-b061-1097ca5d2ba4",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794295047451,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "c5d792a9-1f97-4a2d-8910-aa56946c795f",
+    "code": "MBK-R74S7S",
+    "user_id": "fe8f0f82-2631-4912-ad70-15b5097970b9",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794292288629,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "c3bcb813-3123-4b8b-8aba-f239a01165b1",
+    "code": "MBK-FZ4FNA",
+    "user_id": "f7f84a3c-7a0e-4418-a0c9-ea263981eb0d",
+    "status": "cancelled",
+    "subtotal": 3600000,
+    "discount": 0,
+    "total": 3600000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794292192440,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "0ce9e99b-84d1-413e-83ae-e00c76830182",
+    "code": "MBK-WSSQJ9",
+    "user_id": "b0830279-b520-42ff-948d-b6ad320d3310",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 45000,
+    "total": 405000,
+    "coupon_code": "WELCOME10",
+    "payment_method": "wallet",
+    "created_at": 1794292170176,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "c509c610-e374-41a6-9132-837cd36ba395",
+    "code": "MBK-P9MN58",
+    "user_id": "u-admin",
+    "status": "refunded",
+    "subtotal": 450000,
+    "discount": 0,
+    "total": 450000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794271416106,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "f880c885-dedc-4083-9345-0a9ece4bc867",
+    "code": "MBK-ZG63TA",
+    "user_id": "u-admin",
+    "status": "cancelled",
+    "subtotal": 1925000,
+    "discount": 0,
+    "total": 1925000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794271334421,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "2afa9e93-2b39-43e3-8629-45b8538663e7",
+    "code": "MBK-2XZ6LM",
+    "user_id": "u-admin",
+    "status": "cancelled",
+    "subtotal": 450000,
+    "discount": 0,
+    "total": 450000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794271229355,
+    "paid_at": null,
+    "delivered_at": null
+   },
+   {
+    "id": "184ed41d-b15a-493d-8a68-7322e5b9748f",
+    "code": "MBK-3DSMZM",
+    "user_id": "u-demo",
+    "status": "refunded",
+    "subtotal": 450000,
+    "discount": 0,
+    "total": 450000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794270603629,
+    "paid_at": 1794270604807,
+    "delivered_at": 1794270604919
+   },
+   {
+    "id": "8ce9d8d5-0447-4509-9693-c4eb1ccffd5c",
+    "code": "MBK-8DDVQM",
+    "user_id": "u-demo",
+    "status": "delivered",
+    "subtotal": 70000,
+    "discount": 0,
+    "total": 70000,
+    "coupon_code": null,
+    "payment_method": "wallet",
+    "created_at": 1794269077613,
+    "paid_at": 1794269078867,
+    "delivered_at": 1794269078867
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "license_issues mồ côi — chi tiết",
+  "sql": "SELECT li.id, li.order_id, li.user_id, li.product_id, li.license_key, li.term_days, li.created_at\nFROM license_issues li\nWHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = li.order_id)\nORDER BY li.created_at DESC LIMIT 50",
+  "rows": [
+   {
+    "id": "5ebbec4e-cef2-4e92-a16a-e2a8a3287b99",
+    "order_id": "6b87a2d6-cf93-479c-b5cd-211e8c20b1cf",
+    "user_id": "ab42a9f0-0855-419c-a0f8-bfdab9a28f16",
+    "product_id": "p-lic-forever",
+    "license_key": "AOE1-XR8D-YCHJ-MYUZ",
+    "term_days": 0,
+    "created_at": 1794272996161
+   },
+   {
+    "id": "bcce68f6-58ac-484b-828a-fe78fc225ee8",
+    "order_id": "bd503f29-7598-4bf6-a51b-c858402a040a",
+    "user_id": "491b9348-6d37-4a26-81dd-54e46dc644c0",
+    "product_id": "p-lic-month",
+    "license_key": "AOE1-RRNX-SY9D-23Q7",
+    "term_days": 30,
+    "created_at": 1794272936587
+   },
+   {
+    "id": "df4c037c-d142-42ee-be72-5af09166081b",
+    "order_id": "a2001e0a-1904-4454-a381-06e551848a32",
+    "user_id": "732b0f8b-e55f-4af6-8aca-b74ea815bc61",
+    "product_id": "p-lic-month",
+    "license_key": "AOE1-HPYN-MLS5-QDNW",
+    "term_days": 30,
+    "created_at": 1794272884522
+   },
+   {
+    "id": "dfe88819-9ee6-4826-82a3-58e8943c601d",
+    "order_id": "dab4573d-7abf-4dfd-9874-a522da7296cd",
+    "user_id": "173d0740-d8a4-463e-bda7-08b7428d281e",
+    "product_id": "3fa1b8f2-34c1-4a14-9618-fad3d2e88edd",
+    "license_key": "AOE1-6XNY-EWQ7-47JV",
+    "term_days": 30,
+    "created_at": 1794271133853
+   },
+   {
+    "id": "a9d1e3a9-9bcd-4b68-b1ea-c7f94d2394eb",
+    "order_id": "afed1494-20f5-4b0a-9302-010e15490ea9",
+    "user_id": "173d0740-d8a4-463e-bda7-08b7428d281e",
+    "product_id": "p-lic-forever",
+    "license_key": "AOE1-FR7Q-5PKS-M6HK",
+    "term_days": 30,
+    "created_at": 1794270893221
+   },
+   {
+    "id": "8ad91756-68ad-43b9-a91b-aec28eea6751",
+    "order_id": "b8c363ab-3c3e-4436-8f00-728fe7f8dec5",
+    "user_id": "cc1dc4fb-9bdc-4d3a-9967-a1d50b3c7478",
+    "product_id": "p-lic-week",
+    "license_key": "AOE1-MFN7-KAHL-DHZD",
+    "term_days": 7,
+    "created_at": 1794270657455
+   },
+   {
+    "id": "cb294162-3c10-4a91-8828-39e8dcd6e7ea",
+    "order_id": "b195a2ab-adef-4ab7-badc-2419a860bbb2",
+    "user_id": "712dedbf-3472-4233-8352-40273fa7a04d",
+    "product_id": "p-lic-week",
+    "license_key": "AOE1-8Q9X-Y3QY-YXV5",
+    "term_days": 7,
+    "created_at": 1794270265373
+   },
+   {
+    "id": "5f610eff-e5f1-4e85-ab33-d9323155a993",
+    "order_id": "95fb9876-9813-4c41-b3b7-af1d77b6eb0d",
+    "user_id": "a90f85b8-5670-4744-abfa-c0462d9b963d",
+    "product_id": "p-lic-week",
+    "license_key": "AOE1-H7AG-MWF8-X3TN",
+    "term_days": 7,
+    "created_at": 1794269929203
+   },
+   {
+    "id": "b44083c0-22cb-4a9d-9df4-e4813d1c753e",
+    "order_id": "95fb9876-9813-4c41-b3b7-af1d77b6eb0d",
+    "user_id": "a90f85b8-5670-4744-abfa-c0462d9b963d",
+    "product_id": "p-lic-week",
+    "license_key": "AOE1-8S8S-N4EN-HE6Z",
+    "term_days": 7,
+    "created_at": 1794269929199
+   },
+   {
+    "id": "1ec263ef-8b22-4b8e-8209-b4ed1c8d82c5",
+    "order_id": "95fb9876-9813-4c41-b3b7-af1d77b6eb0d",
+    "user_id": "a90f85b8-5670-4744-abfa-c0462d9b963d",
+    "product_id": "p-lic-week",
+    "license_key": "AOE1-5Y7A-P9V8-2LSS",
+    "term_days": 7,
+    "created_at": 1794269929151
+   },
+   {
+    "id": "4363463c-e5d2-4cd5-b86d-e461a5046a71",
+    "order_id": "95fb9876-9813-4c41-b3b7-af1d77b6eb0d",
+    "user_id": "a90f85b8-5670-4744-abfa-c0462d9b963d",
+    "product_id": "p-lic-week",
+    "license_key": "AOE1-9A5H-SEH3-JT5W",
+    "term_days": 7,
+    "created_at": 1794269929142
+   },
+   {
+    "id": "3dcca15c-7bc6-4f99-9557-69d19d3234bf",
+    "order_id": "fd814918-d913-4252-b08d-a9710a892c65",
+    "user_id": "30a314c1-b42d-4a44-bac2-4e2182c70d81",
+    "product_id": "p-lic-month",
+    "license_key": "AOE1-RNE8-K3GJ-2VN2",
+    "term_days": 30,
+    "created_at": 1794269283229
+   },
+   {
+    "id": "cd86f8cb-faad-42ec-a1d9-ff5fd11ac74f",
+    "order_id": "098a19aa-8b63-48ec-8452-e2b6638bc760",
+    "user_id": "80f3e7eb-037d-4288-a904-611f50891cbc",
+    "product_id": "p-lic-month",
+    "license_key": "AOE1-AR6N-YPVX-UX4C",
+    "term_days": 30,
+    "created_at": 1794268624435
+   },
+   {
+    "id": "1d2450df-17af-4043-94b8-32d7621a5846",
+    "order_id": "7a909647-2552-4bc1-b8be-b479f5b8db16",
+    "user_id": "9859181a-ea81-4260-92e0-9128406af82e",
+    "product_id": "p-lic-month",
+    "license_key": "AOE1-N9VQ-P4N9-ZBMC",
+    "term_days": 30,
+    "created_at": 1794268431522
+   },
+   {
+    "id": "6247501a-6150-45d3-b0be-42de9739c8a6",
+    "order_id": "aa01cda8-28a0-4793-af00-564ba1534738",
+    "user_id": "b88a8382-a23e-47ee-bd8f-a6e2e15a256b",
+    "product_id": "p-lic-month",
+    "license_key": "AOE1-EAGN-NYJY-HL58",
+    "term_days": 30,
+    "created_at": 1794266615891
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "licenses — tổng quan",
+  "sql": "SELECT key, plan, hwid IS NOT NULL AS bound, revoked, expires_at,\n       CAST(strftime('%s','now') AS INTEGER) AS now_s,\n       CASE WHEN expires_at=0 THEN 'forever' WHEN expires_at < CAST(strftime('%s','now') AS INTEGER) THEN 'expired' ELSE 'live' END AS st,\n       note, created_at\nFROM licenses ORDER BY created_at DESC LIMIT 60",
+  "rows": [
+   {
+    "key": "AOE1-JFWZ-9G8Q-VQ9H",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-UUN3-GN2V-DFK2",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-SW69-XL4W-ZYZ4",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-HGZA-NFRX-4GXS",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-UR6L-TERB-JLXY",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-3SBE-3PQ9-F6L6",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-XCQK-JY72-SRFY",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-WQAD-HCKN-BNCD",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-RNH9-TQ9Z-RKUL",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-2NM6-8UJ9-LFDZ",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-H7J2-XJ9Y-XTBN",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-STD7-7EXH-AF89",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-P7UJ-84P3-VSAH",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-6YYV-V8K6-XD3L",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-SL6P-8TJZ-C8R6",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-DYCH-NQYX-4YB2",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-K4L4-55RU-WVVQ",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-XG62-YXT6-PENX",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-JJL4-7VKM-J9CF",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-SNST-TF5X-DYCL",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-A46B-C4AD-G9RL",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-VGMZ-RUJS-R7VS",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-UGKM-FCUN-ZLZY",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-YDUP-EDHA-85TC",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-M2WC-MC2W-7VEB",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-DH4V-HA9S-97QQ",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-KBXE-W4HU-LN9S",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-REKW-498F-JR7A",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-FFA4-KN85-S5VA",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-QQ7S-FQHR-DTEV",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-46GV-MY3T-K26W",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-FLN3-Z2UC-KE4U",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-SY5Z-ZYTS-UK9A",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-4QJG-YU39-K5WN",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-54AL-P23A-VJS4",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-4VKJ-HD85-NNVV",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-8Q97-BJGS-HBBA",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-QMRK-YBZS-WCAW",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-BVYL-DXGD-P36D",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-VYCU-TDRF-A3C6",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-N95V-LW6W-T6BS",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-8932-BQMX-C583",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-ZHPM-RNKP-2YG6",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-N647-5G74-BCLL",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-V7A3-ZVKZ-5TPU",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-HY6Q-NSAW-J95B",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-WWMX-SLMF-B5NF",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-4A95-KSKW-MVSL",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-H7KQ-4GVS-ZKZA",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-DHC6-LEUS-HLL2",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-ND6Q-AYHB-HGHM",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-V65T-P5JT-S98K",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-4KMF-5R2M-KQLF",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-K3TY-ZZXZ-TZF3",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-H5NZ-4EPS-RHUU",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-VFP5-8L2V-TGCR",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-8TCU-MTST-MWQE",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-XC2V-ETVV-SV9A",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-ZD6M-SK7Z-S3CG",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   },
+   {
+    "key": "AOE1-5ZRW-CBKE-7LVU",
+    "plan": "aoe1",
+    "bound": 0,
+    "revoked": 0,
+    "expires_at": 0,
+    "now_s": 1794317318,
+    "st": "forever",
+    "note": "Kho Vĩnh Viễn - lo 2026-11-10-12-38-20 - phan 10",
+    "created_at": 1794314602
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "licenses theo plan",
+  "sql": "SELECT plan, COUNT(*) n, SUM(revoked) revoked, SUM(CASE WHEN expires_at=0 THEN 1 ELSE 0 END) forever FROM licenses GROUP BY plan",
+  "rows": [
+   {
+    "plan": "<script>",
+    "n": 1,
+    "revoked": 0,
+    "forever": 0
+   },
+   {
+    "plan": "a b",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "a\"b",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "a%b",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "a&b|c",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "a/b",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "a=b",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "a^b",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "aoe1",
+    "n": 4022,
+    "revoked": 4,
+    "forever": 1002
+   },
+   {
+    "plan": "aoe1|dir",
+    "n": 1,
+    "revoked": 0,
+    "forever": 0
+   },
+   {
+    "plan": "aud",
+    "n": 1,
+    "revoked": 1,
+    "forever": 0
+   },
+   {
+    "plan": "bl",
+    "n": 10,
+    "revoked": 0,
+    "forever": 0
+   },
+   {
+    "plan": "test",
+    "n": 3,
+    "revoked": 0,
+    "forever": 0
+   },
+   {
+    "plan": "trial",
+    "n": 2,
+    "revoked": 0,
+    "forever": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "product_keys có note LIKE 'Kho %'",
+  "sql": "SELECT COUNT(*) n FROM product_keys WHERE note LIKE 'Kho %'",
+  "rows": [
+   {
+    "n": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "product_keys note mẫu",
+  "sql": "SELECT id, product_id, status, note, order_id, created_at FROM product_keys ORDER BY created_at DESC LIMIT 20",
+  "rows": [
+   {
+    "id": "k-win11-001",
+    "product_id": "p-win11",
+    "status": "available",
+    "note": "Key Retail B2C",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-win11-002",
+    "product_id": "p-win11",
+    "status": "available",
+    "note": "Key Retail B2C",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-win11-003",
+    "product_id": "p-win11",
+    "status": "available",
+    "note": "Key Retail B2C",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-win11-004",
+    "product_id": "p-win11",
+    "status": "available",
+    "note": "Key Retail B2C",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-win11-005",
+    "product_id": "p-win11",
+    "status": "available",
+    "note": "Key Retail B2C",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-of-001",
+    "product_id": "p-of2021",
+    "status": "available",
+    "note": "Key Office 2021",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-of-002",
+    "product_id": "p-of2021",
+    "status": "available",
+    "note": "Key Office 2021",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-of-003",
+    "product_id": "p-of2021",
+    "status": "available",
+    "note": "Key Office 2021",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-wps-001",
+    "product_id": "p-wps",
+    "status": "available",
+    "note": "Key WPS Pro",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-wps-002",
+    "product_id": "p-wps",
+    "status": "available",
+    "note": "Key WPS Pro",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-vpn-001",
+    "product_id": "p-vpn",
+    "status": "available",
+    "note": "Thẻ kích hoạt ExpressVPN 12 tháng",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-vpn-002",
+    "product_id": "p-vpn",
+    "status": "available",
+    "note": "Thẻ kích hoạt ExpressVPN 12 tháng",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-av-001",
+    "product_id": "p-antivirus",
+    "status": "available",
+    "note": "Mã kích hoạt Kaspersky",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-canva-001",
+    "product_id": "p-canva",
+    "status": "available",
+    "note": "Mã kích hoạt Canva Pro",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-canva-002",
+    "product_id": "p-canva",
+    "status": "available",
+    "note": "Mã kích hoạt Canva Pro",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-m365-01",
+    "product_id": "p-365",
+    "status": "available",
+    "note": "Microsoft 365 Family — 1 slot #1",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-m365-02",
+    "product_id": "p-365",
+    "status": "available",
+    "note": "Microsoft 365 Family — 1 slot #2",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-m365-03",
+    "product_id": "p-365",
+    "status": "available",
+    "note": "Microsoft 365 Family — 1 slot #3",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-m365-04",
+    "product_id": "p-365",
+    "status": "available",
+    "note": "Microsoft 365 Family — 1 slot #4",
+    "order_id": null,
+    "created_at": 1731000000000
+   },
+   {
+    "id": "k-m365-05",
+    "product_id": "p-365",
+    "status": "available",
+    "note": "Microsoft 365 Family — 1 slot #5",
+    "order_id": null,
+    "created_at": 1731000000000
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "products tổng quan (license fields)",
+  "sql": "SELECT id, slug, name, delivery_type, price, stock_count, sold_count, active, license_prefix, license_days FROM products ORDER BY name",
+  "rows": [
+   {
+    "id": "p-adobe",
+    "slug": "adobe-creative-cloud",
+    "name": "Adobe Creative Cloud",
+    "delivery_type": "account",
+    "price": 890000,
+    "stock_count": 4,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-canva",
+    "slug": "canva-pro",
+    "name": "Canva Pro",
+    "delivery_type": "key",
+    "price": 240000,
+    "stock_count": 2,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-chatgpt",
+    "slug": "chatgpt-plus",
+    "name": "ChatGPT Plus",
+    "delivery_type": "account",
+    "price": 290000,
+    "stock_count": 8,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-claude",
+    "slug": "claude-pro",
+    "name": "Claude Pro",
+    "delivery_type": "account",
+    "price": 280000,
+    "stock_count": 6,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-vpn",
+    "slug": "expressvpn",
+    "name": "ExpressVPN",
+    "delivery_type": "key",
+    "price": 320000,
+    "stock_count": 2,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-figma",
+    "slug": "figma-professional",
+    "name": "Figma Professional",
+    "delivery_type": "account",
+    "price": 320000,
+    "stock_count": 3,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-copilot",
+    "slug": "github-copilot",
+    "name": "GitHub Copilot",
+    "delivery_type": "account",
+    "price": 210000,
+    "stock_count": 5,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-gemini",
+    "slug": "gemini-advanced",
+    "name": "Google Gemini Advanced",
+    "delivery_type": "account",
+    "price": 220000,
+    "stock_count": 5,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-jetbrains",
+    "slug": "jetbrains-all-products",
+    "name": "JetBrains All Products",
+    "delivery_type": "account",
+    "price": 780000,
+    "stock_count": 3,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-antivirus",
+    "slug": "kaspersky-plus",
+    "name": "Kaspersky Plus",
+    "delivery_type": "key",
+    "price": 260000,
+    "stock_count": 1,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-365",
+    "slug": "microsoft-365-family",
+    "name": "Microsoft 365 Family",
+    "delivery_type": "account",
+    "price": 690000,
+    "stock_count": 6,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-netflix",
+    "slug": "netflix-premium",
+    "name": "Netflix Premium 4K",
+    "delivery_type": "account",
+    "price": 95000,
+    "stock_count": 10,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-of2021",
+    "slug": "office-2021-pro-plus",
+    "name": "Office 2021 Pro Plus",
+    "delivery_type": "key",
+    "price": 390000,
+    "stock_count": 3,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-perplexity",
+    "slug": "perplexity-pro",
+    "name": "Perplexity Pro",
+    "delivery_type": "account",
+    "price": 180000,
+    "stock_count": 5,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-spotify",
+    "slug": "spotify-premium",
+    "name": "Spotify Premium",
+    "delivery_type": "account",
+    "price": 75000,
+    "stock_count": 8,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-wps",
+    "slug": "wps-office-pro",
+    "name": "WPS Office Pro",
+    "delivery_type": "key",
+    "price": 120000,
+    "stock_count": 2,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-win11",
+    "slug": "windows-11-pro",
+    "name": "Windows 11 Pro Retail",
+    "delivery_type": "key",
+    "price": 450000,
+    "stock_count": 4,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   },
+   {
+    "id": "p-lic-year",
+    "slug": "license-xarena-nam",
+    "name": "XArena No Fog — Gói Năm",
+    "delivery_type": "license",
+    "price": 590000,
+    "stock_count": 0,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": "AOE1",
+    "license_days": 365
+   },
+   {
+    "id": "p-lic-month",
+    "slug": "license-xarena-thang",
+    "name": "XArena No Fog — Gói Tháng",
+    "delivery_type": "license",
+    "price": 180000,
+    "stock_count": 0,
+    "sold_count": 4,
+    "active": 1,
+    "license_prefix": "AOE1",
+    "license_days": 30
+   },
+   {
+    "id": "p-lic-week",
+    "slug": "license-xarena-tuan",
+    "name": "XArena No Fog — Gói Tuần",
+    "delivery_type": "license",
+    "price": 70000,
+    "stock_count": 0,
+    "sold_count": 1,
+    "active": 1,
+    "license_prefix": "AOE1",
+    "license_days": 7
+   },
+   {
+    "id": "p-lic-forever",
+    "slug": "license-xarena-vinh-vien",
+    "name": "XArena No Fog — Vĩnh Viễn",
+    "delivery_type": "license",
+    "price": 1290000,
+    "stock_count": 0,
+    "sold_count": 1,
+    "active": 1,
+    "license_prefix": "AOE1",
+    "license_days": 0
+   },
+   {
+    "id": "p-yt",
+    "slug": "youtube-premium",
+    "name": "YouTube Premium",
+    "delivery_type": "account",
+    "price": 550000,
+    "stock_count": 6,
+    "sold_count": 0,
+    "active": 1,
+    "license_prefix": null,
+    "license_days": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "stock_count vs thực tế product_keys available",
+  "sql": "SELECT p.id, p.slug, p.stock_count, p.sold_count, p.delivery_type,\n       (SELECT COUNT(*) FROM product_keys k WHERE k.product_id=p.id AND k.status='available') AS real_avail,\n       (SELECT COUNT(*) FROM product_keys k WHERE k.product_id=p.id AND k.status='sold') AS real_sold\nFROM products p ORDER BY p.slug",
+  "rows": [
+   {
+    "id": "p-adobe",
+    "slug": "adobe-creative-cloud",
+    "stock_count": 4,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 4,
+    "real_sold": 0
+   },
+   {
+    "id": "p-canva",
+    "slug": "canva-pro",
+    "stock_count": 2,
+    "sold_count": 0,
+    "delivery_type": "key",
+    "real_avail": 2,
+    "real_sold": 0
+   },
+   {
+    "id": "p-chatgpt",
+    "slug": "chatgpt-plus",
+    "stock_count": 8,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 8,
+    "real_sold": 0
+   },
+   {
+    "id": "p-claude",
+    "slug": "claude-pro",
+    "stock_count": 6,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 6,
+    "real_sold": 0
+   },
+   {
+    "id": "p-vpn",
+    "slug": "expressvpn",
+    "stock_count": 2,
+    "sold_count": 0,
+    "delivery_type": "key",
+    "real_avail": 2,
+    "real_sold": 0
+   },
+   {
+    "id": "p-figma",
+    "slug": "figma-professional",
+    "stock_count": 3,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 3,
+    "real_sold": 0
+   },
+   {
+    "id": "p-gemini",
+    "slug": "gemini-advanced",
+    "stock_count": 5,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 5,
+    "real_sold": 0
+   },
+   {
+    "id": "p-copilot",
+    "slug": "github-copilot",
+    "stock_count": 5,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 5,
+    "real_sold": 0
+   },
+   {
+    "id": "p-jetbrains",
+    "slug": "jetbrains-all-products",
+    "stock_count": 3,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 3,
+    "real_sold": 0
+   },
+   {
+    "id": "p-antivirus",
+    "slug": "kaspersky-plus",
+    "stock_count": 1,
+    "sold_count": 0,
+    "delivery_type": "key",
+    "real_avail": 1,
+    "real_sold": 0
+   },
+   {
+    "id": "p-lic-year",
+    "slug": "license-xarena-nam",
+    "stock_count": 0,
+    "sold_count": 0,
+    "delivery_type": "license",
+    "real_avail": 0,
+    "real_sold": 0
+   },
+   {
+    "id": "p-lic-month",
+    "slug": "license-xarena-thang",
+    "stock_count": 0,
+    "sold_count": 4,
+    "delivery_type": "license",
+    "real_avail": 0,
+    "real_sold": 0
+   },
+   {
+    "id": "p-lic-week",
+    "slug": "license-xarena-tuan",
+    "stock_count": 0,
+    "sold_count": 1,
+    "delivery_type": "license",
+    "real_avail": 0,
+    "real_sold": 0
+   },
+   {
+    "id": "p-lic-forever",
+    "slug": "license-xarena-vinh-vien",
+    "stock_count": 0,
+    "sold_count": 1,
+    "delivery_type": "license",
+    "real_avail": 0,
+    "real_sold": 0
+   },
+   {
+    "id": "p-365",
+    "slug": "microsoft-365-family",
+    "stock_count": 6,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 6,
+    "real_sold": 0
+   },
+   {
+    "id": "p-netflix",
+    "slug": "netflix-premium",
+    "stock_count": 10,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 10,
+    "real_sold": 0
+   },
+   {
+    "id": "p-of2021",
+    "slug": "office-2021-pro-plus",
+    "stock_count": 3,
+    "sold_count": 0,
+    "delivery_type": "key",
+    "real_avail": 3,
+    "real_sold": 0
+   },
+   {
+    "id": "p-perplexity",
+    "slug": "perplexity-pro",
+    "stock_count": 5,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 5,
+    "real_sold": 0
+   },
+   {
+    "id": "p-spotify",
+    "slug": "spotify-premium",
+    "stock_count": 8,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 8,
+    "real_sold": 0
+   },
+   {
+    "id": "p-win11",
+    "slug": "windows-11-pro",
+    "stock_count": 4,
+    "sold_count": 0,
+    "delivery_type": "key",
+    "real_avail": 5,
+    "real_sold": 0
+   },
+   {
+    "id": "p-wps",
+    "slug": "wps-office-pro",
+    "stock_count": 2,
+    "sold_count": 0,
+    "delivery_type": "key",
+    "real_avail": 2,
+    "real_sold": 0
+   },
+   {
+    "id": "p-yt",
+    "slug": "youtube-premium",
+    "stock_count": 6,
+    "sold_count": 0,
+    "delivery_type": "account",
+    "real_avail": 6,
+    "real_sold": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "users — nhất quán số dư vs sổ cái",
+  "sql": "SELECT u.id, u.email, u.role, u.balance,\n       COALESCE((SELECT SUM(amount) FROM wallet_transactions w WHERE w.user_id=u.id AND w.status='success'),0) AS ledger_sum,\n       (SELECT COUNT(*) FROM wallet_transactions w WHERE w.user_id=u.id) AS n_tx,\n       u.balance - COALESCE((SELECT SUM(amount) FROM wallet_transactions w WHERE w.user_id=u.id AND w.status='success'),0) AS diff\nFROM users u ORDER BY ABS(u.balance - COALESCE((SELECT SUM(amount) FROM wallet_transactions w WHERE w.user_id=u.id AND w.status='success'),0)) DESC, u.balance DESC LIMIT 40",
+  "rows": [
+   {
+    "id": "u-demo",
+    "email": "demo@muabankey.vn",
+    "role": "user",
+    "balance": 4319000,
+    "ledger_sum": 4319000,
+    "n_tx": 14,
+    "diff": 0
+   },
+   {
+    "id": "37c42cec-6a8e-48ce-99ea-5383dc4fa60b",
+    "email": "uxe2e1mwal4du9@mailinator.com",
+    "role": "user",
+    "balance": 500000,
+    "ledger_sum": 500000,
+    "n_tx": 5,
+    "diff": 0
+   },
+   {
+    "id": "u-admin",
+    "email": "admin@muabankey.vn",
+    "role": "admin",
+    "balance": 450000,
+    "ledger_sum": 450000,
+    "n_tx": 1,
+    "diff": 0
+   },
+   {
+    "id": "372baaf9-f2ba-47dd-bfec-9c9178c3f913",
+    "email": "uxlive3mwal1m2e@mailinator.com",
+    "role": "user",
+    "balance": 200000,
+    "ledger_sum": 200000,
+    "n_tx": 1,
+    "diff": 0
+   },
+   {
+    "id": "b0830279-b520-42ff-948d-b6ad320d3310",
+    "email": "e2emwab7zy2@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "23f963b4-4425-4798-b12a-5586238819c6",
+    "email": "xmwab7zy2@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "a2d03477-ddfe-4ef2-a8b2-a5a3796470fd",
+    "email": "licmwab8lcc@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "f7f84a3c-7a0e-4418-a0c9-ea263981eb0d",
+    "email": "bl5mwab8ot7@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "fe8f0f82-2631-4912-ad70-15b5097970b9",
+    "email": "e2emwabajru@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "8bc35f37-7c68-4d51-9f03-ccd8bb72e5ef",
+    "email": "xmwabajru@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "97c4983a-9878-40b0-b061-1097ca5d2ba4",
+    "email": "e2emwacxmvv@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "d9846362-f8fa-4eac-b056-d49f814cb158",
+    "email": "xmwacxmvv@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "28cc6c2b-3cfc-49aa-9d27-8056464699cc",
+    "email": "e2emwadbdy0@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "aeda0714-c7aa-418f-8e5e-517fdce6c0df",
+    "email": "xmwadbdy0@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "f7eb9b0f-99ad-41bf-9302-a7f341ce8e1e",
+    "email": "bl5mwadc3g2@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "e7c7cc63-fe5e-4b7f-9074-620d2312c9e1",
+    "email": "e2emwagestb@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "bc3a6bba-00e6-4717-914f-7ffc0c3550c2",
+    "email": "xmwagestb@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "a13409a7-8e88-467f-89d4-2a45b06227f8",
+    "email": "e2emwaj3aux@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "3985d24b-6519-49d1-9675-57b144077632",
+    "email": "xmwaj3aux@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "c343bc35-d77b-4316-9351-d733e29618c3",
+    "email": "e2emwajwhw0@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "dde2429a-35ee-4021-82df-1c9030e11fc5",
+    "email": "xmwajwhw0@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "766398c2-54d3-4bf7-93a8-180958a672a1",
+    "email": "e2emwakp9hb@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "bf5238f4-8759-47e0-81d2-cd33d648da3e",
+    "email": "xmwakp9hb@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "5130377d-21a7-4e74-bc4e-2d92ea744f98",
+    "email": "uxlive1mwakz0n1@mailinator.com",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "be01f4ad-54c6-4afc-8118-982c7553c89b",
+    "email": "uxlive2mwakzxqb@mailinator.com",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "de8fde09-d273-43e0-bf58-976ac197aeff",
+    "email": "uxff1mwaljpw2@mailinator.com",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "0b861804-4637-400c-ba28-fd3b5e96676a",
+    "email": "uxff2mwalucwj@mailinator.com",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "84bb305e-6ed4-4b63-aa70-f8cc51bbdca6",
+    "email": "e2emwalwj6u@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "b017cba7-f0c8-456d-841f-d1d203ec000c",
+    "email": "xmwalwj6u@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "86759e3d-d27e-470d-91dc-391d435dae42",
+    "email": "e2emwamx4hz@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "b20de343-7518-45cc-963e-3c81b3917637",
+    "email": "xmwamx4hz@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "a71b07d1-da58-47d4-8c5a-3f64ac105a04",
+    "email": "e2emwao9epr@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   },
+   {
+    "id": "31326100-3190-44e0-98d1-76a6a7d1b048",
+    "email": "xmwao9epr@test.vn",
+    "role": "user",
+    "balance": 0,
+    "ledger_sum": 0,
+    "n_tx": 0,
+    "diff": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "users có số dư > 0 mà không có wallet_transaction",
+  "sql": "SELECT u.id, u.email, u.balance FROM users u\nWHERE u.balance > 0\n  AND NOT EXISTS (SELECT 1 FROM wallet_transactions w WHERE w.user_id=u.id)",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "orders — total vs subtotal-discount",
+  "sql": "SELECT id, code, status, subtotal, discount, total, total-(subtotal-discount) AS diff FROM orders\nWHERE total <> subtotal - discount",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "orders — total vs SUM(order_items.line_total)",
+  "sql": "SELECT o.id, o.code, o.status, o.subtotal, o.total,\n       COALESCE((SELECT SUM(li.line_total) FROM order_items li WHERE li.order_id=o.id),0) AS items_sum,\n       o.total - COALESCE((SELECT SUM(li.line_total) FROM order_items li WHERE li.order_id=o.id),0) AS diff\nFROM orders o\nWHERE o.total <> COALESCE((SELECT SUM(li.line_total) FROM order_items li WHERE li.order_id=o.id),0) - o.discount",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "order_items — line_total vs unit_price*quantity",
+  "sql": "SELECT id, order_id, product_id, unit_price, quantity, line_total, line_total - unit_price*quantity AS diff\nFROM order_items WHERE line_total <> unit_price*quantity",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "orders không có order_items",
+  "sql": "SELECT o.id, o.code, o.status, o.total FROM orders o\nWHERE NOT EXISTS (SELECT 1 FROM order_items li WHERE li.order_id=o.id)",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "topups paid nhưng không có wallet_transaction khớp code",
+  "sql": "SELECT t.id, t.code, t.status, t.amount, t.paid_at, t.txn_ref,\n       (SELECT COUNT(*) FROM wallet_transactions w WHERE w.reference = t.code) AS n_match\nFROM topups t WHERE t.status='paid'\n  AND NOT EXISTS (SELECT 1 FROM wallet_transactions w WHERE w.reference = t.code AND w.type IN ('topup'))\nORDER BY t.paid_at DESC",
+  "rows": [
+   {
+    "id": "81893ab1-1427-47b2-8368-15096947dfac",
+    "code": "WG5HA",
+    "status": "paid",
+    "amount": 150000,
+    "paid_at": 1794313487169,
+    "txn_ref": "FT1794313486595",
+    "n_match": 0
+   },
+   {
+    "id": "dc5731ce-9dc6-452e-98e2-65e8cceba333",
+    "code": "YGX2G",
+    "status": "paid",
+    "amount": 100000,
+    "paid_at": 1794311801927,
+    "txn_ref": "FT1794311801432",
+    "n_match": 0
+   },
+   {
+    "id": "9fec1642-65c6-4e79-adef-190496763cca",
+    "code": "EWQWX",
+    "status": "paid",
+    "amount": 100000,
+    "paid_at": 1794311636405,
+    "txn_ref": "FT1794311635796",
+    "n_match": 0
+   },
+   {
+    "id": "3b430529-609d-4460-9894-295f26697e1c",
+    "code": "GNN2B",
+    "status": "paid",
+    "amount": 100000,
+    "paid_at": 1794311588694,
+    "txn_ref": "FT1794311588082",
+    "n_match": 0
+   },
+   {
+    "id": "d50fb6cd-30fd-45fa-b2ff-569b3ef11f84",
+    "code": "AJW4V",
+    "status": "paid",
+    "amount": 100000,
+    "paid_at": 1794311543054,
+    "txn_ref": "FT1794311542446",
+    "n_match": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "wallet_transactions theo type",
+  "sql": "SELECT type, COUNT(*) n, SUM(amount) total FROM wallet_transactions GROUP BY type",
+  "rows": [
+   {
+    "type": "admin_credit",
+    "n": 3,
+    "total": 4000000
+   },
+   {
+    "type": "purchase",
+    "n": 4,
+    "total": -880000
+   },
+   {
+    "type": "refund",
+    "n": 4,
+    "total": 1260000
+   },
+   {
+    "type": "topup",
+    "n": 10,
+    "total": 1089000
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "dedupe — product_keys trùng secret trong cùng product",
+  "sql": "SELECT product_id, secret, COUNT(*) n FROM product_keys GROUP BY product_id, secret HAVING n>1",
+  "rows": [],
+  "error": null
+ },
+ {
+  "label": "products trùng slug / licenses trùng key (sanity)",
+  "sql": "SELECT 'products_dup_slug' k, COUNT(*) n FROM (SELECT slug FROM products GROUP BY slug HAVING COUNT(*)>1)\nUNION ALL SELECT 'lic_dup_key', COUNT(*) FROM (SELECT key FROM licenses GROUP BY key HAVING COUNT(*)>1)\nUNION ALL SELECT 'topup_dup_code', COUNT(*) FROM (SELECT code FROM topups GROUP BY code HAVING COUNT(*)>1)\nUNION ALL SELECT 'order_dup_code', COUNT(*) FROM (SELECT code FROM orders GROUP BY code HAVING COUNT(*)>1)\nUNION ALL SELECT 'users_dup_email', COUNT(*) FROM (SELECT email FROM users GROUP BY email HAVING COUNT(*)>1)",
+  "rows": [
+   {
+    "k": "products_dup_slug",
+    "n": 0
+   },
+   {
+    "k": "lic_dup_key",
+    "n": 0
+   },
+   {
+    "k": "topup_dup_code",
+    "n": 0
+   },
+   {
+    "k": "order_dup_code",
+    "n": 0
+   },
+   {
+    "k": "users_dup_email",
+    "n": 0
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "settings (che giá trị nhạy cảm)",
+  "sql": "SELECT key, CASE WHEN key LIKE '%token%' OR key LIKE '%secret%' OR key LIKE '%key%' THEN '[REDACTED len=' || LENGTH(COALESCE(value,'')) || ']' ELSE value END AS value, updated_at\nFROM settings ORDER BY key",
+  "rows": [
+   {
+    "key": "auto_deliver",
+    "value": "1",
+    "updated_at": 1731000000000
+   },
+   {
+    "key": "bank_account",
+    "value": "8990124112002",
+    "updated_at": 1794291589000
+   },
+   {
+    "key": "bank_name",
+    "value": "MBBank",
+    "updated_at": 1794291589000
+   },
+   {
+    "key": "bank_owner",
+    "value": "NGUYEN THANH NAM",
+    "updated_at": 1794291589000
+   },
+   {
+    "key": "topup_max",
+    "value": "50000000",
+    "updated_at": 1731000000000
+   },
+   {
+    "key": "topup_min",
+    "value": "20000",
+    "updated_at": 1731000000000
+   },
+   {
+    "key": "trial_days",
+    "value": "3",
+    "updated_at": 1794304401000
+   },
+   {
+    "key": "trial_enabled",
+    "value": "1",
+    "updated_at": 1794304401000
+   },
+   {
+    "key": "trial_max_per_day",
+    "value": "200",
+    "updated_at": 1794304401000
+   },
+   {
+    "key": "trial_max_per_ip",
+    "value": "3",
+    "updated_at": 1794304401000
+   },
+   {
+    "key": "trial_max_per_net",
+    "value": "12",
+    "updated_at": 1794304401000
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "rate_limits mẫu",
+  "sql": "SELECT COUNT(*) n, MIN(window_at) mn, MAX(window_at) mx FROM rate_limits",
+  "rows": [
+   {
+    "n": 41,
+    "mn": 29904418,
+    "mx": 29905235
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "trial_grants tổng quan",
+  "sql": "SELECT weak_hwid, lic_key, ip_first, first_at, expires_at, resume_count, suspect, converted_key FROM trial_grants ORDER BY first_at DESC LIMIT 30",
+  "rows": [
+   {
+    "weak_hwid": "d44ae6e085fea057e591dc6f1b2839c9",
+    "lic_key": "TR-D44AE6E085FEA057",
+    "ip_first": "118.68.111.165",
+    "first_at": 1794310134,
+    "expires_at": 1794569334,
+    "resume_count": 0,
+    "suspect": 0,
+    "converted_key": null
+   },
+   {
+    "weak_hwid": "b0cdb5282a3ef2ba502c45a46c3ff98b",
+    "lic_key": "TR-B0CDB5282A3EF2BA",
+    "ip_first": "118.68.111.165",
+    "first_at": 1794310130,
+    "expires_at": 1794569330,
+    "resume_count": 1,
+    "suspect": 1,
+    "converted_key": null
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "trial_attempts theo action",
+  "sql": "SELECT action, COUNT(*) n FROM trial_attempts GROUP BY action",
+  "rows": [
+   {
+    "action": "denied_device",
+    "n": 1
+   },
+   {
+    "action": "resume",
+    "n": 2
+   },
+   {
+    "action": "start",
+    "n": 2
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "audit_logs theo action",
+  "sql": "SELECT action, COUNT(*) n FROM audit_logs GROUP BY action ORDER BY n DESC",
+  "rows": [
+   {
+    "action": "user.login",
+    "n": 212
+   },
+   {
+    "action": "user.register",
+    "n": 74
+   },
+   {
+    "action": "topup.paid",
+    "n": 27
+   },
+   {
+    "action": "order.pay",
+    "n": 23
+   },
+   {
+    "action": "user.change_password",
+    "n": 21
+   },
+   {
+    "action": "order.refund",
+    "n": 11
+   },
+   {
+    "action": "payos.key_set",
+    "n": 7
+   },
+   {
+    "action": "payos.key_cleared",
+    "n": 6
+   },
+   {
+    "action": "topup.approve",
+    "n": 5
+   },
+   {
+    "action": "product.create",
+    "n": 5
+   },
+   {
+    "action": "user.update",
+    "n": 4
+   },
+   {
+    "action": "topup.reject",
+    "n": 4
+   },
+   {
+    "action": "telegram.test",
+    "n": 4
+   },
+   {
+    "action": "payos.invalid_signature",
+    "n": 4
+   },
+   {
+    "action": "license.extend",
+    "n": 4
+   },
+   {
+    "action": "license.revoke",
+    "n": 3
+   },
+   {
+    "action": "product.disable",
+    "n": 2
+   },
+   {
+    "action": "keys.add",
+    "n": 2
+   },
+   {
+    "action": "wallet.adjust",
+    "n": 1
+   },
+   {
+    "action": "topup.partial",
+    "n": 1
+   },
+   {
+    "action": "product.update",
+    "n": 1
+   },
+   {
+    "action": "coupon.disable",
+    "n": 1
+   },
+   {
+    "action": "coupon.create",
+    "n": 1
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "order_items.delivered_keys không null",
+  "sql": "SELECT order_id, product_id, quantity, delivered_keys FROM order_items WHERE delivered_keys IS NOT NULL AND delivered_keys <> '[]' LIMIT 20",
+  "rows": [
+   {
+    "order_id": "8ce9d8d5-0447-4509-9693-c4eb1ccffd5c",
+    "product_id": "p-lic-week",
+    "quantity": 1,
+    "delivered_keys": "[\"AOE1-LSR4-R869-Z77C\"]"
+   },
+   {
+    "order_id": "184ed41d-b15a-493d-8a68-7322e5b9748f",
+    "product_id": "p-win11",
+    "quantity": 1,
+    "delivered_keys": "[\"MTEwMDAwLTExMjIzMy00NDU1NjktNzg4OTkz\"]"
+   },
+   {
+    "order_id": "f32237e6-4bef-4f4f-b6f3-ff1be953aa58",
+    "product_id": "p-lic-month",
+    "quantity": 1,
+    "delivered_keys": "[\"AOE1-RXXL-SVBF-7BL2\"]"
+   },
+   {
+    "order_id": "4c836302-1dbe-4790-975b-1795f0f331f8",
+    "product_id": "p-lic-month",
+    "quantity": 1,
+    "delivered_keys": "[\"AOE1-2QDS-HGWN-LFRW\"]"
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "users có username (cột thêm ngoài schema.sql)",
+  "sql": "SELECT COUNT(*) AS with_username, SUM(CASE WHEN username IS NULL THEN 1 ELSE 0 END) AS null_username FROM users",
+  "rows": [
+   {
+    "with_username": 33,
+    "null_username": 31
+   }
+  ],
+  "error": null
+ },
+ {
+  "label": "users theo role/status",
+  "sql": "SELECT role, status, COUNT(*) n FROM users GROUP BY role, status",
+  "rows": [
+   {
+    "role": "admin",
+    "status": "active",
+    "n": 1
+   },
+   {
+    "role": "user",
+    "status": "active",
+    "n": 32
+   }
+  ],
+  "error": null
+ }
+]

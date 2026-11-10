@@ -1,0 +1,337 @@
+[
+ {
+  "case": "A2 khong tham so",
+  "args": [],
+  "rc": "TIMEOUT",
+  "secs": 30.02,
+  "ok": null,
+  "stdout": "",
+  "stderr": "  khong bat duoc dung thu: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --key thieu gia tri",
+  "args": [
+   "--key"
+  ],
+  "rc": 2,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "",
+  "stderr": "--key can gia tri\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --rebind thieu 2",
+  "args": [
+   "--rebind",
+   "A"
+  ],
+  "rc": 2,
+  "secs": 0.12,
+  "ok": null,
+  "stdout": "",
+  "stderr": "--rebind can <key> <token>\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --rebind thieu 1",
+  "args": [
+   "--rebind",
+   "A",
+   "B"
+  ],
+  "rc": "TIMEOUT",
+  "secs": 30.02,
+  "ok": null,
+  "stdout": "",
+  "stderr": "  khong bat duoc dung thu: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 tham so la",
+  "args": [
+   "--khongtontai"
+  ],
+  "rc": 2,
+  "secs": 0.12,
+  "ok": null,
+  "stdout": "",
+  "stderr": "tham so khong hop le: --khongtontai\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --help",
+  "args": [
+   "--help"
+  ],
+  "rc": 0,
+  "secs": 0.11,
+  "ok": null,
+  "stdout": "XArena No Fog Pro -- MOT FILE DUY NHAT: license + no-fog + thuong tru.\r\n\r\n    xa_nofog_pro.exe                # thuong tru: doi game, va 1 lan/game\r\n    xa_nofog_pro.exe --once         # va 1 lan neu game dang mo, roi thoat\r\n    xa_nofog_pro.exe --off          # tra byte goc 17/17 (game phai dang mo)\r\n    xa_nofog_pro.exe --dump         # in trang thai byte cua tung cong\r\n    xa_nofog_pro.exe --list         # liet ke cong + byte goc/byte va\r\n    xa_nofog_pro.exe --full         # them 7 cong legacy (F I J K L O T2)\r\n    xa_nofog_pro.exe --watch        # va lai moi 0.5s -- CHI de debug\r\n    xa_nofog_pro.exe --key XXXX     # kich hoat bang key, roi thoat\r\n    xa_nofog_pro.exe --trial        # bat dung thu 3 ngay (tu dong neu chua co key)\r\n    xa_nofog_pro.exe --buy          # mo trang mua key\r\n    xa_nofog_pro.exe --rebind K T   # doi may bang token\r\n    xa_nofog_pro.exe --status       # xem trang thai license\r\n    xa_nofog_pro.exe --deactivate   # xoa key khoi may nay\r\n    xa_nofog_pro.exe --help         # huong dan\r\n\r\nQuyen admin:\r\n  --list / --status / --help / --deactivate / --key  -> KHONG can admin\r\n  cac lenh va game (mac dinh, --once, --off, --dump, --watch, --full)\r\n                                                    -> CAN admin, tu xin UAC\r\n  Thu tu: kiem license truoc, xin admin sau.\r\n\r\nMAC DINH = THUONG TRU: script nam cho, moi 2 giay kiem game mot lan. Khi game\r\nkhoi dong -> va DUNG MOT LAN vao 10 dia chi render -> roi KHONG cham vao nua.\r\nGame thoat thi quay lai cho. Mo game lai bao nhieu lan cung duoc.\r\nChi mot ban chay cung luc (named mutex Global\\XArenaNoFogPro).\r\n\r\nVi sao \"va dung mot lan\": moi lan ghi byte la mot lan engine co the doc code\r\ndang bi sua giua vong ve. Va luc game vua khoi dong, chua vao tran, la thoi\r\ndiem an toan nhat -- chua co lockstep, chua co checksum nao chay.\r\n\r\nCtrl-C KHONG tra byte goc (tranh lam game out); dung --off de tra goc.\r\n\r\n================================================================================\r\nPHAN 1 -- LICENSE\r\n================================================================================\r\n- HWID tinh tu phan cung that: MachineGuid + BIOS serial (SMBIOS type 2)\r\n  + CPU brand + volume serial o C:. Khong dung ten may / MAC (doi qua de).\r\n- State ma hoa DPAPI (CryptProtectData), rang buoc user Windows. Chep file\r\n  sang may khac = khong giai ma duoc.\r\n- Kiem tra qua server Cloudflare (D1): server gan key voi MOT may. Copy\r\n  chuoi key sang may khac se bi tu choi (hwid_mismatch).\r\n- Phat hien chinh lui dong ho he thong (nhieu moc: file + registry).\r\n- BAT BUOC ONLINE: moi lan chay phai xac minh duoc voi server.\r\n  Khong co offline grace. Mat mang = khong chay duoc.\r\n  (Tat bang REQUIRE_ONLINE=False trong xa_config.py neu can.)\r\n\r\n================================================================================\r\nPHAN 2 -- NO FOG\r\n================================================================================\r\n17 cong, chia 3 nhom: viewport (T1 V3 V6), minimap (A B C D E M N),\r\nlegacy (F I J K L O T2). Tat ca chi sua DUONG VE, khong sua LOGIC.\r\n\r\n--- Ba cong toi thieu ---\r\nT1  0x514E0F  nop je          -> terrain sang toan map\r\nV3  0x514F58  je -> jmp       -> bo grid kim cuong mo\r\nV6  0x516590  stub ham ve fog -> khong con gi de ve\r\n\r\n--- Vi sao V4/V5 bi loai ---\r\nNhay qua ca `mov [esp+0x3C],eax` -> caller dung index cu -> AV doc 0x2103E1E.\r\n\r\n--- Vi sao khong ghi mask ---\r\nByte 2 cua mask la chi so bang. Ghi vao lam engine tra pointer sai va crash.\r\n\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 -h",
+  "args": [
+   "-h"
+  ],
+  "rc": 0,
+  "secs": 0.12,
+  "ok": null,
+  "stdout": "XArena No Fog Pro -- MOT FILE DUY NHAT: license + no-fog + thuong tru.\r\n\r\n    xa_nofog_pro.exe                # thuong tru: doi game, va 1 lan/game\r\n    xa_nofog_pro.exe --once         # va 1 lan neu game dang mo, roi thoat\r\n    xa_nofog_pro.exe --off          # tra byte goc 17/17 (game phai dang mo)\r\n    xa_nofog_pro.exe --dump         # in trang thai byte cua tung cong\r\n    xa_nofog_pro.exe --list         # liet ke cong + byte goc/byte va\r\n    xa_nofog_pro.exe --full         # them 7 cong legacy (F I J K L O T2)\r\n    xa_nofog_pro.exe --watch        # va lai moi 0.5s -- CHI de debug\r\n    xa_nofog_pro.exe --key XXXX     # kich hoat bang key, roi thoat\r\n    xa_nofog_pro.exe --trial        # bat dung thu 3 ngay (tu dong neu chua co key)\r\n    xa_nofog_pro.exe --buy          # mo trang mua key\r\n    xa_nofog_pro.exe --rebind K T   # doi may bang token\r\n    xa_nofog_pro.exe --status       # xem trang thai license\r\n    xa_nofog_pro.exe --deactivate   # xoa key khoi may nay\r\n    xa_nofog_pro.exe --help         # huong dan\r\n\r\nQuyen admin:\r\n  --list / --status / --help / --deactivate / --key  -> KHONG can admin\r\n  cac lenh va game (mac dinh, --once, --off, --dump, --watch, --full)\r\n                                                    -> CAN admin, tu xin UAC\r\n  Thu tu: kiem license truoc, xin admin sau.\r\n\r\nMAC DINH = THUONG TRU: script nam cho, moi 2 giay kiem game mot lan. Khi game\r\nkhoi dong -> va DUNG MOT LAN vao 10 dia chi render -> roi KHONG cham vao nua.\r\nGame thoat thi quay lai cho. Mo game lai bao nhieu lan cung duoc.\r\nChi mot ban chay cung luc (named mutex Global\\XArenaNoFogPro).\r\n\r\nVi sao \"va dung mot lan\": moi lan ghi byte la mot lan engine co the doc code\r\ndang bi sua giua vong ve. Va luc game vua khoi dong, chua vao tran, la thoi\r\ndiem an toan nhat -- chua co lockstep, chua co checksum nao chay.\r\n\r\nCtrl-C KHONG tra byte goc (tranh lam game out); dung --off de tra goc.\r\n\r\n================================================================================\r\nPHAN 1 -- LICENSE\r\n================================================================================\r\n- HWID tinh tu phan cung that: MachineGuid + BIOS serial (SMBIOS type 2)\r\n  + CPU brand + volume serial o C:. Khong dung ten may / MAC (doi qua de).\r\n- State ma hoa DPAPI (CryptProtectData), rang buoc user Windows. Chep file\r\n  sang may khac = khong giai ma duoc.\r\n- Kiem tra qua server Cloudflare (D1): server gan key voi MOT may. Copy\r\n  chuoi key sang may khac se bi tu choi (hwid_mismatch).\r\n- Phat hien chinh lui dong ho he thong (nhieu moc: file + registry).\r\n- BAT BUOC ONLINE: moi lan chay phai xac minh duoc voi server.\r\n  Khong co offline grace. Mat mang = khong chay duoc.\r\n  (Tat bang REQUIRE_ONLINE=False trong xa_config.py neu can.)\r\n\r\n================================================================================\r\nPHAN 2 -- NO FOG\r\n================================================================================\r\n17 cong, chia 3 nhom: viewport (T1 V3 V6), minimap (A B C D E M N),\r\nlegacy (F I J K L O T2). Tat ca chi sua DUONG VE, khong sua LOGIC.\r\n\r\n--- Ba cong toi thieu ---\r\nT1  0x514E0F  nop je          -> terrain sang toan map\r\nV3  0x514F58  je -> jmp       -> bo grid kim cuong mo\r\nV6  0x516590  stub ham ve fog -> khong con gi de ve\r\n\r\n--- Vi sao V4/V5 bi loai ---\r\nNhay qua ca `mov [esp+0x3C],eax` -> caller dung index cu -> AV doc 0x2103E1E.\r\n\r\n--- Vi sao khong ghi mask ---\r\nByte 2 cua mask la chi so bang. Ghi vao lam engine tra pointer sai va crash.\r\n\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --HELP (hoa)",
+  "args": [
+   "--HELP"
+  ],
+  "rc": 2,
+  "secs": 0.12,
+  "ok": null,
+  "stdout": "",
+  "stderr": "tham so khong hop le: --HELP\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --Status (hoa)",
+  "args": [
+   "--Status"
+  ],
+  "rc": 2,
+  "secs": 0.12,
+  "ok": null,
+  "stdout": "",
+  "stderr": "tham so khong hop le: --Status\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --key rong",
+  "args": [
+   "--key",
+   ""
+  ],
+  "rc": "TIMEOUT",
+  "secs": 30.02,
+  "ok": null,
+  "stdout": "",
+  "stderr": "  khong bat duoc dung thu: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --key + --status",
+  "args": [
+   "--key",
+   "X",
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "A2 --list",
+  "args": [
+   "--list"
+  ],
+  "rc": 0,
+  "secs": 0.14,
+  "ok": null,
+  "stdout": "[viewport]\r\n  T1  0x00514E0F  85d17407 -> 90909090\r\n  V3  0x00514F58  7404 -> eb43\r\n  V6  0x00516590  518b442408 -> 33c0c21400\r\n[minimap]\r\n  A   0x0042D521  8a83b88d0000 -> b00190909090\r\n  B   0x0042D547  0f84e2030000 -> 909090909090\r\n  C   0x0042DC63  8a85b88d0000 -> b00190909090\r\n  D   0x0042DC6D  8a95b98d0000 -> b20190909090\r\n  E   0x0042DCA9  8a85b98d0000 -> b00190909090\r\n  M   0x0042DC93  b180 -> b10f\r\n  N   0x0042DCA7  b180 -> b10f\r\n[legacy]\r\n  F   0x00513DF8  8a81b88d0000 -> b00190909090\r\n  I   0x0051C631  8a81b88d0000 -> b00190909090\r\n  J   0x0051C6B8  8a81b88d0000 -> b00190909090\r\n  K   0x0051D28E  8a82b88d0000 -> b00190909090\r\n  L   0x0051D3D7  8a82b88d0000 -> b00190909090\r\n  O   0x00529BEA  b280 -> b20f\r\n  T2  0x00514EFF  0f853c010000 -> 909090909090\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_A2",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "B15 corrupt@0 magic XANF hong",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B15",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B15 corrupt@10 byte giua header",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.16,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: HOAT DONG\r\nBat dau   : 2026-11-10 19:32:42\r\nHet han   : 2026-12-10 20:32:42\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:32:42\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B15",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B15 corrupt@501 duoi file",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B15",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B15 truncated",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.12,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B15",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B15 empty",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B15",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B15 lic.bin la thu muc",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B15",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B16 DPAPI user khac",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "Che do    : server\r\nTrang thai: CHUA KICH HOAT\r\nDung thu  : con 3 ngay, tu bat khi chay tool\r\nMua key   : https://xienhl.com/#/product/license-xarena-thang\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B16",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B20 --trial khi da co license",
+  "args": [
+   "--trial"
+  ],
+  "rc": 0,
+  "secs": 0.15,
+  "ok": null,
+  "stdout": "May nay da co license AOE1***********TEST. Khong can dung thu.\r\nChe do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: HOAT DONG\r\nBat dau   : 2026-11-10 19:32:42\r\nHet han   : 2026-12-10 20:32:42\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:32:42\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B20",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B26 dong ho lui -> --status",
+  "args": [
+   "--status"
+  ],
+  "rc": 0,
+  "secs": 0.2,
+  "ok": null,
+  "stdout": "Che do    : server\r\nLoai      : BAN QUYEN\r\nKey       : AOE1***********TEST\r\nHWID may  : 251b************************f9dc\r\nHWID khop : CO\r\nTrang thai: KHONG (clock_tampered)\r\nBat dau   : 2026-11-10 19:32:42\r\nHet han   : 2026-12-10 20:32:42\r\nCon lai   : 30.0 ngay\r\nGio server: 2026-11-10 20:32:42\r\nDong ho   : dung\r\nOffline   : het (can mang)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B26",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ },
+ {
+  "case": "B26 dong ho lui -> --key",
+  "args": [
+   "--key",
+   "AOE1-TEST-TEST-TEST"
+  ],
+  "rc": 3,
+  "secs": 0.18,
+  "ok": null,
+  "stdout": "  HWID: 251b************************f9dc\r\n  kich hoat thanh cong\r\n",
+  "stderr": "  Van khong hop le: clock_tampered\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B26b",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:53587"
+  }
+ }
+]
