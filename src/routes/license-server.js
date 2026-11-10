@@ -85,12 +85,17 @@ function publicLic(lic, extra = {}) {
   const isTrial = lic && lic.plan === 'trial';
   return {
     ok: true,
+    // ===== SERVER-AUTHORITATIVE TIME =====
+    // Client KHÔNG được tự quyết định "còn hạn hay không" bằng đồng hồ máy.
+    // Trả giờ server trong MỌI response để client neo vào monotonic clock.
+    now: nowSec(),
     expires_at: lic.expires_at,
     activated_at: lic.activated_at,
     plan: lic.plan,
     forever: !lic.expires_at,
-    // Trial KHONG co offline grace (rut mang = khong chay duoc, 3 ngay khong thanh 4)
+    // Trial KHONG co offline grace (rut mang = khong chay duoc)
     grace_hours: isTrial ? 0 : GRACE_HOURS,
+    trial: isTrial,
     ...extra,
   };
 }
@@ -172,6 +177,7 @@ export async function apiActivate(env, request) {
     await logEvent(env, key, hwid, 'deny', v.code, ip);
     return json({
       ok: false, code: v.code, msg: MESSAGES[v.code] || v.code,
+      now: now,   // server-authoritative time
       expires_at: v.expires_at || 0,
     }, 403);
   }
@@ -210,6 +216,7 @@ export async function apiCheck(env, request) {
     await logEvent(env, key, hwid, 'deny', v.code, ip);
     return json({
       ok: false, code: v.code, msg: MESSAGES[v.code] || v.code,
+      now: now,   // server-authoritative time
       expires_at: v.expires_at || 0,
     }, 403);
   }

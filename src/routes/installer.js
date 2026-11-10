@@ -14,8 +14,8 @@ import { readLicense, normKey } from './license.js';
 
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
 const EXE_NAME = 'xa_nofog_pro.exe';
-const EXE_SHA256 = 'FE4A566C95DCE2D549B92465AD910B41F2E23895710EC9A95FC29D8C4FDA9383';
-const EXE_SIZE = 13198096;
+const EXE_SHA256 = 'ABBD6D485C290456A78BDB890967EE55B571A9F3713BFD85B4380301C432D6E8';
+const EXE_SIZE = 13202087;
 
 function siteBase(request) {
   const u = new URL(request.url);

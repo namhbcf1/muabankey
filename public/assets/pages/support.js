@@ -97,7 +97,7 @@ export function renderSupport() {
             <div class="panel-title">📞 Liên hệ hỗ trợ</div>
             <div class="flex flex-col gap-1">
               <a class="btn btn-primary btn-block" href="https://t.me/muabankey" target="_blank" rel="noopener">✈️ Telegram (nhanh nhất)</a>
-              <a class="btn btn-ghost btn-block" href="https://zalo.me/0000000000" target="_blank" rel="noopener">💬 Zalo</a>
+              <a class="btn btn-ghost btn-block" href="https://zalo.me/0836768597" target="_blank" rel="noopener">💬 Zalo</a>
               <a class="btn btn-ghost btn-block" href="mailto:support@muabankey.vn">✉️ support@muabankey.vn</a>
             </div>
             <div class="alert alert-info mt-2" style="margin-bottom:0;font-size:12.5px">

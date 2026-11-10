@@ -256,7 +256,7 @@ export function renderFooter() {
         <div class="footer-col">
           <h4>Liên hệ</h4>
           <a href="https://t.me/muabankey" target="_blank" rel="noopener">✈️ Telegram</a>
-          <a href="https://zalo.me/0000000000" target="_blank" rel="noopener">💬 Zalo</a>
+          <a href="https://zalo.me/0836768597" target="_blank" rel="noopener">💬 Zalo</a>
           <a href="mailto:support@muabankey.vn">✉️ support@muabankey.vn</a>
           <a href="#/account">👤 Tài khoản</a>
         </div>

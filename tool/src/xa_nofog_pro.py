@@ -412,6 +412,7 @@ def activate(key, verbose=True):
     if not r.get('ok'):
         return False, r.get('msg') or r.get('code') or 'kich hoat that bai'
     st = load_state()
+    anchor_server_time(st, r.get('now'))
     st.update({
         'key': key.strip().upper(),
         'hwid': hwid,
@@ -447,12 +448,14 @@ def check_online(st=None, verbose=True):
             print('  server: %s' % msg)
         # Tra ve ca ma loi de phan biet "het han" va "loi mang"
         return False, 'code:%s|%s' % (code, msg)
+    anchor_server_time(st, r.get('now'))
     st.update({
         'expires_at': r.get('expires_at', 0),
         'activated_at': r.get('activated_at', 0),
         'plan': r.get('plan'),
         'grace_hours': r.get('grace_hours', 24),
         'last_ok': time.time(),
+        'mono_last_ok': _mono(),
     })
     save_state(st)
     return True, 'ok'
@@ -465,27 +468,168 @@ def is_trial(st=None):
 
 
 def _grace_left(st):
-    """So giay con duoc chay offline ke tu lan check thanh cong cuoi."""
-    # Ban dung thu KHONG co offline grace: neu cho phep, chi can rut mang
-    # la 3 ngay thanh 4-5 ngay, va moi ma loi khong xac dinh deu bi day
-    # vao nhanh grace (khong kiem tra duoc han that).
+    """So giay con duoc chay offline ke tu lan check thanh cong cuoi.
+
+    DO BANG MONOTONIC, khong phai dong ho he thong: lui dong ho khong keo
+    dai duoc grace.
+    """
+    # Ban dung thu KHONG co offline grace: rut mang la khong chay duoc.
     if is_trial(st):
         return 0
-    if not st.get('last_ok'):
+    mono_ok = st.get('mono_last_ok')
+    if mono_ok is None:
         return 0
-    return st.get('grace_hours', 24) * 3600 - (time.time() - st.get('last_ok', 0))
+    try:
+        elapsed = _mono() - float(mono_ok)
+    except Exception:
+        return 0
+    if elapsed < 0:
+        elapsed = 0
+    return st.get('grace_hours', 24) * 3600 - elapsed
+
+
+# =============================================================================
+# PHAN 1a -- DONG HO SERVER-AUTHORITATIVE (chong lui dong ho)
+# =============================================================================
+# _time_anchor = {server_ts, mono_at}  -- neo giờ server vào monotonic clock
+_time_anchor = {'server_ts': 0, 'mono_at': 0.0}
+
+
+def _mono():
+    """Dong ho don dieu. KHONG bi anh huong khi doi ngay gio he thong."""
+    try:
+        return time.monotonic()
+    except Exception:
+        return time.time()
+
+
+def anchor_server_time(st, server_ts):
+    """Neo gio server vao monotonic clock (goi moi khi server tra `now`)."""
+    try:
+        ts = int(server_ts)
+    except Exception:
+        return
+    if ts <= 0:
+        return
+    _time_anchor['server_ts'] = ts
+    _time_anchor['mono_at'] = _mono()
+    try:
+        st['srv_ts'] = ts
+        st['mono_at'] = _time_anchor['mono_at']
+    except Exception:
+        pass
+
+
+def load_anchor(st):
+    """Khoi phuc neo tu state (sau khi mo lai tool)."""
+    try:
+        ts = int(st.get('srv_ts') or 0)
+        ma = float(st.get('mono_at') or 0)
+    except Exception:
+        return
+    if ts > 0 and ma > 0:
+        _time_anchor['server_ts'] = ts
+        _time_anchor['mono_at'] = ma
+
+
+def server_now():
+    """Gio server uoc tinh. Dung monotonic -> lui dong ho he thong vo dung.
+
+    Neu chua tung lien lac server (chua co neo) -> tra time.time().
+    """
+    if _time_anchor['server_ts'] > 0:
+        delta = _mono() - _time_anchor['mono_at']
+        if delta < 0:
+            # Monotonic khong the chay lui -> chi co the do khac process
+            delta = 0
+        return _time_anchor['server_ts'] + delta
+    return time.time()
+
+
+def detect_clock_rollback(st):
+    """Phat hien lui dong ho he thong.
+
+    So sanh time.time() (co the bi sua) voi server_now() (monotonic).
+    Neu dong ho he thong lui qua CLOCK_SKEW_TOLERANCE so voi gio server
+    uoc tinh -> co dau hieu chinh lui.
+
+    Tra (tampered: bool, delta_seconds: float)
+    """
+    if _time_anchor['server_ts'] <= 0:
+        return False, 0.0
+    wall = time.time()
+    srv = server_now()
+    delta = wall - srv          # >0: dong ho may nhanh; <0: dong ho may cham/lui
+    if delta < -CLOCK_SKEW_TOLERANCE:
+        return True, delta
+    return False, delta
+
+
+def _time_state(st):
+    """Kiem tra + ghi moc thoi gian. Goi moi lan check online.
+
+    HAI LOP:
+      Lop 1 (chinh): so dong ho he thong voi gio server neo vao monotonic.
+                     Khong the lua duoc vi monotonic khong chinh duoc.
+      Lop 2 (bo tro): so dong ho voi moc cao nhat ghi ra file + registry.
+                     Hoat dong ca khi khong co mang, nhung ke tan cong
+                     chay admin co the xoa.
+
+    Tra (ok: bool, msg: str). ok=False nghia la phat hien chinh lui dong ho.
+    """
+    # ---- Lop 1: doi chieu gio server (monotonic) ----
+    tampered, delta = detect_clock_rollback(st)
+    if tampered:
+        try:
+            st['clock_tampered'] = 1
+            st['clock_delta'] = round(delta, 1)
+            save_state(st)
+        except Exception:
+            pass
+        return False, ('dong ho may cham hon %.1f gio so voi server'
+                       % (abs(delta) / 3600.0))
+
+    # ---- Lop 2: doi chieu moc da ghi (khong can mang) ----
+    try:
+        wall_now, anchor_tampered = _time_state_anchors()
+        if anchor_tampered:
+            try:
+                st['clock_tampered'] = 1
+                save_state(st)
+            except Exception:
+                pass
+            return False, 'dong ho may bi chinh lui so voi moc da luu'
+        # Ghim _time_anchor theo moc file khi chua co neo server
+        if _time_anchor['server_ts'] <= 0 and wall_now > 0:
+            _time_anchor['server_ts'] = wall_now
+            _time_anchor['mono_at'] = _mono()
+    except Exception:
+        pass
+
+    # Moc monotonic cao nhat tung thay
+    try:
+        prev = int(st.get('mono_high') or 0)
+        cur = int(_mono())
+        if cur > prev:
+            st['mono_high'] = cur
+    except Exception:
+        pass
+    return True, 'ok'
 
 
 # =============================================================================
 # PHAN 1b -- DUNG THU 3 NGAY
 # =============================================================================
 def _days_left(st=None):
-    """So ngay con lai (float) hoac None neu khong co han."""
+    """So ngay con lai (float) hoac None neu khong co han.
+
+    Dung server_now() (monotonic), KHONG dung time.time().
+    """
     st = st if st is not None else load_state()
     exp = st.get('expires_at') or 0
     if not exp:
         return None
-    return (exp - time.time()) / 86400.0
+    return (exp - server_now()) / 86400.0
 
 
 def _print_trial_banner(st):
@@ -585,6 +729,7 @@ def start_trial(verbose=True):
         return False, 'server khong tra ma dung thu'
 
     st = load_state()
+    anchor_server_time(st, r.get('now'))
     st.update({
         'key': key,
         'hwid': compute_hwid(),
@@ -592,9 +737,10 @@ def start_trial(verbose=True):
         'activated_at': r.get('activated_at', 0),
         'plan': 'trial',
         'is_trial': 1,
-        'trial_started': int(time.time()),
+        'trial_started': int(server_now()),
         'grace_hours': r.get('grace_hours', TRIAL_GRACE_HOURS),
         'last_ok': time.time(),
+        'mono_last_ok': _mono(),
         'mode': 'server',
     })
     if not save_state(st):
@@ -617,7 +763,7 @@ def trial_guard(verbose=True):
     if not is_trial(st):
         return True
 
-    now = time.time()
+    now = server_now()          # gio server, khong phai dong ho may
     exp = st.get('expires_at') or 0
     if exp and now > exp:
         if verbose:
@@ -644,6 +790,21 @@ def ensure_licensed(verbose=True):
     if not key:
         return False, 'chua kich hoat'
 
+    # Khoi phuc neo gio server tu state (sau khi mo lai tool)
+    load_anchor(st)
+
+    # Kiem lui dong ho TRUOC khi tin bat cu thu gi tren may.
+    # _time_state() truoc day la dead code -> lui dong ho khong bi phat hien.
+    clock_ok, clock_msg = _time_state(st)
+    if not clock_ok:
+        if verbose:
+            print('  [!] %s' % clock_msg)
+        # Chi chan khi la trial hoac da cau hinh nghiem ngat.
+        # Key tra phi: van cho chay nhung ghi nhan (tranh chan oan khach
+        # doi mui gio / dong ho may chet pin CMOS).
+        if is_trial(st):
+            return False, 'clock_tampered'
+
     ok, msg = check_online(st, verbose=False)
 
     if ok:
@@ -659,7 +820,7 @@ def ensure_licensed(verbose=True):
     # grace -> tu bam het rate limit la duoc chay mu them 24 gio.
     if code in ('revoked', 'expired', 'hwid_mismatch', 'not_found',
                 'trial_expired', 'trial_only', 'trial_denied_device',
-                'rate_limit', 'bad_request'):
+                'rate_limit', 'bad_request', 'clock_tampered'):
         return False, msg.split('|', 1)[-1]
 
     # Loi mang / server -> dung grace neu con han cuc bo
@@ -668,9 +829,10 @@ def ensure_licensed(verbose=True):
         if verbose:
             print('  khong ket noi duoc server, dung offline grace (con %.1f gio)'
                   % (left / 3600.0))
-        # Van phai kiem han cuc bo
+        # Van phai kiem han cuc bo — dung GIO SERVER (monotonic), khong
+        # dung dong ho he thong (lui dong ho khong keo dai duoc).
         exp = st.get('expires_at') or 0
-        if exp and exp > 0 and time.time() > exp:
+        if exp and exp > 0 and server_now() > exp:
             return False, 'ma da het han'
         return True, 'ok (offline)'
     return False, 'khong ket noi duoc server va da het grace'
@@ -753,11 +915,17 @@ def _reg_anchor_write(value):
         return False
 
 
-def _time_state():
-    """Tra (now_trusted, tampered).
+def _time_state_anchors():
+    """Lop phong thu THU HAI: moc thoi gian ghi ra file + registry.
 
-    now_trusted = time.time() hien tai (KHONG phai moc cao nhat da luu).
-    Moc cao nhat chi dung de phat hien lui dong ho.
+    Khac voi server-authoritative (lop 1, dung monotonic + gio server),
+    lop nay phat hien lui dong ho ngay ca khi KHONG co mang, bang cach
+    so dong ho hien tai voi moc cao nhat da ghi o nhieu noi.
+
+    Gioi han: tool chay admin nen ke tan cong xoa duoc cac moc nay. Vi vay
+    day chi la lop bo tro — lop chinh la server (monotonic + `now`).
+
+    Tra (now: int, tampered: bool)
     """
     now = int(time.time())
     highest = 0
@@ -1359,6 +1527,18 @@ def show_status():
         left = (exp - time.time()) / 86400.0
         print('Con lai   : %s' % ('%.1f ngay' % left if left > 0
                                   else 'DA HET HAN'))
+
+    # Hiển thị giờ server + phát hiện lùi đồng hồ
+    if _time_anchor['server_ts'] > 0:
+        tampered, delta = detect_clock_rollback(st)
+        print('Gio server: %s' % time.strftime('%Y-%m-%d %H:%M:%S',
+                                               time.localtime(server_now())))
+        if tampered:
+            print('Dong ho   : CHINH LUI (%.1f gio so voi server)' % (abs(delta) / 3600.0))
+        elif abs(delta) > 300:
+            print('Dong ho   : lech %.0f phut so voi server' % (abs(delta) / 60.0))
+        else:
+            print('Dong ho   : dung')
 
     if trial:
         print('Offline   : KHONG (dung thu can mang moi lan chay)')
