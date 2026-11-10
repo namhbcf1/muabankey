@@ -1,11 +1,12 @@
 /** Trang chủ. */
-import { api, esc, fmtVnd, fmtNum, skeletonCards, navigate, toast, openModal, copyText } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, skeletonCards, navigate, toast, openModal, copyText, emptyBlock } from '../lib.js';
 import { state, addToCart } from '../state.js';
+import { icon, iconBox } from '../icons.js';
 
 export function productCard(p) {
   const isLicense = p.deliveryType === 'license';
-  const stockClass = p.stock <= 0 && p.deliveryType !== 'manual' && !isLicense
-    ? 'out' : p.stock < 5 && !isLicense ? 'low' : 'ok';
+  const soldOut = p.stock <= 0 && p.deliveryType !== 'manual' && !isLicense;
+  const stockClass = soldOut ? 'out' : p.stock < 5 && !isLicense ? 'low' : 'ok';
   const stockText = isLicense
     ? 'Giao tự động'
     : p.deliveryType === 'manual'
@@ -15,11 +16,11 @@ export function productCard(p) {
 
   return `
   <article class="product-card" data-slug="${esc(p.slug)}">
-    <a href="#/product/${esc(p.slug)}" class="product-thumb" style="display:block">
-      <img src="${esc(p.imageUrl || '')}" alt="${esc(p.name)}" loading="lazy"
-        onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 400 250%22%3E%3Crect fill=%22%23141424%22 width=%22400%22 height=%22250%22/%3E%3Ctext x=%2250%25%22 y=%2255%25%22 font-size=%2260%22 text-anchor=%22middle%22%3E%F0%9F%94%91%3C/text%3E%3C/svg%3E'">
+    <a href="#/product/${esc(p.slug)}" class="product-thumb" aria-label="${esc(p.name)}">
+      <img src="${esc(p.imageUrl || '')}" alt="" loading="lazy"
+        onerror="this.style.opacity='0'">
       ${p.badge ? `<span class="badge ${badgeMap[p.badge] || 'badge-new'}">${esc(p.badge)}</span>` : ''}
-      ${p.discountPercent > 0 ? `<span class="disc-tag">-${p.discountPercent}%</span>` : ''}
+      ${p.discountPercent > 0 ? `<span class="disc-tag">−${p.discountPercent}%</span>` : ''}
       <span class="stock-pill ${stockClass}"><span class="dot"></span>${stockText}</span>
     </a>
     <div class="product-body">
@@ -27,9 +28,8 @@ export function productCard(p) {
       <a href="#/product/${esc(p.slug)}" class="product-name">${esc(p.name)}</a>
       <div class="product-desc">${esc(p.shortDesc || '')}</div>
       <div class="product-meta">
-        <span class="star">★ ${Number(p.rating).toFixed(1)}</span>
+        <span class="star">${icon('star', { size: 11, fill: true, stroke: 0 })} ${Number(p.rating).toFixed(1)}</span>
         <span>${fmtNum(p.ratingCount)} đánh giá</span>
-        <span>·</span>
         <span>Đã bán ${fmtNum(p.sold)}</span>
       </div>
       <div class="product-foot">
@@ -37,8 +37,8 @@ export function productCard(p) {
           <span class="price-now">${fmtVnd(p.price)}</span>
           ${p.comparePrice ? `<span class="price-old">${fmtVnd(p.comparePrice)}</span>` : ''}
         </div>
-        <button class="btn-buy" data-add="${esc(p.id)}" ${p.stock <= 0 && p.deliveryType !== 'manual' && !isLicense ? 'disabled style="opacity:.45"' : ''}>
-          ${p.stock <= 0 && p.deliveryType !== 'manual' && !isLicense ? 'Hết' : 'Mua'}
+        <button class="btn-buy" data-add="${esc(p.id)}" ${soldOut ? 'disabled' : ''}>
+          ${soldOut ? 'Hết' : 'Mua'}
         </button>
       </div>
     </div>
@@ -66,14 +66,17 @@ export function renderHome() {
         <span class="pulse"></span>
         Dùng thử miễn phí · 1 giờ hoặc 3 ngày · Không cần thẻ
       </div>
-      <h1>Bản quyền số <span class="grad">chính hãng</span><br>giao key trong 30 giây</h1>
+      <h1>Bản quyền số chính hãng,<br>giao key trong 30 giây</h1>
       <p class="hero-sub">
-        Key bản quyền chính hãng, giao tự động 24/7.
-        Thanh toán VietQR, bảo hành 1 đổi 1.
+        Key bản quyền chính hãng, giao tự động 24/7. Thanh toán VietQR, bảo hành 1 đổi 1.
       </p>
       <div class="hero-cta">
-        <button class="btn btn-primary btn-lg" data-goto="/products">Khám phá sản phẩm →</button>
-        <button class="btn btn-ghost btn-lg" data-scroll-trial>🎁 Dùng thử miễn phí</button>
+        <button class="btn btn-primary btn-lg" data-goto="/products">
+          Khám phá sản phẩm ${icon('arrowRight', { size: 15 })}
+        </button>
+        <button class="btn btn-ghost btn-lg" data-scroll-trial>
+          ${icon('gift', { size: 15 })} Dùng thử miễn phí
+        </button>
       </div>
 
       <div class="hero-stats">
@@ -88,83 +91,73 @@ export function renderHome() {
   <!-- ===== KHỐI DÙNG THỬ: 1 GIỜ + 3 NGÀY ===== -->
   <section class="section-sm" id="trial-section">
     <div class="container">
-      <div class="sec-head" style="margin-bottom:18px">
+      <div class="sec-head">
         <div>
-          <h2 class="sec-title">🎁 Dùng thử miễn phí</h2>
-          <p class="sec-desc">
-            Hai lựa chọn — mỗi loại <strong>10 lượt</strong> cho tài khoản của bạn
-          </p>
+          <h2 class="sec-title">Dùng thử miễn phí</h2>
+          <p class="sec-desc">Hai lựa chọn, mỗi loại <strong>10 lượt</strong> cho tài khoản của bạn</p>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px" class="trial-grid">
+      <div class="trial-grid">
         <!-- ===== GÓI 1 GIỜ ===== -->
-        <div class="card" style="padding:26px 24px;background:linear-gradient(135deg,rgba(251,191,36,.10),rgba(34,211,238,.05));border-color:rgba(251,191,36,.28)">
-          <div class="flex items-center gap-1 mb-1">
-            <span class="pill" style="font-size:11.5px;background:rgba(251,191,36,.18);color:#fbbf24">⚡ DÙNG THỬ NHANH</span>
+        <div class="card trial-card">
+          <div class="trial-head">
+            <span class="pill pill-yellow">${icon('bolt', { size: 11 })} Dùng thử nhanh</span>
           </div>
-          <h3 style="font-size:1.45rem;font-weight:800;letter-spacing:-.03em;margin-bottom:6px">
-            Dùng thử <span style="color:#fbbf24">1 giờ</span>
-          </h3>
-          <div style="font-size:2rem;font-weight:800;color:#4ade80;margin-bottom:12px;letter-spacing:-.04em">
-            0đ
-          </div>
-          <ul class="feature-list" style="margin-bottom:18px;font-size:13px">
-            <li><span class="tick">✓</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
-            <li><span class="tick">✓</span><span>Đủ chơi 1-2 trận để thử</span></li>
-            <li><span class="tick">✓</span><span><strong>10 lượt</strong> / tài khoản</span></li>
+          <h3 class="trial-name">Dùng thử <span class="trial-hl warn">1 giờ</span></h3>
+          <div class="trial-price">0đ</div>
+          <ul class="feature-list trial-feats">
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đủ chơi 1–2 trận để thử</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / tài khoản</span></li>
           </ul>
-          <div id="trial-1h-status" style="font-size:12.5px;color:var(--text-mute);margin-bottom:12px;min-height:20px"></div>
+          <div id="trial-1h-status" class="trial-status"></div>
           <button class="btn btn-gold btn-block" data-trial-kind="1h">
-            ⚡ Bắt đầu 1 giờ
+            ${icon('bolt', { size: 14 })} Bắt đầu 1 giờ
           </button>
         </div>
 
         <!-- ===== GÓI 3 NGÀY ===== -->
-        <div class="card" style="padding:26px 24px;background:linear-gradient(135deg,rgba(34,197,94,.12),rgba(34,211,238,.07));border-color:rgba(34,197,94,.3)">
-          <div class="flex items-center gap-1 mb-1">
-            <span class="pill pill-green" style="font-size:11.5px">🔥 PHỔ BIẾN NHẤT</span>
+        <div class="card trial-card trial-card-accent">
+          <div class="trial-head">
+            <span class="pill pill-green">${icon('trend', { size: 11 })} Phổ biến nhất</span>
           </div>
-          <h3 style="font-size:1.45rem;font-weight:800;letter-spacing:-.03em;margin-bottom:6px">
-            Dùng thử <span style="color:#4ade80">3 ngày</span>
-          </h3>
-          <div style="font-size:2rem;font-weight:800;color:#4ade80;margin-bottom:12px;letter-spacing:-.04em">
-            0đ
-          </div>
-          <ul class="feature-list" style="margin-bottom:18px;font-size:13px">
-            <li><span class="tick">✓</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
-            <li><span class="tick">✓</span><span>Chơi thoải mái nhiều ngày</span></li>
-            <li><span class="tick">✓</span><span><strong>10 lượt</strong> / tài khoản</span></li>
+          <h3 class="trial-name">Dùng thử <span class="trial-hl accent">3 ngày</span></h3>
+          <div class="trial-price">0đ</div>
+          <ul class="feature-list trial-feats">
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Chơi thoải mái nhiều ngày</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / tài khoản</span></li>
           </ul>
-          <div id="trial-3d-status" style="font-size:12.5px;color:var(--text-mute);margin-bottom:12px;min-height:20px"></div>
+          <div id="trial-3d-status" class="trial-status"></div>
           <button class="btn btn-primary btn-block" data-trial-kind="3d">
-            🎁 Bắt đầu 3 ngày
+            ${icon('gift', { size: 14 })} Bắt đầu 3 ngày
           </button>
         </div>
       </div>
 
       <div class="alert alert-info" style="margin-top:16px">
-        <span class="ico">ℹ️</span>
+        <span class="ico">${icon('info', { size: 15 })}</span>
         <span>Cần <strong>tài khoản</strong> để dùng thử (miễn phí, chỉ tài khoản + mật khẩu).
-        Tool tự bật dùng thử khi chạy lần đầu — không nhập gì thêm.</span>
+        Tool tự bật dùng thử khi chạy lần đầu, không nhập gì thêm.</span>
       </div>
     </div>
   </section>
 
-  <section class="section-sm">
+  <section class="section-sm" style="padding-top:0">
     <div class="container">
       <div class="cat-scroll" id="home-cats"></div>
     </div>
   </section>
 
-  <section class="section" style="padding-top:20px">
+  <section class="section" style="padding-top:16px">
     <div class="container">
       <div class="sec-head">
         <div>
-          <h2 class="sec-title">🔥 Sản phẩm nổi bật</h2>
+          <h2 class="sec-title">Sản phẩm nổi bật</h2>
           <p class="sec-desc">Được khách hàng lựa chọn nhiều nhất trong 30 ngày qua</p>
         </div>
-        <a href="#/products" class="sec-link">Xem tất cả →</a>
+        <a href="#/products" class="sec-link">Xem tất cả ${icon('arrowRight', { size: 13 })}</a>
       </div>
       <div id="home-featured">${skeletonCards(8)}</div>
     </div>
@@ -172,17 +165,17 @@ export function renderHome() {
 
   <section class="section-sm">
     <div class="container">
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px">
+      <div class="value-grid">
         ${[
-          ['⚡', 'Giao key tự động', 'Nhận key ngay sau khi thanh toán, không cần chờ đợi'],
-          ['🛡️', 'Bảo hành 1 đổi 1', 'Key lỗi đổi mới ngay, hoàn tiền 100% nếu không khắc phục được'],
-          ['💳', 'Thanh toán VietQR', 'Nạp tiền tự động qua chuyển khoản, tiền vào ví trong 1-2 phút'],
-          ['🔒', 'Bảo mật tuyệt đối', 'Mã hoá SSL 256-bit, key giao riêng tư từng khách hàng'],
+          ['bolt', 'Giao key tự động', 'Nhận key ngay sau khi thanh toán, không cần chờ đợi'],
+          ['shieldCheck', 'Bảo hành 1 đổi 1', 'Key lỗi đổi mới ngay, hoàn tiền 100% nếu không khắc phục được'],
+          ['bank', 'Thanh toán VietQR', 'Nạp tiền tự động qua chuyển khoản, tiền vào ví trong 1–2 phút'],
+          ['lock', 'Bảo mật tuyệt đối', 'Mã hoá SSL 256-bit, key giao riêng tư từng khách hàng'],
         ].map(([ico, t, d]) => `
-          <div class="card" style="padding:22px">
-            <div style="font-size:27px;margin-bottom:11px">${ico}</div>
-            <div style="font-size:15px;font-weight:800;margin-bottom:6px">${t}</div>
-            <div style="font-size:13px;color:var(--text-mute);line-height:1.6">${d}</div>
+          <div class="card value-card">
+            ${iconBox(ico, { size: 17 })}
+            <div class="value-t">${t}</div>
+            <div class="value-d">${d}</div>
           </div>`).join('')}
       </div>
     </div>
@@ -192,10 +185,10 @@ export function renderHome() {
     <div class="container">
       <div class="sec-head">
         <div>
-          <h2 class="sec-title">⚡ Top bán chạy</h2>
+          <h2 class="sec-title">Top bán chạy</h2>
           <p class="sec-desc">Sản phẩm được mua nhiều nhất tuần này</p>
         </div>
-        <a href="#/products?sort=popular" class="sec-link">Xem thêm →</a>
+        <a href="#/products?sort=popular" class="sec-link">Xem thêm ${icon('arrowRight', { size: 13 })}</a>
       </div>
       <div id="home-popular">${skeletonCards(4)}</div>
     </div>
@@ -203,24 +196,23 @@ export function renderHome() {
 
   <section class="section-sm">
     <div class="container">
-      <div class="card" style="padding:38px 30px;background:linear-gradient(135deg,rgba(124,92,255,.14),rgba(34,211,238,.08));border-color:rgba(124,92,255,.28);text-align:center">
-        <h2 style="font-size:clamp(1.4rem,3vw,2rem);font-weight:800;letter-spacing:-.035em;margin-bottom:12px">
-          Cần tư vấn? Key Bot luôn sẵn sàng 🤖
-        </h2>
-        <p style="color:var(--text-dim);font-size:14.5px;max-width:520px;margin:0 auto 24px">
-          Trợ lý AI thông minh giúp bạn chọn đúng sản phẩm theo nhu cầu và ngân sách chỉ trong vài giây.
-        </p>
-        <button class="btn btn-primary btn-lg" id="open-ai-cta">💬 Trò chuyện với Key Bot</button>
+      <div class="card cta-panel">
+        <div class="cta-panel-icon">${icon('sparkles', { size: 20 })}</div>
+        <div>
+          <h2 class="cta-panel-title">Cần tư vấn? Key Bot luôn sẵn sàng</h2>
+          <p class="cta-panel-desc">
+            Trợ lý AI giúp bạn chọn đúng sản phẩm theo nhu cầu và ngân sách chỉ trong vài giây.
+          </p>
+        </div>
+        <button class="btn btn-primary" id="open-ai-cta">
+          ${icon('message', { size: 14 })} Trò chuyện với Key Bot
+        </button>
       </div>
     </div>
   </section>
 
-  ${renderFooterPlaceholder()}
+  <div id="site-footer"></div>
   `;
-}
-
-function renderFooterPlaceholder() {
-  return `<div id="site-footer"></div>`;
 }
 
 /**
@@ -240,7 +232,7 @@ async function startTrialFlow(kind, onDone) {
         Miễn phí, chỉ cần tài khoản + mật khẩu. Không cần email, không cần thẻ.
       </div>
       <div class="alert alert-info" style="margin-bottom:18px">
-        <span class="ico">💡</span>
+        <span class="ico">${icon('info', { size: 15 })}</span>
         <span>Mỗi tài khoản được <strong>10 lượt dùng thử ${label}</strong>.</span>
       </div>
       <div class="flex gap-1" style="justify-content:space-between;flex-wrap:wrap">
@@ -271,42 +263,45 @@ async function startTrialFlow(kind, onDone) {
     const quota = data.quota;
 
     openModal(`
-      <div class="modal-title">✅ Đã bật dùng thử ${label}</div>
+      <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+        ${icon('checkCircle', { size: 17 })} Đã bật dùng thử ${label}
+      </div>
       <div class="modal-sub">
         Còn <strong>${left}/${quota}</strong> lượt dùng thử ${label}.
       </div>
 
       <div class="field">
         <label class="label">Mã dùng thử của bạn</label>
-        <div class="mono" style="font-size:14px;letter-spacing:.06em;background:rgba(34,197,94,.08);
-          padding:12px;border-radius:9px;border:1px solid rgba(34,197,94,.3);text-align:center;font-weight:700">
-          ${esc(key)}
+        <div class="key-box" style="margin:0">
+          <span class="key-value">${esc(key)}</span>
+          <button class="key-copy" data-copykey>${icon('copy', { size: 12 })} Copy</button>
         </div>
       </div>
 
-      <div style="font-size:13px;color:var(--text-dim);line-height:1.9;margin-bottom:14px">
-        <strong>Bước tiếp theo:</strong><br>
-        1. Tải tool bên dưới<br>
-        2. Chạy tool — nó tự nhận mã này<br>
-        3. Mở game AoE là dùng được
+      <div class="trial-steps">
+        <strong>Bước tiếp theo</strong>
+        <ol>
+          <li>Tải tool bên dưới</li>
+          <li>Chạy tool — nó tự nhận mã này</li>
+          <li>Mở game AoE là dùng được</li>
+        </ol>
       </div>
 
       <div class="flex gap-1" style="flex-wrap:wrap;margin-bottom:14px">
         <a class="btn btn-primary btn-sm" href="${esc(location.origin)}/download/xa_nofog_pro.exe" download>
-          ⬇️ Tải tool (12 MB)
+          ${icon('download', { size: 13 })} Tải tool (12 MB)
         </a>
-        <button class="btn btn-ghost btn-sm" data-copykey>📋 Copy mã</button>
       </div>
 
       <div class="alert alert-warn" style="margin-bottom:16px">
-        <span class="ico">⏳</span>
+        <span class="ico">${icon('clock', { size: 15 })}</span>
         <span>Thời gian bắt đầu tính <strong>từ lần đầu chạy tool</strong>, không phải bây giờ.
         Mã này gắn với máy đầu tiên kích hoạt.</span>
       </div>
 
       <div class="flex gap-1" style="justify-content:flex-end">
         <button class="btn btn-ghost" data-close>Đóng</button>
-        <button class="btn btn-primary" data-golink>Xem bảng giá →</button>
+        <button class="btn btn-primary" data-golink>Xem bảng giá ${icon('arrowRight', { size: 13 })}</button>
       </div>
     `, {
       onMount(overlay, close) {
@@ -332,12 +327,12 @@ async function startTrialFlow(kind, onDone) {
       <div class="modal-sub">${esc(msg)}</div>
       ${isQuota ? `
         <div class="alert alert-info" style="margin-bottom:16px">
-          <span class="ico">💡</span>
+          <span class="ico">${icon('info', { size: 15 })}</span>
           <span>Mua key để tiếp tục dùng không giới hạn.</span>
         </div>` : ''}
       <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
         <button class="btn btn-ghost" data-close>Đóng</button>
-        ${isQuota ? '<button class="btn btn-primary" data-golink>Mua key →</button>' : ''}
+        ${isQuota ? `<button class="btn btn-primary" data-golink>Mua key ${icon('arrowRight', { size: 13 })}</button>` : ''}
       </div>
     `, {
       onMount(overlay, close) {
@@ -375,8 +370,8 @@ export async function mountHome(root) {
     };
 
     if (!state.user) {
-      setText('1h', 'Cần đăng nhập để dùng thử');
-      setText('3d', 'Cần đăng nhập để dùng thử');
+      setText('1h', '<span class="trial-state dim">Cần đăng nhập để dùng thử</span>');
+      setText('3d', '<span class="trial-state dim">Cần đăng nhập để dùng thử</span>');
       return;
     }
 
@@ -390,18 +385,18 @@ export async function mountHome(root) {
           // Chỉ hiện thời gian khi tool đã chạy lần đầu (activated_at > 0).
           const activated = (k.active.activated_at || 0) > 0;
           if (!activated) {
-            setText(kind, '<span style="color:#fbbf24">● Đã tạo — chạy tool để bắt đầu tính giờ</span>');
+            setText(kind, `<span class="trial-state warn">${icon('clock', { size: 12 })} Đã tạo — chạy tool để bắt đầu tính giờ</span>`);
           } else {
             const left = Math.max(0, (k.active.time_left_sec || 0));
             const txt = kind === '1h'
               ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`
               : `${Math.max(0, Math.ceil(left / 86400))} ngày`;
-            setText(kind, `<span style="color:#4ade80">● Đang dùng — còn ${txt}</span>`);
+            setText(kind, `<span class="trial-state ok">${icon('timer', { size: 12 })} Đang dùng — còn ${txt}</span>`);
           }
         } else if (k.left > 0) {
           setText(kind, `Còn <strong>${k.left}/${k.quota}</strong> lượt`);
         } else {
-          setText(kind, `<span style="color:#f87171">Đã hết ${k.quota} lượt</span>`);
+          setText(kind, `<span class="trial-state bad">Đã hết ${k.quota} lượt</span>`);
         }
       }
     } catch (e) {
@@ -420,7 +415,9 @@ export async function mountHome(root) {
   // Trước đây là số bịa (12.480 đơn / 215 sản phẩm / 99% / 30 giây)
   // trong khi DB thật chỉ có vài đơn — rủi ro mất uy tín nếu khách kiểm tra.
   const animateCount = (el, target) => {
-    const dur = 1200;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || target === 0) { el.textContent = fmtNum(target); return; }
+    const dur = 900;
     const start = performance.now();
     const tick = (now) => {
       const prog = Math.min(1, (now - start) / dur);
@@ -441,18 +438,18 @@ export async function mountHome(root) {
     set('licenses', s.licenses);
     set('customers', s.customers);
   }).catch(() => {
-    // Không lấy được số -> ẩn cả khối thay vì hiện "—"
+    // Không lấy được số -> để dấu gạch thay vì con số sai
     root.querySelectorAll('[data-stat]').forEach((el) => { el.textContent = '—'; });
   });
 
   // Categories
   const catHost = root.querySelector('#home-cats');
-  if (state.categories.length) {
+  if (catHost && state.categories.length) {
     catHost.innerHTML =
-      `<a href="#/products" class="cat-chip active">✨ Tất cả</a>` +
+      `<a href="#/products" class="cat-chip active">Tất cả</a>` +
       state.categories.map((c) => `
         <a href="#/products?category=${esc(c.slug)}" class="cat-chip">
-          <span class="ico">${esc(c.icon || '📦')}</span>${esc(c.name)}
+          ${esc(c.name)}
           <span class="cnt">${c.productCount}</span>
         </a>`).join('');
   }
@@ -462,7 +459,11 @@ export async function mountHome(root) {
     const data = await api('/api/products/featured');
     const host = root.querySelector('#home-featured');
     if (data.products.length === 0) {
-      host.innerHTML = `<div class="empty-state"><div class="ico">📦</div><div class="t">Chưa có sản phẩm</div></div>`;
+      host.innerHTML = emptyBlock({
+        ico: 'package',
+        title: 'Chưa có sản phẩm',
+        desc: 'Danh mục đang được cập nhật. Vui lòng quay lại sau.',
+      });
     } else {
       host.innerHTML = `<div class="grid-products">${data.products.map(productCard).join('')}</div>`;
       bindProductCards(host, data.products);
@@ -474,7 +475,8 @@ export async function mountHome(root) {
       popHost.innerHTML = `<div class="grid-products">${popular.map(productCard).join('')}</div>`;
       bindProductCards(popHost, popular);
     } else {
-      popHost.style.display = 'none';
+      // Không có dữ liệu bán -> ẩn cả khối thay vì hiện lưới rỗng
+      popHost.closest('section').style.display = 'none';
     }
   } catch (e) {
     toast(e.message, 'error');

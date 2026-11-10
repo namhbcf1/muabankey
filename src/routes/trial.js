@@ -47,6 +47,175 @@ async function logEvent(env, key, hwid, kind, detail, ip) {
 }
 
 /**
+ * POST /api/trial/claim { key, guid, bios, cpu, vol }
+ *
+ * Nhận mã TR- do WEB cấp, gắn với máy đang chạy tool.
+ *
+ * VẤN ĐỀ ĐÃ SỬA: web cấp mã TR- rồi bảo "chạy tool, nó tự nhận mã này"
+ * nhưng /api/activate chặn plan='trial' (trial_only) và tool không có
+ * endpoint nào để nhận. Đường web→tool đứt hoàn toàn.
+ *
+ * Endpoint này lấp chỗ đứt: khách nhập mã TR- vào tool, tool gọi đây.
+ */
+export async function apiTrialClaim(env, request) {
+  const ip = ipOf(request);
+  const body = await readBody(request);
+  if (!body) {
+    return json({ ok: false, code: 'bad_request', msg: 'JSON không hợp lệ' }, 400);
+  }
+
+  const key = String(body.key || '').trim().toUpperCase();
+  if (!/^TR-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key)) {
+    return json({
+      ok: false, code: 'bad_request',
+      msg: 'Mã dùng thử có dạng TR-XXXX-XXXX-XXXX',
+    }, 400);
+  }
+
+  // Tính HWID từ raw parts (server tự băm)
+  let ids;
+  const hasParts = (body.guid !== undefined || body.bios !== undefined
+    || body.cpu !== undefined || body.vol !== undefined);
+  if (hasParts) {
+    ids = await deriveIds([body.guid, body.bios, body.cpu, body.vol]);
+  } else if (body.hwid) {
+    const raw = String(body.hwid).trim().toLowerCase();
+    if (!/^[0-9a-z]{16,128}$/.test(raw)) {
+      return json({ ok: false, code: 'bad_request', msg: 'HWID không hợp lệ' }, 400);
+    }
+    ids = { hwid: raw, weak: raw, bios: '', cpu: '' };
+  } else {
+    return json({
+      ok: false, code: 'bad_request',
+      msg: 'Thiếu thông tin máy — chạy tool trực tiếp, đừng gọi API tay',
+    }, 400);
+  }
+
+  // Máy ảo
+  if (ids.bios || ids.cpu) {
+    if (looksVirtual(ids.bios, ids.cpu)) {
+      return json({
+        ok: false, code: 'trial_denied_device',
+        msg: 'Không hỗ trợ dùng thử trên máy ảo',
+      }, 403);
+    }
+  }
+
+  const cfg = await trialCfg(env);
+  if (!cfg.enabled) {
+    return json({ ok: false, code: 'trial_disabled', msg: 'Dùng thử đang tạm đóng' }, 403);
+  }
+
+  const lic = await env.DB.prepare('SELECT * FROM licenses WHERE key = ?').bind(key).first();
+  if (!lic) {
+    return json({ ok: false, code: 'not_found', msg: 'Mã dùng thử không tồn tại' }, 404);
+  }
+  if (lic.plan !== 'trial') {
+    return json({
+      ok: false, code: 'not_trial',
+      msg: 'Đây là mã bản quyền trả phí. Kích hoạt bằng: xa_nofog_pro.exe --key ' + key,
+    }, 400);
+  }
+  if (lic.revoked) {
+    return json({ ok: false, code: 'revoked', msg: 'Mã dùng thử đã bị thu hồi' }, 403);
+  }
+
+  const now = nowSec();
+
+  // Tìm grant tương ứng
+  const use = await env.DB.prepare(
+    'SELECT * FROM trial_uses WHERE lic_key = ? LIMIT 1'
+  ).bind(key).first();
+
+  if (!use) {
+    // license trial không có grant -> dữ liệu cũ, cho bind trực tiếp
+    if (lic.hwid && lic.hwid !== ids.hwid) {
+      return json({
+        ok: false, code: 'hwid_mismatch',
+        msg: 'Mã này đã gắn với máy khác',
+      }, 403);
+    }
+    await env.DB.prepare(
+      'UPDATE licenses SET hwid = ?, activated_at = COALESCE(activated_at, ?) WHERE key = ?'
+    ).bind(ids.hwid, now, key).run();
+    return json({
+      ok: true, key, plan: 'trial', legacy: true,
+      expires_at: lic.expires_at, now,
+    });
+  }
+
+  if (use.ended_at) {
+    return json({
+      ok: false, code: 'trial_expired',
+      msg: use.end_reason === 'reset'
+        ? 'Lượt dùng thử đã được reset — lấy mã mới trên web'
+        : 'Lượt dùng thử đã kết thúc',
+    }, 403);
+  }
+
+  // Đã gắn máy khác (cùng grant) -> chặn
+  if (use.hwid && use.hwid !== ids.hwid) {
+    return json({
+      ok: false, code: 'hwid_mismatch',
+      msg: 'Mã dùng thử đã gắn với máy khác. Mỗi mã chỉ dùng cho 1 máy.',
+    }, 403);
+  }
+
+  // Chưa kích hoạt -> bắt đầu đồng hồ NGAY (khách vừa nhập mã vào tool)
+  const kind = normKind(use.kind) || KIND_3D;
+  const kc = kindCfg(cfg, kind);
+  const secs = kc ? kc.sec : cfg.t3d.sec;
+
+  if (!use.started_at) {
+    const expiresAt = now + secs;
+    await env.DB.prepare(
+      `UPDATE trial_uses SET hwid = COALESCE(hwid, ?), started_at = ?, expires_at = ?
+       WHERE id = ? AND ended_at IS NULL`
+    ).bind(ids.hwid, now, expiresAt, use.id).run();
+    await env.DB.prepare(
+      'UPDATE licenses SET hwid = ?, activated_at = ?, expires_at = ? WHERE key = ?'
+    ).bind(ids.hwid, now, expiresAt, key).run();
+
+    const fresh = await env.DB.prepare('SELECT * FROM trial_uses WHERE id = ?')
+      .bind(use.id).first();
+    await logEvent(env, key, ids.hwid, 'trial_claim', `${kind} activated`, ip);
+
+    return json({
+      ...publicUse(fresh, cfg, kind),
+      trial_kind_state: 'claimed',
+      now,
+    });
+  }
+
+  // Đã kích hoạt, còn hạn -> trả trạng thái
+  if (use.expires_at && use.expires_at <= now) {
+    await env.DB.prepare(
+      "UPDATE trial_uses SET ended_at = ?, end_reason = 'expired' WHERE id = ? AND ended_at IS NULL"
+    ).bind(now, use.id).run();
+    return json({
+      ok: false, code: 'trial_expired',
+      msg: 'Lượt dùng thử đã hết hạn',
+      now, expires_at: use.expires_at,
+    }, 403);
+  }
+
+  // Gắn hwid nếu chưa có
+  if (!use.hwid) {
+    await env.DB.prepare('UPDATE trial_uses SET hwid = ? WHERE id = ?')
+      .bind(ids.hwid, use.id).run();
+    await env.DB.prepare('UPDATE licenses SET hwid = ? WHERE key = ?')
+      .bind(ids.hwid, key).run();
+  }
+
+  return json({
+    ...publicUse(use, cfg, kind),
+    trial_kind_state: 'active',
+    now,
+  });
+}
+
+
+/**
  * GET /api/trial/status — xem còn bao nhiêu lượt.
  * Cần đăng nhập.
  */

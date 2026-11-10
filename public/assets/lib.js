@@ -1,4 +1,16 @@
 /** Tiện ích dùng chung cho SPA: gọi API, định dạng, toast, router. */
+import { icon } from './icons.js';
+
+/* ---------- HTML an toàn: escape rồi bọc trong <strong> ---------- */
+/**
+ * In đậm một đoạn văn bản do người dùng nhập.
+ *
+ * `esc()` được áp dụng TRƯỚC nên không có đường nào để chèn HTML sống —
+ * đây là lý do không dùng `.replace()` trực tiếp trên chuỗi thô trong template.
+ */
+export function bold(text) {
+  return `<strong>${esc(text)}</strong>`;
+}
 
 export async function api(path, { method = 'GET', body = null, silent = false } = {}) {
   const opts = {
@@ -80,18 +92,24 @@ export function toast(message, type = 'info', ms = 3600) {
   if (!toastWrap) {
     toastWrap = document.createElement('div');
     toastWrap.className = 'toast-wrap';
+    toastWrap.setAttribute('role', 'status');
+    toastWrap.setAttribute('aria-live', 'polite');
     document.body.appendChild(toastWrap);
   }
-  const icons = { success: '✅', error: '⚠️', info: 'ℹ️' };
+  const icons = {
+    success: icon('checkCircle', { size: 16 }),
+    error: icon('alert', { size: 16 }),
+    info: icon('info', { size: 16 }),
+  };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span style="font-size:16px">${icons[type] || 'ℹ️'}</span><span>${esc(message)}</span>`;
+  el.innerHTML = `${icons[type] || icons.info}<span>${esc(message)}</span>`;
   toastWrap.appendChild(el);
   // Giới hạn tối đa 3 toast để không che màn hình mobile
   while (toastWrap.children.length > 3) toastWrap.firstElementChild.remove();
   setTimeout(() => {
     el.classList.add('hide');
-    setTimeout(() => el.remove(), 320);
+    setTimeout(() => el.remove(), 260);
   }, ms);
 }
 
@@ -99,18 +117,34 @@ export function toast(message, type = 'info', ms = 3600) {
 export function openModal(html, { onMount } = {}) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
   overlay.innerHTML = `<div class="modal">${html}</div>`;
   document.body.appendChild(overlay);
+  const prevFocus = document.activeElement;
   requestAnimationFrame(() => overlay.classList.add('open'));
 
   const close = () => {
     overlay.classList.remove('open');
-    setTimeout(() => overlay.remove(), 320);
+    setTimeout(() => overlay.remove(), 260);
+    document.removeEventListener('keydown', escHandler);
+    // Trả focus về nơi mở modal — bắt buộc cho người dùng bàn phím.
+    if (prevFocus && typeof prevFocus.focus === 'function') prevFocus.focus();
   };
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  const escHandler = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); } };
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      close();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
   document.addEventListener('keydown', escHandler);
   if (onMount) onMount(overlay, close);
+  // Đưa focus vào phần tử đầu tiên có thể tương tác
+  requestAnimationFrame(() => {
+    const first = overlay.querySelector('button, [href], input, select, textarea');
+    if (first) first.focus();
+  });
   return { el: overlay, close };
 }
 
@@ -179,12 +213,25 @@ export function skeletonCards(n = 8) {
       <div class="skel skel-thumb"></div>
       <div class="skel skel-line"></div>
       <div class="skel skel-line short"></div>
-      <div class="skel skel-line" style="height:32px;margin-bottom:16px"></div>
+      <div class="skel skel-line" style="height:28px;margin-bottom:15px"></div>
     </div>`).join('')}</div>`;
 }
 
 export function loadingBlock(text = 'Đang tải...') {
-  return `<div class="empty-state"><div class="ico">⏳</div><div class="t">${esc(text)}</div></div>`;
+  return `<div class="empty-state">
+    <div class="ico">${icon('progress', { size: 26 })}</div>
+    <div class="t">${esc(text)}</div>
+  </div>`;
+}
+
+/** Khối trạng thái rỗng dùng chung cho mọi trang. */
+export function emptyBlock({ ico = 'inbox', title, desc = '', action = '' }) {
+  return `<div class="empty-state">
+    <div class="ico">${icon(ico, { size: 28 })}</div>
+    <div class="t">${esc(title)}</div>
+    ${desc ? `<div class="d">${esc(desc)}</div>` : ''}
+    ${action}
+  </div>`;
 }
 
 /* ---------- Giải mã key giao cho khách ---------- */

@@ -72,6 +72,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import struct
 import sys
 import time
@@ -162,9 +163,17 @@ TRIAL_GRACE_HOURS = int(_c('TRIAL_GRACE_HOURS', 0))
 TRIAL_RECHECK_SEC = int(_c('TRIAL_RECHECK_SEC', 300))
 BUY_URL = str(_c('BUY_URL', 'https://xienhl.com/#/product/license-xarena-thang'))
 LOGIN_URL = str(_c('LOGIN_URL', 'https://xienhl.com/#/login'))
+REGISTER_URL = str(_c('REGISTER_URL', 'https://xienhl.com/#/register'))
+FORGOT_URL = str(_c('FORGOT_URL', 'https://xienhl.com/#/login'))
 EXIT_TRIAL_END = int(_c('EXIT_TRIAL_END', 6))
 EXIT_TRIAL_QUOTA = int(_c('EXIT_TRIAL_QUOTA', 7))
-CLIENT_VERSION = '1.3.0'
+CLIENT_VERSION = '1.4.0'
+
+# Dinh nghia 2 goi dung thu
+TRIAL_KINDS = {
+    '1h': {'label': '1 GIO',  'sec': TRIAL_1H_MINUTES * 60, 'recheck': TRIAL_1H_RECHECK},
+    '3d': {'label': '3 NGAY', 'sec': TRIAL_3D_DAYS * 86400, 'recheck': TRIAL_3D_RECHECK},
+}
 # Bat buoc online: khong cho chay offline (grace = 0)
 REQUIRE_ONLINE = str(_c('REQUIRE_ONLINE', '1')) not in ('0', 'False', 'false', '')
 
@@ -339,9 +348,15 @@ def _hwid_parts():
 
 
 def compute_hwid():
-    """SHA-256 phan cung that. Khong dung ten may / MAC (doi qua de)."""
+    """SHA-256 phan cung that. Khong dung ten may / MAC (doi qua de).
+
+    PHẢI khớp server (src/lib/trial-quota.js deriveIds):
+      hwid = sha256('v1|' + guid|bios|cpu|vol)[:32]
+    Trước đây client dùng sha256(guid|bios|cpu|vol) -> LỆCH với server,
+    nên --status báo "HWID khớp: KHÔNG" và trial chết vì hwid_mismatch.
+    """
     parts = _hwid_parts()
-    return hashlib.sha256('|'.join(parts).encode('utf-8')).hexdigest()[:32]
+    return hashlib.sha256(('v1|' + '|'.join(parts)).encode('utf-8')).hexdigest()[:32]
 
 
 def compute_weak_hwid():
@@ -350,9 +365,11 @@ def compute_weak_hwid():
     Volume serial doi duoc bang phan mem (va doi khi format o). Neu dung
     compute_hwid() lam dau vet chong reset trial thi chi can doi serial la
     xin duoc trial moi. Chuoi nay on dinh hon.
+
+    Phải khớp server: weak = sha256('w1|' + guid|bios|cpu)[:32]
     """
     parts = _hwid_parts()[:3]      # MachineGuid + BIOS serial + CPU brand
-    return hashlib.sha256('|'.join(parts).encode('utf-8')).hexdigest()[:32]
+    return hashlib.sha256(('w1|' + '|'.join(parts)).encode('utf-8')).hexdigest()[:32]
 
 
 # --------------------------------------------------------------- state ------
@@ -399,8 +416,10 @@ def save_state(st):
 
 
 # --------------------------------------------------------------- http -------
-def _post(path, payload, timeout=None, retries=0):
+def _post(path, payload, timeout=None, retries=0, cookie=None):
     """POST JSON toi server license.
+
+    cookie: session token (64 hex) de xac thuc khi can (trial bat buoc dang nhap).
 
     retries>0 chi dung cho /api/trial/start: tao trial la thao tac GHI,
     mang chap chon giua chung se lam client khong biet server da tao hay
@@ -410,13 +429,20 @@ def _post(path, payload, timeout=None, retries=0):
     body = json.dumps(payload).encode('utf-8')
     last = {'ok': False, 'code': 'network', 'msg': 'chua gui duoc'}
     for attempt in range(retries + 1):
-        req = urllib.request.Request(
-            url, data=body, method='POST',
-            headers={'content-type': 'application/json',
-                     'user-agent': '%s/%s' % (APP_NAME, CLIENT_VERSION)})
+        headers = {'content-type': 'application/json',
+                   'user-agent': '%s/%s' % (APP_NAME, CLIENT_VERSION)}
+        if cookie:
+            headers['cookie'] = 'mbk_session=%s' % cookie
+        req = urllib.request.Request(url, data=body, method='POST', headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as r:
-                return json.loads(r.read().decode('utf-8'))
+                out = json.loads(r.read().decode('utf-8'))
+                # Doc Set-Cookie de lay session moi (dang nhap)
+                sc = r.headers.get('Set-Cookie') or ''
+                m = re.search(r'mbk_session=([0-9a-fA-F]{64})', sc)
+                if m and isinstance(out, dict):
+                    out['_set_cookie'] = m.group(1)
+                return out
         except urllib.error.HTTPError as e:
             # HTTPError van co body JSON -> doc va tra ngay, KHONG retry
             try:
@@ -428,6 +454,261 @@ def _post(path, payload, timeout=None, retries=0):
             if attempt < retries:
                 time.sleep(0.8 * (attempt + 1))
     return last
+
+
+def _get(path, timeout=None, cookie=None):
+    """GET JSON tu server (dung cho /api/auth/me, /api/trial/status)."""
+    url = API_BASE.rstrip('/') + path
+    headers = {'user-agent': '%s/%s' % (APP_NAME, CLIENT_VERSION)}
+    if cookie:
+        headers['cookie'] = 'mbk_session=%s' % cookie
+    req = urllib.request.Request(url, method='GET', headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as r:
+            out = json.loads(r.read().decode('utf-8'))
+            sc = r.headers.get('Set-Cookie') or ''
+            m = re.search(r'mbk_session=([0-9a-fA-F]{64})', sc)
+            if m and isinstance(out, dict):
+                out['_set_cookie'] = m.group(1)
+            return out
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode('utf-8'))
+        except Exception:
+            return {'ok': False, 'code': 'http_%d' % e.code}
+    except Exception as e:
+        return {'ok': False, 'code': 'network', 'msg': str(e)}
+
+
+# --------------------------------------------------------------- login -------
+
+def save_session(cookie, username=None):
+    """Luu session vao lic.bin (DPAPI). Tra True/False."""
+    if not cookie:
+        return False
+    st = load_state()
+    st['acct_cookie'] = cookie
+    if username:
+        st['acct_user'] = username
+    st['acct_at'] = int(time.time())
+    return save_state(st)
+
+
+def load_session():
+    """Tra (cookie, username) hoac (None, None)."""
+    st = load_state()
+    ck = st.get('acct_cookie')
+    if not ck or len(str(ck)) != 64:
+        return None, st.get('acct_user')
+    return str(ck), st.get('acct_user')
+
+
+def drop_session():
+    """Xoa session nhung GIU key (khong dong vao license)."""
+    st = load_state()
+    st.pop('acct_cookie', None)
+    st.pop('acct_user', None)
+    st.pop('acct_at', None)
+    return save_state(st)
+
+
+def login_to_server(username, password, verbose=True):
+    """Dang nhap lay session. Tra (ok, msg, cookie)."""
+    r = _post('/api/auth/login', {'username': username, 'password': password},
+              timeout=HTTP_TIMEOUT, retries=0)
+    if not r.get('ok'):
+        code = str(r.get('code') or '')
+        if code == 'INVALID_CREDENTIALS':
+            return False, 'Sai tai khoan hoac mat khau', None
+        if code == 'ACCOUNT_LOCKED':
+            return False, 'Tai khoan bi khoa. Lien he ho tro.', None
+        if code == 'RATE_LIMITED':
+            return False, 'Thu qua nhanh, cho 1-2 phut roi thu lai', None
+        return False, (r.get('msg') or code or 'khong dang nhap duoc'), None
+
+    ck = r.get('_set_cookie')
+    if not ck:
+        return False, 'server khong tra session', None
+    uname = (r.get('user') or {}).get('username') or username
+    save_session(ck, uname)
+    if verbose:
+        print('  Dang nhap thanh cong: %s' % uname)
+    return True, 'ok', ck
+
+
+def ensure_session(verbose=True):
+    """Lay session con hieu luc. Tra (cookie, username) hoac (None, None)."""
+    ck, uname = load_session()
+    if ck:
+        # Kiem lai voi server
+        r = _get('/api/auth/me', cookie=ck)
+        if r.get('ok') and r.get('user'):
+            return ck, r['user'].get('username') or uname
+        # Session chet -> xoa nhung GIU key
+        drop_session()
+    return None, uname
+
+
+def ask_login(verbose=True):
+    """Hoi dang nhap qua hop thoai. Tra (cookie, username) hoac (None, None)."""
+    for attempt in (1, 2, 3):
+        cred = _login_dialog(attempt)
+        if not cred:
+            return None, None
+
+        # Khach chon "Dang ky" -> mo browser
+        if cred.get('action') == 'register':
+            print('  Dang mo trang dang ky...')
+            try:
+                import subprocess
+                subprocess.Popen(['explorer.exe', REGISTER_URL], close_fds=True)
+            except Exception:
+                print('  Mo tay: %s' % REGISTER_URL)
+            continue
+        if cred.get('action') == 'forgot':
+            print('  Mo trang quen mat khau: %s' % FORGOT_URL)
+            continue
+
+        ok, msg, ck = login_to_server(cred['username'], cred['password'], verbose)
+        if ok:
+            return ck, cred['username']
+        print('  %s (lan %d/3)' % (msg, attempt))
+        if 'khoa' in msg or 'qua nhanh' in msg:
+            return None, None
+    return None, None
+
+
+def _login_dialog(attempt=1):
+    """Hop thoai dang nhap. Tra dict {username, password} | {action} | None.
+
+    Uu tien Tk (co timeout 180s), fallback getpass, cuoi cung tra None.
+    """
+    # --- Tang 1: Tk ---
+    try:
+        import tkinter as tk
+
+        result = {'value': None}
+        root = tk.Tk()
+        root.title('%s - Dang nhap' % APP_NAME)
+        root.resizable(False, False)
+
+        # Icon + tieu de
+        top = tk.Frame(root, padx=18, pady=14)
+        top.pack(fill='both', expand=True)
+
+        tk.Label(top, text='Dung thu mien phi can tai khoan',
+                 font=('Segoe UI', 11, 'bold')).grid(row=0, column=0, columnspan=2,
+                                                    sticky='w', pady=(0, 4))
+        tk.Label(top, text='Mien phi, chi can ten + mat khau. Khong can the.',
+                 font=('Segoe UI', 8), fg='#666').grid(row=1, column=0, columnspan=2,
+                                                      sticky='w', pady=(0, 12))
+
+        tk.Label(top, text='Tai khoan:', font=('Segoe UI', 9)).grid(row=2, column=0,
+                                                                   sticky='e', padx=(0, 8))
+        e_user = tk.Entry(top, width=28, font=('Segoe UI', 9))
+        e_user.grid(row=2, column=1, sticky='w', pady=3)
+
+        tk.Label(top, text='Mat khau:', font=('Segoe UI', 9)).grid(row=3, column=0,
+                                                                   sticky='e', padx=(0, 8))
+        e_pass = tk.Entry(top, width=28, show='\u2022', font=('Segoe UI', 9))
+        e_pass.grid(row=3, column=1, sticky='w', pady=3)
+
+        # Loi
+        lbl_err = tk.Label(top, text='', font=('Segoe UI', 8), fg='#c00')
+        lbl_err.grid(row=4, column=0, columnspan=2, sticky='w', pady=(6, 0))
+        if attempt > 1:
+            lbl_err.configure(text='Sai tai khoan hoac mat khau (lan %d/3)' % attempt)
+
+        # Nut phu
+        btn_row = tk.Frame(top, pady=10)
+        btn_row.grid(row=5, column=0, columnspan=2, sticky='ew')
+
+        def do_register():
+            result['value'] = {'action': 'register'}
+            root.destroy()
+
+        def do_forgot():
+            result['value'] = {'action': 'forgot'}
+            root.destroy()
+
+        tk.Button(btn_row, text='Dang ky mien phi', command=do_register,
+                  relief='flat', fg='#0066cc', cursor='hand2').pack(side='left')
+        tk.Button(btn_row, text='Quen mat khau?', command=do_forgot,
+                  relief='flat', fg='#0066cc', cursor='hand2').pack(side='left', padx=(10, 0))
+
+        # Timeout 180s
+        state = {'deadline': time.time() + 180}
+        lbl_timer = tk.Label(top, text='', font=('Segoe UI', 7), fg='#999')
+        lbl_timer.grid(row=6, column=0, columnspan=2, sticky='w')
+
+        def tick():
+            left = int(state['deadline'] - time.time())
+            if left <= 0:
+                result['value'] = None
+                root.destroy()
+                return
+            lbl_timer.configure(text='Tu dong dong sau %d giay.' % left)
+            root.after(1000, tick)
+
+        def do_login():
+            u = e_user.get().strip()
+            p = e_pass.get()
+            if not u:
+                lbl_err.configure(text='Nhap tai khoan')
+                e_user.focus_set()
+                return
+            if not p:
+                lbl_err.configure(text='Nhap mat khau')
+                e_pass.focus_set()
+                return
+            result['value'] = {'username': u, 'password': p}
+            root.destroy()
+
+        def do_cancel():
+            result['value'] = None
+            root.destroy()
+
+        tk.Button(top, text='Dang nhap', command=do_login, width=14,
+                  default='active').grid(row=7, column=0, columnspan=2, pady=(4, 0))
+        tk.Button(top, text='Huy', command=do_cancel, width=10).grid(row=8, column=0,
+                                                                    columnspan=2, pady=(4, 0))
+
+        root.bind('<Return>', lambda e: do_login())
+        root.bind('<Escape>', lambda e: do_cancel())
+        root.protocol('WM_DELETE_WINDOW', do_cancel)
+
+        e_user.focus_set()
+        root.after(1000, tick)
+        root.lift()
+        root.focus_force()
+        root.mainloop()
+        return result['value']
+    except Exception:
+        pass
+
+    # --- Tang 2: console ---
+    try:
+        if not sys.stdin or not sys.stdin.isatty():
+            raise OSError('no tty')
+        import getpass
+        print('')
+        print('  Dang nhap (Enter trong = huy):')
+        u = input('    Tai khoan: ').strip()
+        if not u:
+            return None
+        p = getpass.getpass('    Mat khau : ')
+        if not p:
+            return None
+        return {'username': u, 'password': p}
+    except Exception:
+        pass
+
+    # --- Tang 3: khong co ban phim -> KHONG treo ---
+    print('')
+    print('  Khong mo duoc hop thoai dang nhap.')
+    print('  Dang ky mien phi : %s' % REGISTER_URL)
+    print('  Hoac dung        : xa_nofog_pro.exe --login <tai-khoan> <mat-khau>')
+    return None
 
 
 # --------------------------------------------------------------- flow -------
@@ -737,27 +1018,62 @@ def _time_state(st):
 
 
 # =============================================================================
-# PHAN 1b -- DUNG THU 3 NGAY
+# PHAN 1b -- DUNG THU (1 GIO hoac 3 NGAY)
 # =============================================================================
-def _days_left(st=None):
-    """So ngay con lai (float) hoac None neu khong co han.
-
-    Dung server_now() (monotonic), KHONG dung time.time().
-    """
+def _secs_left(st=None):
+    """So GIAY con lai. None neu khong co han."""
     st = st if st is not None else load_state()
     exp = st.get('expires_at') or 0
     if not exp:
         return None
-    return (exp - server_now()) / 86400.0
+    return max(0, exp - server_now())
+
+
+def _days_left(st=None):
+    """So ngay con lai (float) hoac None neu khong co han."""
+    s = _secs_left(st)
+    return None if s is None else s / 86400.0
+
+
+def _fmt_left(st=None):
+    """Chuoi thoi gian con lai, tu chon don vi theo goi."""
+    st = st if st is not None else load_state()
+    s = _secs_left(st)
+    if s is None:
+        return 'chua bat'
+    kind = st.get('trial_kind') or ('1h' if s < 86400 and is_trial(st) else '3d')
+    if kind == '1h' or (s < 86400 and is_trial(st)):
+        return '%02d:%02d' % (s // 3600, (s % 3600) // 60)
+    return '%.1f ngay' % (s / 86400.0)
 
 
 def _print_trial_banner(st):
-    left = _days_left(st) or 0.0
+    """Banner dung thu. Hien dung goi (1 GIO / 3 NGAY) va dem nguoc."""
+    label = st.get('trial_label')
+    kind = st.get('trial_kind')
+    if not label:
+        label = '1 GIO' if kind == '1h' else '%d NGAY' % TRIAL_DAYS
     exp = st.get('expires_at') or 0
+    left_txt = _fmt_left(st)
+
+    # Quota
+    q = ''
+    if st.get('quota') is not None:
+        used = st.get('quota_used')
+        total = st.get('quota')
+        if used is not None:
+            q = '   Luot: con %d/%d' % (max(0, total - used), total)
+
     print('')
     print('  ============================================================')
-    print('   DUNG THU MIEN PHI %d NGAY  --  con %.1f ngay' % (TRIAL_DAYS, left))
-    print('   Het han: %s' % time.strftime('%Y-%m-%d %H:%M', time.localtime(exp)))
+    print('   DUNG THU MIEN PHI %s  --  con %s' % (label, left_txt))
+    if exp:
+        print('   Het han: %s%s' % (
+            time.strftime('%Y-%m-%d %H:%M', time.localtime(exp)), q))
+    elif st.get('hold_until'):
+        print('   Chua kich hoat - dong ho bat dau khi vao game.')
+    print('  ------------------------------------------------------------')
+    print('   Cua so nay phai mo trong khi choi.')
     print('   Mua key: %s' % BUY_URL)
     print('  ============================================================')
     print('')
@@ -765,25 +1081,46 @@ def _print_trial_banner(st):
 
 def _warn_trial(st):
     """Nhac 1 dong khi sap het han. Khong bao gio chan."""
-    left = _days_left(st)
-    if left is None:
+    s = _secs_left(st)
+    if s is None:
         return
-    if left <= 0:
+    kind = st.get('trial_kind') or '3d'
+    if s <= 0:
         print('  [!] DUNG THU DA HET HAN. Mua key tai %s' % BUY_URL)
-    elif left <= TRIAL_WARN_DAYS:
-        print('  [!] Dung thu con %.1f ngay. Mua key tai %s' % (left, BUY_URL))
+        return
+    # Nguong theo goi: 1h nhac khi con 10 phut, 3d nhac khi con 1 ngay
+    if kind == '1h':
+        if s <= TRIAL_WARN_SEC_1H:
+            print('  [!] Dung thu con %02d:%02d. Mua key tai %s'
+                  % (s // 60, s % 60, BUY_URL))
+    elif s <= TRIAL_WARN_DAYS_3D * 86400:
+        print('  [!] Dung thu con %.1f ngay. Mua key tai %s'
+              % (s / 86400.0, BUY_URL))
 
 
-def _offer_buy():
+def _offer_buy(open_browser=False):
+    """Bang gia + huong dan mua. open_browser=True -> tu mo trang mua."""
     print('')
     print('  ============================================================')
-    print('   DUNG THU %d NGAY DA KET THUC' % TRIAL_DAYS)
+    print('   BAN QUYEN XARENA NO FOG')
     print('  ------------------------------------------------------------')
-    print('   Mua key tai : %s' % BUY_URL)
-    print('   Nhap key    : chay lai tool va nhap khi duoc hoi,')
-    print('                 hoac: xa_nofog_pro.exe --key AOE1-XXXX-XXXX-XXXX')
-    print('   Key gan voi may nay (HWID), doi may duoc 1 lan.')
+    print('   Goi        Thoi han      Gia')
+    print('   Tuan       7 ngay        70.000d')
+    print('   Thang      30 ngay       180.000d')
+    print('   Nam        365 ngay      590.000d')
+    print('   Vinh vien  khong het han 1.290.000d')
+    print('  ------------------------------------------------------------')
+    print('   Mua tai    : %s' % BUY_URL)
+    print('   Nhap key   : xa_nofog_pro.exe --key AOE1-XXXX-XXXX-XXXX')
+    print('   Dung thu   : xa_nofog_pro.exe --trial        (1 gio)')
+    print('                xa_nofog_pro.exe --trial 3d     (3 ngay)')
     print('  ============================================================')
+    if open_browser:
+        print('   Dang mo trang mua trong trinh duyet...')
+        if open_buy_page():
+            print('   Neu khong mo, chep link tren vao Chrome/Edge.')
+        else:
+            print('   Khong mo duoc trinh duyet - chep link tren thu cong.')
     print('')
 
 
@@ -807,67 +1144,157 @@ def open_buy_page():
         return False
 
 
-def start_trial(verbose=True):
-    """Xin trial tu server. Tra (ok, msg).
+def start_trial(kind=None, verbose=True):
+    """Xin trial tu server. Tra dict {ok, code, msg, next, key}.
 
-    msg dac biet:
-      'expired'  -> may nay da tung dung thu va da het han
-      'used'     -> het luot dung thu (IP / thiet bi)
-      khac       -> loi mang / server
+    next: 'run'  -> chay duoc
+          'login'-> can dang nhap (hien hop thoai)
+          'buy'  -> het luot / bi chan -> mo trang mua
+          'retry'-> loi mang/server -> thu lai
 
     Gui RAW parts (guid/bios/cpu/vol) chu khong gui hwid: server tu bam,
-    nen khong the farm trial bang HWID tu bịa.
+    nen khong the farm trial bang HWID tu bia.
     """
     if not TRIAL_ENABLED:
-        return False, 'ban nay khong co dung thu'
+        return {'ok': False, 'code': 'disabled',
+                'msg': 'Ban nay khong co dung thu.', 'next': 'buy'}
+
+    kind = (kind or TRIAL_DEFAULT_KIND).lower()
+    if kind not in TRIAL_KINDS:
+        return {'ok': False, 'code': 'bad_kind',
+                'msg': 'Goi dung thu chi co: 1h | 3d', 'next': 'retry'}
+
+    label = TRIAL_KINDS[kind]['label']
+
+    # ---- 1. BAT BUOC dang nhap truoc khi goi server ----
+    ck, uname = ensure_session(verbose=False)
+    if not ck:
+        if verbose:
+            print('  Dung thu can TAI KHOAN mien phi (chi ten + mat khau).')
+        ck, uname = ask_login(verbose)
+        if not ck:
+            return {'ok': False, 'code': 'login_cancelled',
+                    'msg': 'Chua dang nhap nen khong dung thu duoc.',
+                    'next': 'buy'}
 
     parts = _hwid_parts()
     if verbose:
-        print('  May chua kich hoat -> bat dung thu %d ngay.' % TRIAL_DAYS)
-        print('  (gui ma may HWID toi %s de tao ban dung thu)' % API_BASE)
+        print('  Dang bat dung thu %s...' % label)
 
-    r = _post('/api/trial/start', {
+    # idem_key: retry mang khong tru 2 luot
+    idem = hashlib.sha256(
+        ('%s|%s|%d' % (parts[0] + parts[1] + parts[2], kind,
+                       int(time.time() // 300))).encode('utf-8')
+    ).hexdigest()[:32]
+
+    payload = {
         'guid': parts[0], 'bios': parts[1], 'cpu': parts[2], 'vol': parts[3],
-        'app': APP_NAME, 'ver': CLIENT_VERSION,
-    }, timeout=HTTP_TIMEOUT, retries=1)
+        'kind': kind, 'app': APP_NAME, 'ver': CLIENT_VERSION, 'idem_key': idem,
+    }
+
+    r = _post('/api/trial/start', payload, timeout=HTTP_TIMEOUT, retries=1, cookie=ck)
 
     if not r.get('ok'):
         code = str(r.get('code') or '')
-        if code == 'trial_expired':
-            return False, 'expired'
-        if code in ('trial_denied_device',):
-            return False, 'device'
-        if code in ('trial_limit',):
-            return False, 'used'
-        if code == 'trial_disabled':
-            return False, 'disabled'
-        return False, r.get('msg') or code or 'khong bat duoc dung thu'
+
+        # Session chet -> xoa, thu lai 1 lan
+        if code == 'login_required':
+            drop_session()
+            ck2, uname2 = ask_login(verbose)
+            if not ck2:
+                return {'ok': False, 'code': 'login_required',
+                        'msg': 'Can dang nhap de dung thu.', 'next': 'buy'}
+            r = _post('/api/trial/start', payload, timeout=HTTP_TIMEOUT,
+                      retries=1, cookie=ck2)
+            if not r.get('ok'):
+                code = str(r.get('code') or '')
+            else:
+                code = ''     # thanh cong, roi xuong phan duoi
+
+        if code:
+            # Bang anh xa DAY DU - moi ma co next-action
+            table = {
+                'trial_quota_exhausted': ('Da dung het %s luot dung thu %s.' % (
+                    r.get('quota', '?'), label), 'buy'),
+                'trial_ip_limit': ('Ket noi nay da het luot dung thu hom nay.', 'buy'),
+                'trial_global_limit': ('He thong het luot dung thu hom nay, thu lai mai.', 'buy'),
+                'trial_banned': ('Tai khoan bi chan dung thu. Lien he ho tro.', 'buy'),
+                'trial_device_limit': ('May nay da dung thu cho nhieu tai khoan khac.', 'buy'),
+                'trial_denied_device': ('Khong ho tro dung thu tren may ao.', 'buy'),
+                'trial_expired': ('Luot dung thu nay da het han.', 'buy'),
+                'trial_disabled': ('Dung thu dang tam dong.', 'buy'),
+                'trial_kind_invalid': ('Goi "%s" khong kha dung.' % kind, 'retry'),
+                'rate_limit': ('Thao tac qua nhanh, thu lai sau it phut.', 'retry'),
+                'bad_request': ('Du lieu gui len khong hop le.', 'retry'),
+                'server_error': ('Server gap loi, thu lai sau.', 'retry'),
+                'network': ('Khong ket noi duoc may chu. Kiem tra mang.', 'retry'),
+            }
+            if code in table:
+                msg, nxt = table[code]
+                return {'ok': False, 'code': code, 'msg': msg, 'next': nxt}
+            if code.startswith('http_5'):
+                return {'ok': False, 'code': 'server_error',
+                        'msg': 'Server gap loi (%s), thu lai sau.' % code, 'next': 'retry'}
+            return {'ok': False, 'code': code or 'unknown',
+                    'msg': r.get('msg') or 'Loi khong ro', 'next': 'retry'}
 
     key = str(r.get('key') or '').strip().upper()
     if not key:
-        return False, 'server khong tra ma dung thu'
+        return {'ok': False, 'code': 'no_key',
+                'msg': 'Server khong tra ma dung thu.', 'next': 'retry'}
+
+    # ---- Doc DUNG cac truong server tra ----
+    activated = bool(r.get('activated'))
+    time_left = int(r.get('time_left_sec') or 0)
+    expires_at = int(r.get('expires_at') or 0)
+    kc = TRIAL_KINDS[kind]
 
     st = load_state()
     anchor_server_time(st, r.get('now'))
     st.update({
         'key': key,
-        'hwid': compute_hwid(),
-        'expires_at': r.get('expires_at', 0),
-        'activated_at': r.get('activated_at', 0),
+        # HWID DO SERVER TINH - khong dung compute_hwid() (se lech -> hwid_mismatch)
+        'hwid': str(r.get('hwid') or compute_hwid()),
         'plan': 'trial',
         'is_trial': 1,
-        'trial_started': int(server_now()),
-        'grace_hours': r.get('grace_hours', TRIAL_GRACE_HOURS),
+        'trial_kind': kind,
+        'trial_label': kc['label'],
+        'trial_started': int(r.get('started_at') or server_now()),
+        'grace_hours': 0,
         'last_ok': time.time(),
         'mono_last_ok': _mono(),
         'mode': 'server',
+        'recheck_sec': int(r.get('recheck_sec') or kc['recheck']),
     })
+    # activated=False: expires_at la HOLD (7 ngay de kip cai) -> KHONG luu lam han
+    if activated:
+        st['expires_at'] = expires_at
+        st['activated_at'] = int(r.get('activated_at') or server_now())
+        st.pop('hold_until', None)
+    else:
+        st['hold_until'] = expires_at
+        st['expires_at'] = 0
+        st['activated_at'] = 0
+    if r.get('quota') is not None:
+        st['quota'] = r.get('quota')
+        st['quota_used'] = r.get('used')
+        st['quota_left'] = r.get('left')
+
     if not save_state(st):
-        return False, 'khong ghi duoc file license'
+        return {'ok': False, 'code': 'save_fail',
+                'msg': 'Khong ghi duoc file license.', 'next': 'retry'}
+
+    # ---- Kich hoat dong ho NGAY (server chi tinh tu /api/check dau tien) ----
+    ok2, msg2 = ensure_licensed(verbose=False)
+    if not ok2:
+        return {'ok': False, 'code': 'activate_fail',
+                'msg': 'Khong kich hoat duoc: %s' % msg2, 'next': 'retry'}
 
     if verbose:
-        _print_trial_banner(st)
-    return True, 'ok'
+        _print_trial_banner(load_state())
+
+    return {'ok': True, 'code': 'ok', 'msg': 'ok', 'next': 'run', 'key': key,
+            'kind': kind}
 
 
 _trial_next_check = {'at': 0.0}
@@ -1577,7 +2004,7 @@ def parse_args(argv):
     o = {'restore': False, 'full': False, 'watch': False, 'once': False,
          'dump': False, 'list': False, 'help': False, 'status': False,
          'deactivate': False, 'key': None, 'trial': False, 'buy': False,
-         'rebind': None, 'token': None}
+         'rebind': None, 'token': None, 'trial_kind': None, 'trial_key': None, 'login': None, 'logout': False}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -1600,6 +2027,25 @@ def parse_args(argv):
             o['deactivate'] = True
         elif a == '--trial':
             o['trial'] = True
+            # --trial 1h | --trial 3d  (khong bat buoc)
+            if i + 1 < len(argv) and argv[i + 1].lower() in ('1h', '3d', '1g', '3n'):
+                i += 1
+                o['trial_kind'] = argv[i].lower()
+        elif a == '--trial-key':
+            i += 1
+            if i >= len(argv):
+                return None, '--trial-key can ma TR-XXXX-XXXX-XXXX'
+            o['trial_key'] = argv[i].strip()
+        elif a == '--login':
+            # --login  hoac  --login <tk> <mk>
+            if (i + 2 < len(argv) and not argv[i + 1].startswith('-')
+                    and not argv[i + 2].startswith('-')):
+                o['login'] = (argv[i + 1].strip(), argv[i + 2].strip())
+                i += 2
+            else:
+                o['login'] = True
+        elif a == '--logout':
+            o['logout'] = True
         elif a == '--buy':
             o['buy'] = True
         elif a in ('-h', '--help'):
@@ -1762,7 +2208,9 @@ def show_status():
 
     trial = is_trial(st)
     key = (st.get('key') or '').upper()
-    print('Loai      : %s' % ('DUNG THU %d NGAY' % TRIAL_DAYS if trial else 'BAN QUYEN'))
+    _tl = st.get('trial_label') or ('1 GIO' if st.get('trial_kind') == '1h'
+                                     else '%d NGAY' % TRIAL_DAYS)
+    print('Loai      : %s' % ('DUNG THU ' + _tl if trial else 'BAN QUYEN'))
     print('Key       : %s' % mask_key(key))
 
     hwid = compute_hwid()
@@ -1784,12 +2232,14 @@ def show_status():
         print('Het han   : %s' % time.strftime('%Y-%m-%d %H:%M:%S',
                                                time.localtime(exp)))
         left = (exp - time.time()) / 86400.0
-        print('Con lai   : %s' % ('%.1f ngay' % left if left > 0
-                                  else 'DA HET HAN'))
+        print('Con lai   : %s' % _fmt_left(st))
 
     # Hiển thị giờ server + phát hiện lùi đồng hồ
     if _time_anchor['server_ts'] > 0:
         tampered, delta = detect_clock_rollback(st)
+        if st.get('quota') is not None and st.get('quota_used') is not None:
+            print('Luot      : con %d/%d' % (max(0, st['quota'] - st['quota_used']),
+                                             st['quota']))
         print('Gio server: %s' % time.strftime('%Y-%m-%d %H:%M:%S',
                                                time.localtime(server_now())))
         if tampered:
@@ -1805,7 +2255,7 @@ def show_status():
         if dl <= 0:
             print('Mua key   : %s' % BUY_URL)
         elif dl <= TRIAL_WARN_DAYS:
-            print('Nhac nho  : con %.1f ngay, mua key tai %s' % (dl, BUY_URL))
+            print('Nhac nho  : con %s, mua key tai %s' % (_fmt_left(st), BUY_URL))
     else:
         left_g = _grace_left(st)
         if left_g > 0:
@@ -1839,25 +2289,40 @@ def require_license(opts):
     # --- 3. Chua co gi -> dung thu -------------------------------------
     if not st.get('key'):
         if TRIAL_ENABLED:
-            ok, m = start_trial()
-            if ok:
+            res = start_trial(kind=opts.get('trial_kind'))
+            if res['ok']:
                 return True
-            if m == 'expired':
-                print('May nay da dung het %d ngay dung thu.' % TRIAL_DAYS)
-                _offer_buy()
-            elif m == 'device':
-                print('May nay khong duoc dung thu (may ao hoac bi chan).')
-                _offer_buy()
-            elif m == 'used':
-                print('May / ket noi nay da dung het luot dung thu.')
-                _offer_buy()
-            elif m == 'disabled':
-                print('Chua kich hoat. Dung thu dang tam dong.')
-            else:
-                print('  khong bat duoc dung thu: %s' % m, file=sys.stderr)
-                print('  (kiem tra mang roi chay lai, hoac nhap key)')
+
+            # KHONG roi thang xuong hop thoai nhap key nua.
+            # Phan nhanh theo res['next'] - moi ma loi co buoc tiep theo ro rang.
+            nxt = res.get('next')
+
+            if nxt == 'retry':
+                # Loi mang / server -> chi can thu lai, KHONG hoi key
+                print('')
+                print('  [!] %s' % res['msg'])
+                print('      Thu lai: xa_nofog_pro.exe --trial')
+                return False
+
+            if res.get('code') == 'login_cancelled':
+                print('')
+                print('  Dung thu can TAI KHOAN mien phi (chi ten + mat khau).')
+                print('')
+                print('    Dang ky mien phi : %s' % REGISTER_URL)
+                print('    Dang nhap        : xa_nofog_pro.exe --login <tai-khoan> <mat-khau>')
+                print('    Da co key        : xa_nofog_pro.exe --key AOE1-XXXX-XXXX-XXXX')
+                print('')
+                if _ask_yes_no('  Nhap key mua ngay bay gio?', default=False):
+                    return _ask_key_final()
+                return False
+
+            # nxt == 'buy' (het luot / bi chan / may ao)
+            print('')
+            print('  [!] %s' % res['msg'])
+            _offer_buy(open_browser=True)
+            return False
         else:
-            print('Chua kich hoat.')
+            print('Chua kich hoat. Ban nay khong co dung thu.')
     else:
         # --- 2. Co state -> kiem han -----------------------------------
         ok, msg = ensure_licensed(verbose=True)
@@ -1911,7 +2376,25 @@ def require_license(opts):
         else:
             print('Khong dung duoc: %s' % msg)
 
-    # --- 4. Hoi key cho moi truong hop tren ---------------------------
+    # --- 4. Chi hoi key khi khach CHU DONG muon ------------------------
+    # Truoc day: roi thang xuong ask_key_dialog() cho MOI truong hop
+    # (ke ca het luot / mat mang / chua dang nhap) -> khach khong co key
+    # bi dui vao hop thoai vo nghia, dung nhu anh chup khach gui.
+    print('')
+    if not _ask_yes_no('  Ban co ma ban quyen muon nhap ngay bay gio?', default=False):
+        print('')
+        print('  Ban co the:')
+        print('    - Dung thu mien phi : xa_nofog_pro.exe --trial')
+        print('    - Dang ky tai khoan : %s' % REGISTER_URL)
+        print('    - Mua key           : %s' % BUY_URL)
+        print('')
+        return False
+
+    return _ask_key_final()
+
+
+def _ask_key_final():
+    """Hoi key va kich hoat. Tra True/False. Dung chung cho moi duong."""
     k = ask_key_dialog()
     if not k:
         print('Da huy.', file=sys.stderr)
@@ -1920,12 +2403,32 @@ def require_license(opts):
     ok, m = activate(k)
     print('  ' + m)
     if not ok:
+        # Key dung thu nhap nham cho -> huong dan dung duong
+        if 'dung thu' in m.lower() or 'trial' in m.lower():
+            print('')
+            print('  Day la ma DUNG THU, khong phai key mua.')
+            print('  Chay: xa_nofog_pro.exe --trial            (tu dong dung thu)')
+            print('  Hoac: xa_nofog_pro.exe --trial-key ' + k.strip().upper())
         return False
     ok2, m2 = ensure_licensed(verbose=False)
     if not ok2:
         print('  Van khong hop le: %s' % m2, file=sys.stderr)
         return False
     return True
+
+
+def _ask_yes_no(prompt, default=False):
+    """Hoi yes/no. Tra bool. Khong bao gio raise, khong treo."""
+    try:
+        if not sys.stdin or not sys.stdin.isatty():
+            return default
+        suffix = ' [Y/n] ' if default else ' [y/N] '
+        ans = input(prompt + suffix).strip().lower()
+        if not ans:
+            return default
+        return ans in ('y', 'yes', 'c', 'co', '1')
+    except Exception:
+        return default
 
 
 def run():
@@ -1962,6 +2465,104 @@ def run():
         print('  ============================================================')
         return EXIT_NO_LICENSE
 
+    # --logout: xoa phien dang nhap (GIU key)
+    if opts.get('logout'):
+        ck, uname = load_session()
+        if not ck:
+            print('  Chua dang nhap.')
+            return 0
+        drop_session()
+        print('  Da dang xuat khoi %s.' % (uname or 'tai khoan'))
+        print('  (Key ban quyen van giu nguyen)')
+        return 0
+
+    # --login [tk mk]: dang nhap de dung thu / quan ly
+    if opts.get('login'):
+        cred = opts['login']
+        if isinstance(cred, tuple):
+            ok, msg, ck = login_to_server(cred[0], cred[1])
+            print('  ' + (msg if ok else msg))
+            return 0 if ok else EXIT_NO_LICENSE
+        # --login khong tham so -> hoi
+        ck, uname = ensure_session()
+        if ck:
+            print('  Da dang nhap san: %s' % (uname or '?'))
+            print('  Dang xuat: xa_nofog_pro.exe --logout')
+            return 0
+        ck, uname = ask_login(verbose=True)
+        if not ck:
+            print('  Khong dang nhap duoc.', file=sys.stderr)
+            return EXIT_NO_LICENSE
+        return 0
+
+    # --trial-key TR-XXXX-XXXX-XXXX: nhan ma do WEB cap
+    # (web cap ma roi bao "chay tool"; truoc day tool KHONG co duong nhan)
+    if opts.get('trial_key'):
+        tk = opts['trial_key'].strip().upper()
+        parts = _hwid_parts()
+        r = _post('/api/trial/claim', {
+            'key': tk,
+            'guid': parts[0], 'bios': parts[1], 'cpu': parts[2], 'vol': parts[3],
+            'app': APP_NAME, 'ver': CLIENT_VERSION,
+        }, timeout=HTTP_TIMEOUT, retries=1)
+
+        if not r.get('ok'):
+            code = str(r.get('code') or '')
+            msgs = {
+                'not_found': 'Ma dung thu khong ton tai. Kiem tra lai ma.',
+                'hwid_mismatch': 'Ma nay da gan voi may khac. Moi ma dung cho 1 may.',
+                'trial_expired': 'Luot dung thu nay da het han.',
+                'revoked': 'Ma dung thu da bi thu hoi.',
+                'not_trial': 'Day la key tra phi, dung: --key ' + tk,
+                'bad_request': 'Ma khong hop le (dang TR-XXXX-XXXX-XXXX).',
+                'trial_denied_device': 'Khong ho tro dung thu tren may ao.',
+            }
+            print('')
+            print('  [!] %s' % msgs.get(code, r.get('msg') or code or 'Loi khong ro'))
+            if code in ('not_found', 'hwid_mismatch', 'revoked', 'trial_expired'):
+                print('')
+                print('  Lay ma moi tai: %s' % BUY_URL)
+            return EXIT_NO_LICENSE
+
+        # Luu state tu response
+        activated = bool(r.get('activated'))
+        st = load_state()
+        anchor_server_time(st, r.get('now'))
+        kind = str(r.get('trial_kind') or '3d')
+        kc = TRIAL_KINDS.get(kind, TRIAL_KINDS['3d'])
+        st.update({
+            'key': tk,
+            'hwid': str(r.get('hwid') or compute_hwid()),
+            'plan': 'trial',
+            'is_trial': 1,
+            'trial_kind': kind,
+            'trial_label': kc['label'],
+            'trial_started': int(r.get('activated_at') or server_now()),
+            'grace_hours': 0,
+            'last_ok': time.time(),
+            'mono_last_ok': _mono(),
+            'mode': 'server',
+            'recheck_sec': int(r.get('recheck_sec') or kc['recheck']),
+        })
+        if activated:
+            st['expires_at'] = int(r.get('expires_at') or 0)
+            st['activated_at'] = int(r.get('activated_at') or server_now())
+            st.pop('hold_until', None)
+        else:
+            st['hold_until'] = int(r.get('expires_at') or 0)
+            st['expires_at'] = 0
+            st['activated_at'] = 0
+        save_state(st)
+
+        ok2, msg2 = ensure_licensed(verbose=False)
+        if not ok2:
+            print('  Khong kich hoat duoc: %s' % msg2, file=sys.stderr)
+            return EXIT_NO_LICENSE
+
+        _print_trial_banner(load_state())
+        print('  Dung thu san sang. Chay lai khong tham so de va game.')
+        return 0
+
     # --trial: bat dung thu roi thoat
     if opts['trial']:
         st0 = load_state()
@@ -1970,19 +2571,27 @@ def run():
                   % mask_key(st0.get('key')))
             show_status()
             return 0
-        ok, m = start_trial()
-        if not ok:
-            if m == 'expired':
-                print('May nay da dung het %d ngay dung thu.' % TRIAL_DAYS)
-            elif m == 'device':
-                print('May nay khong duoc dung thu (may ao hoac bi chan).')
-            elif m == 'used':
-                print('May / ket noi nay da dung het luot dung thu.')
-            else:
-                print('Khong bat duoc dung thu: %s' % m, file=sys.stderr)
-            _offer_buy()
+        res = start_trial(kind=opts.get('trial_kind'))
+        if not res['ok']:
+            nxt = res.get('next')
+            print('')
+            print('  [!] %s' % res['msg'])
+            if nxt == 'retry':
+                print('      Thu lai: xa_nofog_pro.exe --trial')
+                return EXIT_NO_LICENSE
+            if res.get('code') == 'login_cancelled':
+                print('')
+                print('    Dang ky mien phi : %s' % REGISTER_URL)
+                print('    Dang nhap        : xa_nofog_pro.exe --login <tk> <mk>')
+                return EXIT_NO_LICENSE
+            # het luot / bi chan
+            if res.get('code') == 'trial_quota_exhausted':
+                _offer_buy(open_browser=True)
+                return EXIT_TRIAL_QUOTA
+            _offer_buy(open_browser=True)
             return EXIT_NO_LICENSE
-        print('Dung thu san sang. Chay lai khong tham so de va game.')
+        print('')
+        print('  Dung thu san sang. Chay lai khong tham so de va game.')
         return 0
 
     if opts['list']:

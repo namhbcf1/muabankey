@@ -1,7 +1,42 @@
-/** Trang danh sách sản phẩm với bộ lọc. */
-import { api, esc, fmtVnd, fmtNum, skeletonCards, toast, navigate, debounce } from '../lib.js';
+/** Trang danh sách sản phẩm: bộ lọc, lưới sản phẩm, phân trang. */
+import { api, esc, fmtNum, skeletonCards, toast, navigate, debounce, emptyBlock } from '../lib.js';
+import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { productCard, bindProductCards } from './home.js';
+
+/**
+ * Danh mục trong DB lưu icon dạng emoji; giao diện dùng bộ SVG dùng chung.
+ * Ánh xạ theo slug để icon luôn ăn theo màu theme và không phụ thuộc font hệ thống.
+ */
+const CAT_ICON = {
+  'windows-office': 'grid',
+  'ai-tools': 'bot',
+  'thiet-ke': 'gem',
+  'giai-tri': 'star',
+  'lap-trinh': 'file',
+  'bao-mat': 'shield',
+  'license-xarena': 'key',
+};
+
+const catIcon = (slug) => CAT_ICON[slug] || 'tag';
+
+/** Giá trị gửi lên API giữ nguyên như trước — chỉ đổi nhãn hiển thị. */
+const SORTS = [
+  ['featured', 'Nổi bật'],
+  ['popular', 'Bán chạy'],
+  ['price_asc', 'Giá tăng dần'],
+  ['price_desc', 'Giá giảm dần'],
+  ['newest', 'Mới nhất'],
+  ['rating', 'Đánh giá cao'],
+];
+
+const PRICE_RANGES = [
+  ['', 'Mọi mức giá'],
+  ['0-200000', 'Dưới 200.000₫'],
+  ['200000-500000', '200.000₫ – 500.000₫'],
+  ['500000-1000000', '500.000₫ – 1.000.000₫'],
+  ['1000000-', 'Trên 1.000.000₫'],
+];
 
 export function renderProducts(query) {
   const activeCat = state.categories.find((c) => c.slug === query.category);
@@ -9,58 +44,56 @@ export function renderProducts(query) {
   const headingDesc = activeCat && activeCat.description
     ? activeCat.description
     : 'Đang tải...';
+
+  const crumb = activeCat
+    ? `<a href="#/products">Sản phẩm</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}<span class="text-dim">${esc(activeCat.name)}</span>`
+    : '<span class="text-dim">Sản phẩm</span>';
+
   return `
   <div id="site-header"></div>
   <section class="section-sm">
     <div class="container">
-      <div class="pd-breadcrumb">
-        <a href="#/">Trang chủ</a><span>/</span>
-        ${activeCat
-          ? `<a href="#/products">Sản phẩm</a><span>/</span><span style="color:var(--text)">${esc(activeCat.name)}</span>`
-          : '<span>Sản phẩm</span>'}
-      </div>
-      <div class="sec-head" style="margin-bottom:20px">
+      <nav class="pd-breadcrumb" aria-label="Đường dẫn">
+        <a href="#/">Trang chủ</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}${crumb}
+      </nav>
+
+      <div class="sec-head prod-head">
         <div>
           <h1 class="sec-title">${esc(heading)}</h1>
           <p class="sec-desc" id="products-count">${esc(headingDesc)}</p>
         </div>
       </div>
 
-      <div class="cat-scroll" id="cat-filter"></div>
+      <div class="cat-scroll" id="cat-filter" role="group" aria-label="Lọc theo danh mục"></div>
 
       <div class="filters">
-        <div class="filter-group" style="flex:1;min-width:200px">
-          <div class="search-mini" style="width:100%;flex:1">
-            <span style="color:var(--text-mute)">🔍</span>
-            <input type="search" id="product-search" placeholder="Tìm theo tên sản phẩm..."
+        <div class="filter-group prod-search">
+          <span class="search-mini prod-search-field">
+            ${icon('search', { size: 14 })}
+            <input type="search" id="product-search" placeholder="Tìm theo tên sản phẩm"
               value="${esc(query.q || '')}" aria-label="Tìm sản phẩm">
-          </div>
+          </span>
         </div>
         <div class="filter-group">
-          <span class="filter-label">Sắp xếp</span>
+          <label class="filter-label" for="sort-select">Sắp xếp</label>
           <select class="select" id="sort-select">
-            <option value="featured"${query.sort === 'featured' || !query.sort ? ' selected' : ''}>Nổi bật</option>
-            <option value="popular"${query.sort === 'popular' ? ' selected' : ''}>Bán chạy</option>
-            <option value="price_asc"${query.sort === 'price_asc' ? ' selected' : ''}>Giá thấp → cao</option>
-            <option value="price_desc"${query.sort === 'price_desc' ? ' selected' : ''}>Giá cao → thấp</option>
-            <option value="newest"${query.sort === 'newest' ? ' selected' : ''}>Mới nhất</option>
-            <option value="rating"${query.sort === 'rating' ? ' selected' : ''}>Đánh giá cao</option>
+            ${SORTS.map(([value, label]) => `<option value="${value}"${
+              (query.sort || 'featured') === value ? ' selected' : ''
+            }>${label}</option>`).join('')}
           </select>
         </div>
         <div class="filter-group">
-          <span class="filter-label">Giá</span>
+          <label class="filter-label" for="price-select">Giá</label>
           <select class="select" id="price-select">
-            <option value="">Mọi mức giá</option>
-            <option value="0-200000"${query.price === '0-200000' ? ' selected' : ''}>Dưới 200.000₫</option>
-            <option value="200000-500000"${query.price === '200000-500000' ? ' selected' : ''}>200.000₫ - 500.000₫</option>
-            <option value="500000-1000000"${query.price === '500000-1000000' ? ' selected' : ''}>500.000₫ - 1.000.000₫</option>
-            <option value="1000000-"${query.price === '1000000-' ? ' selected' : ''}>Trên 1.000.000₫</option>
+            ${PRICE_RANGES.map(([value, label]) => `<option value="${value}"${
+              (query.price || '') === value ? ' selected' : ''
+            }>${label}</option>`).join('')}
           </select>
         </div>
       </div>
 
       <div id="products-grid">${skeletonCards(9)}</div>
-      <div id="pagination" class="flex justify-between items-center mt-4" style="gap:12px;flex-wrap:wrap"></div>
+      <div id="pagination" class="pg-bar"></div>
     </div>
   </section>
   <div id="site-footer"></div>`;
@@ -83,11 +116,15 @@ export async function mountProducts(root, query) {
   // Category chips
   const catHost = root.querySelector('#cat-filter');
   catHost.innerHTML =
-    `<button class="cat-chip ${!current.category ? 'active' : ''}" data-cat="">✨ Tất cả</button>` +
+    `<button type="button" class="cat-chip ${!current.category ? 'active' : ''}" data-cat=""
+       aria-pressed="${!current.category}">
+       <span class="ico">${icon('package', { size: 14 })}</span>Tất cả
+     </button>` +
     state.categories.map((c) => `
-      <button class="cat-chip ${current.category === c.slug ? 'active' : ''}" data-cat="${esc(c.slug)}">
-        <span class="ico">${esc(c.icon || '📦')}</span>${esc(c.name)}
-        <span class="cnt">${c.productCount}</span>
+      <button type="button" class="cat-chip ${current.category === c.slug ? 'active' : ''}"
+        data-cat="${esc(c.slug)}" aria-pressed="${current.category === c.slug}">
+        <span class="ico">${icon(catIcon(c.slug), { size: 14 })}</span>${esc(c.name)}
+        <span class="cnt">${fmtNum(c.productCount)}</span>
       </button>`).join('');
 
   catHost.querySelectorAll('[data-cat]').forEach((b) => {
@@ -131,8 +168,10 @@ export async function mountProducts(root, query) {
 async function loadPage(root, current) {
   const host = root.querySelector('#products-grid');
   const countEl = root.querySelector('#products-count');
+  const pg = root.querySelector('#pagination');
   host.innerHTML = skeletonCards(9);
   host.className = '';
+  pg.innerHTML = '';
 
   const params = new URLSearchParams();
   if (current.q) params.set('q', current.q);
@@ -156,13 +195,12 @@ async function loadPage(root, current) {
 
     if (data.products.length === 0) {
       host.className = '';
-      host.innerHTML = `<div class="empty-state">
-        <div class="ico">🔍</div>
-        <div class="t">Không tìm thấy sản phẩm</div>
-        <div class="d">Thử từ khoá khác hoặc xoá bộ lọc</div>
-        <button class="btn btn-primary btn-sm" onclick="location.hash='#/products'">Xem tất cả</button>
-      </div>`;
-      root.querySelector('#pagination').innerHTML = '';
+      host.innerHTML = emptyBlock({
+        ico: 'search',
+        title: 'Không tìm thấy sản phẩm',
+        desc: 'Thử từ khoá khác hoặc xoá bớt bộ lọc đang áp dụng.',
+        action: '<a class="btn btn-primary btn-sm" href="#/products">Xem tất cả sản phẩm</a>',
+      });
       return;
     }
 
@@ -171,7 +209,6 @@ async function loadPage(root, current) {
     bindProductCards(host, data.products);
 
     // Pagination
-    const pg = root.querySelector('#pagination');
     if (data.totalPages > 1) {
       const pages = [];
       const cur = data.page;
@@ -181,15 +218,20 @@ async function loadPage(root, current) {
         else if (pages[pages.length - 1] !== '...') pages.push('...');
       }
       pg.innerHTML = `
-        <div style="font-size:13px;color:var(--text-mute)">
-          Trang ${cur} / ${total}
-        </div>
-        <div class="flex gap-1">
-          <button class="btn btn-ghost btn-sm" ${cur <= 1 ? 'disabled' : ''} data-pg="${cur - 1}">← Trước</button>
+        <div class="pg-info">Trang <strong>${cur}</strong> / ${total}</div>
+        <div class="pg-list">
+          <button type="button" class="btn btn-ghost btn-sm" data-pg="${cur - 1}"
+            ${cur <= 1 ? 'disabled' : ''} aria-label="Trang trước">
+            ${icon('arrowLeft', { size: 13 })}Trước
+          </button>
           ${pages.map((p) => p === '...'
-            ? `<span style="padding:8px 6px;color:var(--text-mute)">…</span>`
-            : `<button class="btn ${p === cur ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pg="${p}">${p}</button>`).join('')}
-          <button class="btn btn-ghost btn-sm" ${cur >= total ? 'disabled' : ''} data-pg="${cur + 1}">Sau →</button>
+            ? '<span class="pg-gap" aria-hidden="true">…</span>'
+            : `<button type="button" class="btn ${p === cur ? 'btn-primary' : 'btn-ghost'} btn-sm"
+                 data-pg="${p}" aria-label="Trang ${p}" aria-current="${p === cur ? 'page' : 'false'}">${p}</button>`).join('')}
+          <button type="button" class="btn btn-ghost btn-sm" data-pg="${cur + 1}"
+            ${cur >= total ? 'disabled' : ''} aria-label="Trang sau">
+            Sau${icon('arrowRight', { size: 13 })}
+          </button>
         </div>`;
       pg.querySelectorAll('[data-pg]').forEach((b) => {
         b.onclick = () => {
@@ -198,12 +240,14 @@ async function loadPage(root, current) {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         };
       });
-    } else {
-      pg.innerHTML = '';
     }
   } catch (e) {
     host.className = '';
-    host.innerHTML = `<div class="empty-state"><div class="ico">⚠️</div><div class="t">${esc(e.message)}</div></div>`;
+    host.innerHTML = emptyBlock({
+      ico: 'alert',
+      title: 'Không tải được danh sách sản phẩm',
+      desc: e.message,
+    });
     toast(e.message, 'error');
   }
 }

@@ -72,6 +72,7 @@ r.get('/api/license/health', (env) => licenseServer.apiHealth(env));
 r.post('/api/trial/start', trial.apiTrialStart);
 r.get('/api/trial/status', trial.apiTrialStatus);
 r.post('/api/trial/stop', trial.apiTrialStop);
+r.post('/api/trial/claim', trial.apiTrialClaim);
 
 /* ---------- License quản lý ---------- */
 r.get('/api/licenses/mine', license.myLicenses);

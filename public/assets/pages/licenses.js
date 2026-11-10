@@ -1,29 +1,34 @@
 /** Trang khách quản lý license XArena đã mua. */
-import { api, esc, fmtDate, timeAgo, toast, navigate, loadingBlock, copyText, openModal } from '../lib.js';
+import {
+  api, esc, fmtDate, timeAgo, toast, navigate, loadingBlock,
+  copyText, openModal, emptyBlock,
+} from '../lib.js';
+import { icon } from '../icons.js';
 import { state } from '../state.js';
 
+// tone + nhãn + icon cho từng trạng thái license.
 const STATUS = {
-  active:   ['pill-green',  '✅ Đang hoạt động'],
-  forever:  ['pill-green',  '♾️ Vĩnh viễn'],
-  expiring: ['pill-yellow', '⚠️ Sắp hết hạn'],
-  unbound:  ['pill-blue',   '🔓 Chưa kích hoạt'],
-  expired:  ['pill-red',    '✕ Đã hết hạn'],
-  revoked:  ['pill-red',    '🚫 Đã thu hồi'],
-  unknown:  ['pill-gray',   'Không rõ'],
+  active:   ['pill-green',  'Đang hoạt động', 'checkCircle'],
+  forever:  ['pill-green',  'Vĩnh viễn', 'infinity'],
+  expiring: ['pill-yellow', 'Sắp hết hạn', 'alert'],
+  unbound:  ['pill-blue',   'Chưa kích hoạt', 'unlock'],
+  expired:  ['pill-red',    'Đã hết hạn', 'x'],
+  revoked:  ['pill-red',    'Đã thu hồi', 'ban'],
+  unknown:  ['pill-gray',   'Không rõ', 'help'],
 };
-
-const BASE = location.origin;
 
 export function renderLicenses() {
   return `
   <div id="site-header"></div>
   <section class="section-sm">
     <div class="container">
-      <div class="pd-breadcrumb"><a href="#/">Trang chủ</a><span>/</span><span>License của tôi</span></div>
-      <div class="sec-head" style="margin-bottom:22px">
+      <nav class="pd-breadcrumb" aria-label="Đường dẫn">
+        <a href="#/">Trang chủ</a><span>/</span><span>License của tôi</span>
+      </nav>
+      <div class="page-head">
         <div>
-          <h1 class="sec-title">🔑 License của tôi</h1>
-          <p class="sec-desc">Lấy lệnh cài đặt tự động, xem hạn dùng và đổi máy khi cần</p>
+          <h1 class="page-title">License của tôi</h1>
+          <p class="page-desc">Lấy lệnh cài đặt tự động, xem hạn dùng và đổi máy khi cần.</p>
         </div>
       </div>
       <div id="lic-content">${loadingBlock()}</div>
@@ -40,79 +45,101 @@ export async function mountLicenses(root) {
   try {
     data = await api('/api/licenses/mine');
   } catch (e) {
-    host.innerHTML = `<div class="empty-state"><div class="ico">⚠️</div><div class="t">${esc(e.message)}</div></div>`;
+    host.innerHTML = emptyBlock({ ico: 'alert', title: e.message || 'Không tải được license' });
     return;
   }
 
   if (!data.licenses.length) {
-    host.innerHTML = `
-      <div class="empty-state">
-        <div class="ico">🔑</div>
-        <div class="t">Bạn chưa có license nào</div>
-        <div class="d">Mua key XArena để nhận lệnh cài đặt tự động</div>
-        <button class="btn btn-primary btn-sm" onclick="location.hash='#/products?category=license-xarena'">Xem gói license</button>
-      </div>`;
+    host.innerHTML = emptyBlock({
+      ico: 'key',
+      title: 'Bạn chưa có license nào',
+      desc: 'Mua key XArena để nhận lệnh cài đặt tự động.',
+      action: `<button class="btn btn-primary btn-sm" data-empty-go="/products?category=license-xarena">Xem gói license</button>`,
+    });
+    host.querySelector('[data-empty-go]').onclick = () => navigate('/products?category=license-xarena');
     return;
   }
 
   const now = Date.now();
   host.innerHTML = `
     <div class="alert alert-info">
-      <span class="ico">⚡</span>
-      <span>Bấm <strong>Lấy lệnh cài đặt</strong> để sinh lệnh riêng (dùng 1 lần, hết hạn sau 24 giờ).
-      Rồi bấm <strong>Win + R</strong>, dán lệnh, Enter — xong.</span>
+      <span class="ico">${icon('info', { size: 15 })}</span>
+      <span>Bấm <strong>Lấy lệnh cài đặt</strong> để sinh lệnh riêng (dùng một lần, hết hạn sau 24 giờ).
+      Sau đó bấm <strong>Win + R</strong>, dán lệnh và nhấn Enter.</span>
     </div>
-    <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="stack">
       ${data.licenses.map((l) => {
-        const [cls, label] = STATUS[l.status] || STATUS.unknown;
+        const [cls, label, ico] = STATUS[l.status] || STATUS.unknown;
         const daysLeft = l.expiresAt > 0 ? Math.ceil((l.expiresAt * 1000 - now) / 86400000) : null;
         const canRebind = ['active', 'forever', 'expiring', 'unbound'].includes(l.status);
         const usable = !['revoked', 'expired'].includes(l.status);
         return `
-        <div class="panel" data-lic="${esc(l.key)}">
-          <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:12px">
-            <div style="min-width:0">
-              <div style="font-size:14px;font-weight:800;margin-bottom:5px">${esc(l.productName || l.plan || 'License XArena')}</div>
-              <div class="flex gap-1" style="flex-wrap:wrap">
-                <span class="pill ${cls}">${label}</span>
-                ${l.forever ? `<span class="pill pill-blue">♾️ Không giới hạn</span>` : daysLeft !== null && daysLeft > 0 ? `<span class="pill pill-gray">Còn ${daysLeft} ngày</span>` : ''}
+        <article class="panel" data-lic="${esc(l.key)}">
+          <div class="lic-head">
+            <div class="lic-main">
+              <h2 class="lic-name">${esc(l.productName || l.plan || 'License XArena')}</h2>
+              <div class="pill-row mt-1">
+                <span class="pill ${cls}">${icon(ico, { size: 11 })} ${esc(label)}</span>
+                ${l.forever
+                  ? `<span class="pill pill-blue">${icon('infinity', { size: 11 })} Không giới hạn</span>`
+                  : daysLeft !== null && daysLeft > 0
+                    ? `<span class="pill pill-gray">Còn ${daysLeft} ngày</span>`
+                    : ''}
               </div>
             </div>
-            <div style="text-align:right;font-size:12px;color:var(--text-mute)">
-              ${l.orderCode ? `Đơn <span class="mono" style="color:#a99cff">${esc(l.orderCode)}</span><br>` : ''}
-              ${l.purchasedAt ? timeAgo(l.purchasedAt) : ''}
+            <div class="lic-src">
+              ${l.orderCode ? `Đơn <span class="mono">${esc(l.orderCode)}</span><br>` : ''}
+              ${l.purchasedAt ? esc(timeAgo(l.purchasedAt)) : ''}
             </div>
           </div>
 
-          <div class="key-box" style="margin-top:14px">
+          <div class="key-box">
             <div class="key-value">${esc(l.key)}</div>
-            <button class="key-copy" data-copy="${esc(l.key)}">📋 Sao chép key</button>
+            <button class="key-copy" data-copy="${esc(l.key)}">
+              ${icon('copy', { size: 12 })} Sao chép key
+            </button>
           </div>
 
           ${usable ? `
-          <div id="zone-${esc(l.key)}" style="margin-top:16px">
+          <div id="zone-${esc(l.key)}" class="mt-2">
             <button class="btn btn-primary btn-block" data-install="${esc(l.key)}">
-              ⚡ Lấy lệnh cài đặt tự động
+              ${icon('zap', { size: 14 })} Lấy lệnh cài đặt tự động
             </button>
           </div>` : `
-          <div class="alert alert-error" style="margin-top:14px;margin-bottom:0">
-            <span class="ico">⚠️</span>
+          <div class="alert alert-error mt-2">
+            <span class="ico">${icon('alert', { size: 15 })}</span>
             <span>License này không còn sử dụng được. Liên hệ hỗ trợ để được xử lý.</span>
           </div>`}
 
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px;font-size:12.5px">
-            <div><span class="text-mute">Máy đã gắn</span><br><strong class="mono">${l.bound ? esc(l.hwidMasked) : 'Chưa kích hoạt'}</strong></div>
-            <div><span class="text-mute">Kích hoạt lúc</span><br><strong>${l.activatedAt ? fmtDate(l.activatedAt * 1000) : '—'}</strong></div>
-            <div><span class="text-mute">Hết hạn</span><br><strong>${l.forever ? 'Vĩnh viễn' : l.expiresAt ? fmtDate(l.expiresAt * 1000) : '—'}</strong></div>
-            <div><span class="text-mute">Đổi máy</span><br><strong>${l.rebinds} / ${l.maxRebind}</strong></div>
+          <div class="meta-grid">
+            <div class="meta-cell">
+              <div class="k">Máy đã gắn</div>
+              <div class="v mono">${l.bound ? esc(l.hwidMasked) : 'Chưa kích hoạt'}</div>
+            </div>
+            <div class="meta-cell">
+              <div class="k">Kích hoạt lúc</div>
+              <div class="v">${l.activatedAt ? esc(fmtDate(l.activatedAt * 1000)) : '—'}</div>
+            </div>
+            <div class="meta-cell">
+              <div class="k">Hết hạn</div>
+              <div class="v">${l.forever ? 'Vĩnh viễn' : l.expiresAt ? esc(fmtDate(l.expiresAt * 1000)) : '—'}</div>
+            </div>
+            <div class="meta-cell">
+              <div class="k">Đổi máy</div>
+              <div class="v">${fmtCount(l.rebinds)} / ${fmtCount(l.maxRebind)}</div>
+            </div>
           </div>
 
-          <div class="flex gap-1 mt-2" style="flex-wrap:wrap">
+          <div class="btn-row mt-2">
             ${canRebind && l.rebinds < l.maxRebind
-              ? `<button class="btn btn-ghost btn-sm" data-rebind="${esc(l.key)}">🔄 Đổi máy</button>` : ''}
-            <a class="btn btn-ghost btn-sm" href="#/support">💬 Cần hỗ trợ</a>
+              ? `<button class="btn btn-ghost btn-sm" data-rebind="${esc(l.key)}">
+                   ${icon('refresh', { size: 13 })} Đổi máy
+                 </button>` : ''}
+            <a class="btn btn-ghost btn-sm" href="#/support">
+              ${icon('messageCircle', { size: 13 })} Cần hỗ trợ
+            </a>
           </div>
-        </div>`;
+        </article>`;
       }).join('')}
     </div>
   `;
@@ -135,49 +162,54 @@ export async function mountLicenses(root) {
         const zone = host.querySelector(`#zone-${CSS.escape(key)}`);
         const one = r.oneLiner || r.cmd;
         zone.innerHTML = `
-          <div style="padding:16px;border-radius:14px;background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.3)">
-            <div style="font-size:12.5px;font-weight:800;color:#86efac;margin-bottom:9px;letter-spacing:.04em">
-              ⚡ CÀI ĐẶT MỘT LỆNH — XONG
+          <div class="install-box">
+            <div class="install-eyebrow">${icon('zap', { size: 13 })} Cài đặt một lệnh — xong</div>
+            <div class="cmd-block">${esc(one)}</div>
+            <div class="btn-row mt-2">
+              <button class="btn btn-primary btn-sm" data-copyone="${esc(one)}">
+                ${icon('copy', { size: 13 })} Sao chép lệnh
+              </button>
+              <a class="btn btn-ghost btn-sm" href="${esc(r.downloadPs1)}" download>
+                ${icon('download', { size: 13 })} Tải .ps1
+              </a>
+              <a class="btn btn-ghost btn-sm" href="${esc(r.exeUrl)}" download>
+                ${icon('download', { size: 13 })} File .exe
+              </a>
             </div>
-            <div class="mono" style="font-size:11.5px;line-height:1.7;color:#bbf7d0;word-break:break-all;background:rgba(0,0,0,.42);padding:12px;border-radius:9px;border:1px solid rgba(255,255,255,.07)">
-              ${esc(one)}
-            </div>
-            <div class="flex gap-1 mt-2" style="flex-wrap:wrap">
-              <button class="btn btn-primary btn-sm" data-copyone="${esc(one)}">📋 Copy lệnh</button>
-              <a class="btn btn-ghost btn-sm" href="${esc(r.downloadPs1)}" download>⬇️ Tải .ps1</a>
-              <a class="btn btn-ghost btn-sm" href="${esc(r.exeUrl)}" download>⬇️ File .exe</a>
-            </div>
-            <div style="font-size:11.5px;color:var(--text-mute);margin-top:9px;line-height:1.7">
-              Lệnh có hiệu lực <strong>24 giờ</strong>. Mỗi lần lấy sẽ tạo lệnh mới.<br>
-              Tự tải, tự cài, tự kích hoạt, tự tạo shortcut ngoài Desktop.
-            </div>
+            <p class="note mt-1">
+              Lệnh có hiệu lực <strong>24 giờ</strong>. Mỗi lần lấy sẽ tạo lệnh mới.
+              Tool tự tải, tự cài, tự kích hoạt và tạo shortcut ngoài Desktop.
+            </p>
           </div>
-          <details style="margin-top:12px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--border)">
-            <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text-dim);list-style:none">
-              📖 Hướng dẫn 3 bước (bấm để mở)
+          <details class="guide">
+            <summary>
+              ${icon('book', { size: 13 })} Hướng dẫn 3 bước
+              ${icon('chevronDown', { size: 13, cls: 'chev' })}
             </summary>
-            <ol style="margin:12px 0 0 18px;font-size:12.8px;color:var(--text-mute);line-height:1.95">
-              <li>Bấm <strong>Win + R</strong> (phím Windows + phím R)</li>
-              <li>Dán lệnh vào ô vừa hiện ra → <strong>Enter</strong></li>
-              <li>Windows hỏi quyền → bấm <strong>Yes</strong></li>
-            </ol>
-            <div style="margin-top:10px;font-size:12px;color:var(--text-mute);line-height:1.7">
-              Chờ ~20 giây. Thấy <strong>"HOÀN TẤT"</strong> là xong —
-              shortcut <strong>XArena No Fog</strong> đã có ngoài Desktop.
+            <div class="guide-body">
+              <ol>
+                <li>Bấm <strong>Win + R</strong> (phím Windows + phím R).</li>
+                <li>Dán lệnh vào ô vừa hiện ra rồi nhấn <strong>Enter</strong>.</li>
+                <li>Windows hỏi quyền — bấm <strong>Yes</strong>.</li>
+              </ol>
+              <p>
+                Chờ khoảng 20 giây. Khi thấy <strong>“HOÀN TẤT”</strong> là xong —
+                shortcut <strong>XArena No Fog</strong> đã có ngoài Desktop.
+              </p>
             </div>
           </details>`;
 
         zone.querySelectorAll('[data-copyone]').forEach((cb) => {
           cb.onclick = async () => {
             const ok = await copyText(cb.dataset.copyone);
-            toast(ok ? 'Đã copy! Bấm Win+R, dán vào, Enter.' : 'Không sao chép được',
+            toast(ok ? 'Đã sao chép. Bấm Win+R, dán vào, Enter.' : 'Không sao chép được',
               ok ? 'success' : 'error', 5000);
           };
         });
       } catch (e) {
         toast(e.message, 'error', 6000);
         b.disabled = false;
-        b.textContent = '⚡ Lấy lệnh cài đặt tự động';
+        b.innerHTML = `${icon('zap', { size: 14 })} Lấy lệnh cài đặt tự động`;
       }
     };
   });
@@ -197,41 +229,42 @@ export async function mountLicenses(root) {
         const cmd = `xa_nofog_pro.exe --rebind ${key} ${token}`;
 
         openModal(`
-          <div class="modal-title">✅ Mã đổi máy đã tạo</div>
+          <div class="modal-title">Mã đổi máy đã tạo</div>
           <div class="modal-sub">
-            Chạy lệnh dưới đây <strong>trên MÁY MỚI</strong> (máy bạn muốn chuyển sang).
+            Chạy lệnh dưới đây <strong>trên máy mới</strong> — máy bạn muốn chuyển sang.
           </div>
 
           <div class="field">
-            <label class="label">Lệnh đổi máy</label>
-            <div class="mono" id="rb-cmd" style="font-size:11.5px;line-height:1.7;word-break:break-all;
-              background:rgba(0,0,0,.42);padding:12px;border-radius:9px;border:1px solid rgba(255,255,255,.07)">
+            <div class="label" id="rb-cmd-label">Lệnh đổi máy</div>
+            <div class="cmd-block" id="rb-cmd" role="group" aria-labelledby="rb-cmd-label">
               ${esc(cmd)}
             </div>
           </div>
 
-          <div class="alert alert-warn" style="margin-bottom:14px">
-            <span class="ico">⏳</span>
+          <div class="alert alert-warn">
+            <span class="ico">${icon('clock', { size: 15 })}</span>
             <span>Mã chỉ dùng được <strong>1 lần</strong>, hết hạn sau <strong>30 phút</strong>.
             Không chia sẻ mã này cho ai.</span>
           </div>
 
-          <div class="alert alert-info" style="margin-bottom:16px">
-            <span class="ico">💡</span>
-            <span>Chưa cài tool trên máy mới? Tải file cài rồi chạy lệnh trên ở thư mục cài đặt,
-            hoặc dùng <code class="mono">👤 Đổi máy</code> trong menu tool.</span>
+          <div class="alert alert-info">
+            <span class="ico">${icon('info', { size: 15 })}</span>
+            <span>Chưa cài tool trên máy mới? Tải file cài rồi chạy lệnh trên trong thư mục cài đặt,
+            hoặc dùng <strong>Đổi máy</strong> trong menu tool.</span>
           </div>
 
-          <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
+          <div class="btn-row end">
             <button class="btn btn-ghost" data-close>Đóng</button>
-            <button class="btn btn-primary" data-copycmd>📋 Copy lệnh</button>
+            <button class="btn btn-primary" data-copycmd>
+              ${icon('copy', { size: 14 })} Sao chép lệnh
+            </button>
           </div>
         `, {
           onMount(overlay, close) {
             overlay.querySelector('[data-close]').onclick = close;
             overlay.querySelector('[data-copycmd]').onclick = async () => {
               const okc = await copyText(cmd);
-              toast(okc ? 'Đã copy lệnh đổi máy' : 'Không copy được',
+              toast(okc ? 'Đã sao chép lệnh đổi máy' : 'Không sao chép được',
                 okc ? 'success' : 'error');
             };
           },
@@ -246,3 +279,7 @@ export async function mountLicenses(root) {
   });
 }
 
+/** Số đếm nhỏ (rebinds) — giữ dạng số, không dùng định dạng tiền. */
+function fmtCount(n) {
+  return new Intl.NumberFormat('vi-VN').format(Number(n) || 0);
+}

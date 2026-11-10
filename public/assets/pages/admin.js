@@ -1,19 +1,36 @@
-/** Trang quản trị (admin). */
+/**
+ * Trang quản trị (admin).
+ *
+ * Toàn bộ giao diện dùng icon SVG (`icon()`) và class trong style.css; chỉ còn
+ * đúng một inline style là `width` của `.bar-fill` vì đó là giá trị động.
+ * Logic nghiệp vụ (endpoint, method, body, điều kiện trạng thái, phân quyền,
+ * luồng xác nhận) giữ nguyên so với bản trước khi đại tu giao diện.
+ */
 import { api, esc, fmtVnd, fmtNum, fmtDate, toast, navigate, openModal, confirmDialog, loadingBlock, debounce, copyText } from '../lib.js';
+import { icon } from '../icons.js';
 import { state } from '../state.js';
 
 const NAV = [
-  ['dashboard', '📊', 'Tổng quan'],
-  ['orders', '📦', 'Đơn hàng'],
-  ['topups', '💰', 'Nạp tiền'],
-  ['products', '🛍️', 'Sản phẩm'],
-  ['keys', '🔑', 'Kho key'],
-  ['licenses', '🎫', 'License'],
-  ['trial', '🎁', 'Dùng thử'],
-  ['users', '👥', 'Người dùng'],
-  ['settings', '⚙️', 'Cài đặt'],
-  ['logs', '📜', 'Nhật ký'],
+  ['dashboard', 'grid', 'Tổng quan'],
+  ['orders', 'package', 'Đơn hàng'],
+  ['topups', 'coins', 'Nạp tiền'],
+  ['products', 'bag', 'Sản phẩm'],
+  ['keys', 'key', 'Kho key'],
+  ['licenses', 'ticket', 'License'],
+  ['trial', 'gift', 'Dùng thử'],
+  ['users', 'users', 'Người dùng'],
+  ['settings', 'settings', 'Cài đặt'],
+  ['logs', 'log', 'Nhật ký'],
 ];
+
+/** Nhãn hiển thị cho trạng thái đơn. Giá trị dữ liệu vẫn là khoá tiếng Anh. */
+const ORDER_LABEL = {
+  pending: 'Chờ xử lý',
+  paid: 'Đã thanh toán',
+  delivered: 'Đã giao',
+  cancelled: 'Đã huỷ',
+  refunded: 'Đã hoàn',
+};
 
 export function renderAdmin(query) {
   const tab = query.tab || 'dashboard';
@@ -21,17 +38,18 @@ export function renderAdmin(query) {
   <div id="site-header"></div>
   <section class="section-sm">
     <div class="container container-wide">
-      <div class="sec-head" style="margin-bottom:22px">
+      <div class="page-head">
         <div>
-          <h1 class="sec-title">⚙️ Quản trị hệ thống</h1>
-          <p class="sec-desc">Quản lý đơn hàng, sản phẩm, kho key và người dùng</p>
+          <h1 class="page-title">Quản trị hệ thống</h1>
+          <p class="page-desc">Quản lý đơn hàng, sản phẩm, kho key và người dùng.</p>
         </div>
       </div>
       <div class="admin-layout">
-        <nav class="admin-nav">
+        <nav class="admin-nav" aria-label="Khu vực quản trị">
           ${NAV.map(([k, ico, label]) => `
-            <button class="admin-nav-item ${tab === k ? 'active' : ''}" data-tab="${k}">
-              <span class="ico">${ico}</span>${label}
+            <button type="button" class="admin-nav-item ${tab === k ? 'active' : ''}" data-tab="${k}"
+              ${tab === k ? 'aria-current="page"' : ''}>
+              <span class="ico">${icon(ico, { size: 16 })}</span>${label}
             </button>`).join('')}
         </nav>
         <div id="admin-content">${loadingBlock()}</div>
@@ -45,7 +63,8 @@ export async function mountAdmin(root, query) {
   if (!state.user) { navigate('/login?redirect=/admin', { replace: true }); return; }
   if (state.user.role !== 'admin' && state.user.role !== 'staff') {
     root.querySelector('#admin-content').innerHTML =
-      `<div class="empty-state"><div class="ico">🚫</div><div class="t">Không có quyền truy cập</div></div>`;
+      `<div class="empty-state"><div class="ico">${icon('ban', { size: 26 })}</div>
+        <div class="t">Không có quyền truy cập</div></div>`;
     return;
   }
 
@@ -67,7 +86,8 @@ export async function mountAdmin(root, query) {
     else if (tab === 'settings') await renderSettings(host);
     else if (tab === 'logs') await renderLogs(host);
   } catch (e) {
-    host.innerHTML = `<div class="empty-state"><div class="ico">⚠️</div><div class="t">${esc(e.message)}</div></div>`;
+    host.innerHTML = `<div class="empty-state"><div class="ico">${icon('alert', { size: 26 })}</div>
+      <div class="t">${esc(e.message)}</div></div>`;
   }
 }
 
@@ -80,48 +100,49 @@ async function renderDashboard(host) {
   host.innerHTML = `
     <div class="stat-grid">
       ${[
-        ['💰', fmtVnd(s.revenue), 'Tổng doanh thu', `+${fmtVnd(s.revenueToday)} hôm nay`],
-        ['📦', fmtNum(s.orders), 'Tổng đơn hàng', `+${s.ordersToday} hôm nay`],
-        ['👥', fmtNum(s.users), 'Người dùng', `+${s.usersToday} hôm nay`],
-        ['⏳', fmtNum(s.pendingOrders), 'Đơn chờ xử lý', s.pendingOrders > 0 ? 'Cần xử lý' : 'Sạch'],
-        ['⚠️', fmtNum(s.lowStock), 'Sản phẩm sắp hết', 'Dưới 5 key'],
-        ['📈', fmtVnd(s.revenueMonth), 'Doanh thu 30 ngày', `Tuần: ${fmtVnd(s.revenueWeek)}`],
-      ].map(([ico, v, l, d2]) => `
+        ['bank', fmtVnd(s.revenue), 'Tổng doanh thu', `+${fmtVnd(s.revenueToday)} hôm nay`, ''],
+        ['package', fmtNum(s.orders), 'Tổng đơn hàng', `+${s.ordersToday} hôm nay`, ''],
+        ['users', fmtNum(s.users), 'Người dùng', `+${s.usersToday} hôm nay`, ''],
+        ['clock', fmtNum(s.pendingOrders), 'Đơn chờ xử lý',
+          s.pendingOrders > 0 ? 'Cần xử lý' : 'Đã xử lý hết', s.pendingOrders > 0 ? '' : 'dim'],
+        ['alert', fmtNum(s.lowStock), 'Sản phẩm sắp hết', 'Dưới 5 key', 'dim'],
+        ['trend', fmtVnd(s.revenueMonth), 'Doanh thu 30 ngày', `Tuần: ${fmtVnd(s.revenueWeek)}`, ''],
+      ].map(([ico, v, l, d2, tone]) => `
         <div class="stat-card">
-          <div class="ico">${ico}</div>
+          <div class="ico">${icon(ico, { size: 16 })}</div>
           <div class="v">${v}</div>
           <div class="l">${l}</div>
-          <div class="d">${d2}</div>
+          <div class="d${tone ? ' ' + tone : ''}">${d2}</div>
         </div>`).join('')}
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="adm-split">
       <div class="panel">
-        <div class="panel-title">🏆 Top sản phẩm bán chạy</div>
+        <div class="panel-title">${icon('trophy', { size: 15 })} Top sản phẩm bán chạy</div>
         ${d.topProducts.length === 0
-          ? `<div class="empty-state" style="padding:28px"><div class="t">Chưa có dữ liệu</div></div>`
+          ? `<div class="empty-state adm-empty-sm"><div class="t">Chưa có dữ liệu</div></div>`
           : `<div class="bar-chart">
               ${d.topProducts.map((p) => `
                 <div class="bar-row">
-                  <span style="font-weight:700;font-size:12.5px">${esc(p.name)}</span>
-                  <span style="color:var(--text-mute);font-size:12px;font-variant-numeric:tabular-nums">${p.qty} · ${fmtVnd(p.revenue)}</span>
+                  <span class="adm-bar-name">${esc(p.name)}</span>
+                  <span class="adm-bar-meta">${p.qty} · ${fmtVnd(p.revenue)}</span>
                   <div class="bar-track"><div class="bar-fill" style="width:${Math.round((p.revenue / maxRevenue) * 100)}%"></div></div>
                 </div>`).join('')}
             </div>`}
       </div>
 
       <div class="panel">
-        <div class="panel-title">📦 Đơn hàng gần đây</div>
-        <div style="display:flex;flex-direction:column;gap:9px">
+        <div class="panel-title">${icon('receipt', { size: 15 })} Đơn hàng gần đây</div>
+        <div class="adm-recent">
           ${d.recentOrders.map((o) => `
-            <div class="flex justify-between items-center" style="padding:9px 11px;border-radius:10px;background:rgba(255,255,255,.032);border:1px solid var(--border)">
-              <div>
-                <div class="mono" style="font-size:12.5px;font-weight:700;color:#a99cff">${esc(o.code)}</div>
-                <div style="font-size:11.5px;color:var(--text-mute)">${esc(o.email)}</div>
+            <div class="adm-recent-row">
+              <div class="adm-recent-main">
+                <div class="adm-recent-code mono">${esc(o.code)}</div>
+                <div class="adm-recent-mail">${esc(o.email)}</div>
               </div>
-              <div style="text-align:right">
-                <div style="font-size:13px;font-weight:800">${fmtVnd(o.total)}</div>
-                <div style="font-size:11px;color:var(--text-mute)">${esc(o.status)}</div>
+              <div class="adm-recent-side">
+                <div class="adm-recent-amt">${fmtVnd(o.total)}</div>
+                <div class="adm-recent-status">${esc(ORDER_LABEL[o.status] || o.status)}</div>
               </div>
             </div>`).join('')}
         </div>
@@ -137,36 +158,55 @@ async function renderOrders(host) {
     const d = await api('/api/admin/orders' + (statusFilter ? '?status=' + statusFilter : ''));
     host.innerHTML = `
       <div class="panel">
-        <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:12px">
-          <div class="panel-title" style="margin:0">📦 Đơn hàng (${d.orders.length})</div>
-          <select class="select" id="order-status-filter">
-            <option value="">Tất cả trạng thái</option>
-            ${['pending', 'paid', 'delivered', 'cancelled', 'refunded'].map((s) =>
-              `<option value="${s}"${statusFilter === s ? ' selected' : ''}>${s}</option>`).join('')}
-          </select>
+        <div class="adm-panel-head">
+          <div class="panel-title">${icon('package', { size: 15 })} Đơn hàng (${d.orders.length})</div>
+          <div class="adm-toolbar">
+            <label class="sr-only" for="order-status-filter">Lọc theo trạng thái đơn</label>
+            <select class="select" id="order-status-filter">
+              <option value="">Tất cả trạng thái</option>
+              ${['pending', 'paid', 'delivered', 'cancelled', 'refunded'].map((s) =>
+                `<option value="${s}"${statusFilter === s ? ' selected' : ''}>${esc(ORDER_LABEL[s] || s)}</option>`).join('')}
+            </select>
+          </div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Tổng tiền</th><th>Trạng thái</th><th>Thời gian</th><th>Thao tác</th></tr></thead>
+        <div class="table-wrap adm-table-wrap">
+          <table class="adm-table">
+            <thead><tr>
+              <th scope="col">Mã đơn</th>
+              <th scope="col">Khách hàng</th>
+              <th scope="col" class="adm-num">Tổng tiền</th>
+              <th scope="col">Trạng thái</th>
+              <th scope="col">Thời gian</th>
+              <th scope="col">Thao tác</th>
+            </tr></thead>
             <tbody>
               ${d.orders.length === 0
-                ? `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-mute)">Không có đơn hàng</td></tr>`
-                : d.orders.map((o) => `
-                  <tr>
-                    <td><span class="mono" style="color:#a99cff;font-weight:700">${esc(o.code)}</span></td>
-                    <td><div style="font-size:13px">${esc(o.customer || '—')}</div><div style="font-size:11.5px;color:var(--text-mute)">${esc(o.email)}</div></td>
-                    <td><strong>${fmtVnd(o.total)}</strong></td>
-                    <td><span class="pill ${o.status === 'delivered' ? 'pill-green' : o.status === 'pending' ? 'pill-yellow' : o.status === 'refunded' ? 'pill-red' : 'pill-blue'}">${esc(o.status)}</span></td>
-                    <td style="font-size:12px;color:var(--text-mute)">${fmtDate(o.createdAt)}</td>
+                ? `<tr><td colspan="6" class="adm-empty">Không có đơn hàng</td></tr>`
+                : d.orders.map((o) => {
+                  const cls = o.status === 'delivered' ? 'pill-green'
+                    : o.status === 'pending' ? 'pill-yellow'
+                      : o.status === 'refunded' ? 'pill-red' : 'pill-blue';
+                  return `<tr>
+                    <td><span class="mono adm-code-inline">${esc(o.code)}</span></td>
                     <td>
-                      <div class="flex gap-1">
-                        ${o.status === 'paid' ? `<button class="btn btn-ghost btn-sm" data-deliver="${esc(o.id)}">Giao</button>` : ''}
+                      <div class="adm-cell-main">${esc(o.customer || '—')}</div>
+                      <div class="adm-cell-sub">${esc(o.email)}</div>
+                    </td>
+                    <td class="adm-num"><strong>${fmtVnd(o.total)}</strong></td>
+                    <td><span class="pill ${cls}">${esc(ORDER_LABEL[o.status] || o.status)}</span></td>
+                    <td class="adm-cell-sub">${fmtDate(o.createdAt)}</td>
+                    <td>
+                      <div class="adm-actions">
+                        ${o.status === 'paid'
+                          ? `<button type="button" class="btn btn-ghost btn-sm" data-deliver="${esc(o.id)}">${icon('check', { size: 13 })} Giao</button>`
+                          : ''}
                         ${['paid', 'delivered'].includes(o.status)
-                          ? `<button class="btn btn-danger btn-sm" data-refund="${esc(o.id)}">Hoàn</button>`
+                          ? `<button type="button" class="btn btn-danger btn-sm" data-refund="${esc(o.id)}">${icon('undo', { size: 13 })} Hoàn</button>`
                           : ''}
                       </div>
                     </td>
-                  </tr>`).join('')}
+                  </tr>`;
+                }).join('')}
             </tbody>
           </table>
         </div>
@@ -203,11 +243,11 @@ async function renderOrders(host) {
 
 /* ---------------- Topups (nạp tiền) ---------------- */
 const TOPUP_STATUS = {
-  pending: ['pill-yellow', '⏳ Chờ'],
-  paid: ['pill-green', '✅ Đã nhận'],
-  partial: ['pill-blue', '◐ Một phần'],
-  expired: ['pill-gray', '✕ Hết hạn'],
-  cancelled: ['pill-red', '⊘ Đã huỷ'],
+  pending: ['pill-yellow', 'Chờ duyệt', 'clock'],
+  paid: ['pill-green', 'Đã nhận', 'check'],
+  partial: ['pill-blue', 'Một phần', 'progress'],
+  expired: ['pill-gray', 'Hết hạn', 'x'],
+  cancelled: ['pill-red', 'Đã huỷ', 'ban'],
 };
 
 async function renderTopups(host) {
@@ -219,13 +259,13 @@ async function renderTopups(host) {
     host.innerHTML = `
       <div class="stat-grid">
         ${[
-          ['📊', fmtNum(s.total || 0), 'Tổng lệnh nạp'],
-          ['⏳', fmtNum(s.pending || 0), 'Chờ duyệt'],
-          ['✅', fmtNum(s.paid || 0), 'Đã nhận'],
-          ['💰', fmtVnd(s.totalAmount || 0), 'Tổng đã nạp'],
+          ['chart', fmtNum(s.total || 0), 'Tổng lệnh nạp'],
+          ['clock', fmtNum(s.pending || 0), 'Chờ duyệt'],
+          ['check', fmtNum(s.paid || 0), 'Đã nhận'],
+          ['coins', fmtVnd(s.totalAmount || 0), 'Tổng đã nạp'],
         ].map(([ico, v, l]) => `
           <div class="stat-card">
-            <div class="ico">${ico}</div>
+            <div class="ico">${icon(ico, { size: 16 })}</div>
             <div class="v">${v}</div>
             <div class="l">${l}</div>
           </div>`).join('')}
@@ -233,47 +273,59 @@ async function renderTopups(host) {
 
       ${s.pending > 0 ? `
       <div class="alert alert-warn">
-        <span class="ico">⚠️</span>
+        <span class="ico">${icon('alert', { size: 15 })}</span>
         <span>Có <strong>${s.pending}</strong> lệnh nạp đang chờ.
         Mở app ngân hàng, đối chiếu nội dung <code class="mono">NAPxxxxx</code>,
         rồi bấm <strong>Duyệt</strong>.</span>
       </div>` : ''}
 
       <div class="panel">
-        <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:10px">
-          <div class="panel-title" style="margin:0">💰 Lệnh nạp tiền (${d.topups.length})</div>
-          <select class="select" id="tp-filter">
-            <option value="">Tất cả</option>
-            ${['pending', 'paid', 'partial', 'expired', 'cancelled'].map((k) =>
-              `<option value="${k}"${filter === k ? ' selected' : ''}>${TOPUP_STATUS[k][1]}</option>`).join('')}
-          </select>
+        <div class="adm-panel-head">
+          <div class="panel-title">${icon('coins', { size: 15 })} Lệnh nạp tiền (${d.topups.length})</div>
+          <div class="adm-toolbar">
+            <label class="sr-only" for="tp-filter">Lọc theo trạng thái lệnh nạp</label>
+            <select class="select" id="tp-filter">
+              <option value="">Tất cả</option>
+              ${['pending', 'paid', 'partial', 'expired', 'cancelled'].map((k) =>
+                `<option value="${k}"${filter === k ? ' selected' : ''}>${esc(TOPUP_STATUS[k][1])}</option>`).join('')}
+            </select>
+          </div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Nội dung CK</th><th>Số tiền</th><th>Khách</th><th>Trạng thái</th><th>Tạo</th><th>Thao tác</th></tr></thead>
+        <div class="table-wrap adm-table-wrap">
+          <table class="adm-table">
+            <thead><tr>
+              <th scope="col">Nội dung CK</th>
+              <th scope="col" class="adm-num">Số tiền</th>
+              <th scope="col">Khách</th>
+              <th scope="col">Trạng thái</th>
+              <th scope="col">Tạo</th>
+              <th scope="col">Thao tác</th>
+            </tr></thead>
             <tbody>
               ${d.topups.length === 0
-                ? `<tr><td colspan="6" style="text-align:center;padding:28px;color:var(--text-mute)">Không có lệnh nạp</td></tr>`
+                ? `<tr><td colspan="6" class="adm-empty">Không có lệnh nạp</td></tr>`
                 : d.topups.map((t) => {
-                  const [cls, label] = TOPUP_STATUS[t.status] || ['pill-gray', t.status];
+                  const [cls, label, icoName] = TOPUP_STATUS[t.status] || ['pill-gray', t.status, 'help'];
                   return `<tr>
                     <td>
-                      <span class="mono" style="font-weight:800;color:#fbbf24;cursor:pointer"
-                        data-copy-memo="${esc(t.memo)}" title="Bấm để copy">${esc(t.memo)}</span>
+                      <button type="button" class="adm-copy mono" data-copy-memo="${esc(t.memo)}"
+                        title="Bấm để sao chép nội dung chuyển khoản">${esc(t.memo)}</button>
                     </td>
-                    <td><strong>${fmtVnd(t.amount)}</strong></td>
+                    <td class="adm-num"><strong>${fmtVnd(t.amount)}</strong></td>
                     <td>
-                      <div style="font-size:12.5px">${esc(t.customer || '—')}</div>
-                      <div style="font-size:11px;color:var(--text-mute)">${esc(t.email || '')}</div>
+                      <div class="adm-cell-main">${esc(t.customer || '—')}</div>
+                      <div class="adm-cell-sub">${esc(t.email || '')}</div>
                     </td>
-                    <td><span class="pill ${cls}">${label}</span></td>
-                    <td style="font-size:11.5px;color:var(--text-mute)">${fmtDate(t.createdAt)}</td>
+                    <td><span class="pill ${cls}">${icon(icoName, { size: 11 })} ${esc(label)}</span></td>
+                    <td class="adm-cell-sub">${fmtDate(t.createdAt)}</td>
                     <td>
-                      <div class="flex gap-1" style="flex-wrap:wrap">
+                      <div class="adm-actions">
                         ${t.status !== 'paid'
-                          ? `<button class="btn btn-primary btn-sm" data-approve="${esc(t.id)}" data-amt="${t.amount}">✓ Duyệt</button>` : ''}
+                          ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${esc(t.id)}" data-amt="${esc(t.amount)}">${icon('check', { size: 13 })} Duyệt</button>`
+                          : ''}
                         ${['pending', 'expired'].includes(t.status)
-                          ? `<button class="btn btn-ghost btn-sm" data-reject="${esc(t.id)}">Huỷ</button>` : ''}
+                          ? `<button type="button" class="btn btn-ghost btn-sm" data-reject="${esc(t.id)}">Huỷ</button>`
+                          : ''}
                       </div>
                     </td>
                   </tr>`;
@@ -306,17 +358,17 @@ async function renderTopups(host) {
             giao dịch với đúng nội dung này.
           </div>
           <div class="field">
-            <label class="label">Số tiền cộng vào ví (₫)</label>
+            <label class="label" for="ap-amt">Số tiền cộng vào ví (₫)</label>
             <input class="input" id="ap-amt" type="number" value="${b.dataset.amt}">
             <div class="form-hint">Sửa nếu khách chuyển số khác.</div>
           </div>
           <div class="field">
-            <label class="label">Ghi chú</label>
+            <label class="label" for="ap-note">Ghi chú</label>
             <input class="input" id="ap-note" placeholder="VD: MB 1234 500k luc 18:30">
           </div>
-          <div class="flex gap-1" style="justify-content:flex-end">
-            <button class="btn btn-ghost" data-cancel>Huỷ</button>
-            <button class="btn btn-primary" data-ok>✓ Xác nhận đã nhận tiền</button>
+          <div class="adm-actions-end">
+            <button type="button" class="btn btn-ghost" data-cancel>Huỷ</button>
+            <button type="button" class="btn btn-primary" data-ok>${icon('check', { size: 14 })} Xác nhận đã nhận tiền</button>
           </div>
         `, {
           onMount(overlay, close) {
@@ -359,29 +411,41 @@ async function renderProducts(host) {
   const d = await api('/api/admin/products');
   host.innerHTML = `
     <div class="panel">
-      <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:12px">
-        <div class="panel-title" style="margin:0">🛍️ Sản phẩm (${d.products.length})</div>
-        <button class="btn btn-primary btn-sm" id="add-product">+ Thêm sản phẩm</button>
+      <div class="adm-panel-head">
+        <div class="panel-title">${icon('bag', { size: 15 })} Sản phẩm (${d.products.length})</div>
+        <button type="button" class="btn btn-primary btn-sm" id="add-product">${icon('plus', { size: 14 })} Thêm sản phẩm</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Đã bán</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+      <div class="table-wrap adm-table-wrap">
+        <table class="adm-table">
+          <thead><tr>
+            <th scope="col">Sản phẩm</th>
+            <th scope="col" class="adm-num">Giá</th>
+            <th scope="col" class="adm-num">Tồn kho</th>
+            <th scope="col" class="adm-num">Đã bán</th>
+            <th scope="col">Trạng thái</th>
+            <th scope="col">Thao tác</th>
+          </tr></thead>
           <tbody>
-            ${d.products.map((p) => `
+            ${d.products.length === 0
+              ? `<tr><td colspan="6" class="adm-empty">Chưa có sản phẩm</td></tr>`
+              : d.products.map((p) => `
               <tr>
                 <td>
-                  <div style="font-size:13px;font-weight:700">${esc(p.name)}</div>
-                  <div class="mono" style="font-size:11px;color:var(--text-mute)">${esc(p.slug)}</div>
+                  <div class="adm-cell-strong">${esc(p.name)}</div>
+                  <div class="mono adm-cell-sub">${esc(p.slug)}</div>
                 </td>
-                <td><strong>${fmtVnd(p.price)}</strong>${p.comparePrice ? `<div style="font-size:11px;color:var(--text-mute);text-decoration:line-through">${fmtVnd(p.comparePrice)}</div>` : ''}</td>
-                <td><span class="pill ${p.stock > 5 ? 'pill-green' : p.stock > 0 ? 'pill-yellow' : 'pill-red'}">${p.stock}</span></td>
-                <td>${fmtNum(p.sold)}</td>
+                <td class="adm-num">
+                  <strong>${fmtVnd(p.price)}</strong>
+                  ${p.comparePrice ? `<div class="adm-price-old">${fmtVnd(p.comparePrice)}</div>` : ''}
+                </td>
+                <td class="adm-num"><span class="pill ${p.stock > 5 ? 'pill-green' : p.stock > 0 ? 'pill-yellow' : 'pill-red'}">${p.stock}</span></td>
+                <td class="adm-num">${fmtNum(p.sold)}</td>
                 <td><span class="pill ${p.active ? 'pill-green' : 'pill-gray'}">${p.active ? 'Đang bán' : 'Ẩn'}</span></td>
                 <td>
-                  <div class="flex gap-1">
-                    <button class="btn btn-ghost btn-sm" data-keys="${esc(p.id)}">🔑 Key</button>
-                    <button class="btn btn-ghost btn-sm" data-edit="${esc(p.id)}">Sửa</button>
-                    <button class="btn btn-danger btn-sm" data-del="${esc(p.id)}">Ẩn</button>
+                  <div class="adm-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" data-keys="${esc(p.id)}">${icon('key', { size: 13 })} Key</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-edit="${esc(p.id)}">${icon('edit', { size: 13 })} Sửa</button>
+                    <button type="button" class="btn btn-danger btn-sm" data-del="${esc(p.id)}">Ẩn</button>
                   </div>
                 </td>
               </tr>`).join('')}
@@ -420,54 +484,54 @@ function openProductEditor(host, p) {
   openModal(`
     <div class="modal-title">${isEdit ? 'Sửa' : 'Thêm'} sản phẩm</div>
     <div class="modal-sub">Thông tin hiển thị trên trang bán hàng</div>
-    <div class="field"><label class="label">Tên sản phẩm <span class="req">*</span></label>
+    <div class="field"><label class="label" for="ed-name">Tên sản phẩm <span class="req">*</span></label>
       <input class="input" id="ed-name" value="${esc(p ? p.name : '')}"></div>
-    <div class="field"><label class="label">Danh mục</label>
-      <select class="select" id="ed-cat" style="width:100%">${cats}</select></div>
-    <div class="field"><label class="label">Mô tả ngắn</label>
+    <div class="field"><label class="label" for="ed-cat">Danh mục</label>
+      <select class="select adm-select-full" id="ed-cat">${cats}</select></div>
+    <div class="field"><label class="label" for="ed-short">Mô tả ngắn</label>
       <input class="input" id="ed-short" value="${esc(p ? p.shortDesc || '' : '')}"></div>
-    <div class="field"><label class="label">Mô tả chi tiết</label>
+    <div class="field"><label class="label" for="ed-desc">Mô tả chi tiết</label>
       <textarea class="textarea" id="ed-desc">${esc(p ? p.description || '' : '')}</textarea></div>
-    <div class="field"><label class="label">URL hình ảnh</label>
+    <div class="field"><label class="label" for="ed-img">URL hình ảnh</label>
       <input class="input" id="ed-img" value="${esc(p ? p.imageUrl || '' : '')}" placeholder="https://..."></div>
-    <div class="flex gap-2">
-      <div class="field" style="flex:1"><label class="label">Giá bán (₫) <span class="req">*</span></label>
+    <div class="adm-form-row">
+      <div class="field"><label class="label" for="ed-price">Giá bán (₫) <span class="req">*</span></label>
         <input class="input" id="ed-price" type="number" value="${p ? p.price : 0}"></div>
-      <div class="field" style="flex:1"><label class="label">Giá gốc (₫)</label>
+      <div class="field"><label class="label" for="ed-cprice">Giá gốc (₫)</label>
         <input class="input" id="ed-cprice" type="number" value="${p && p.comparePrice ? p.comparePrice : ''}"></div>
     </div>
-    <div class="flex gap-2">
-      <div class="field" style="flex:1"><label class="label">Bảo hành (ngày)</label>
+    <div class="adm-form-row">
+      <div class="field"><label class="label" for="ed-warranty">Bảo hành (ngày)</label>
         <input class="input" id="ed-warranty" type="number" value="${p ? p.warrantyDays : 0}"></div>
-      <div class="field" style="flex:1"><label class="label">Thời hạn</label>
+      <div class="field"><label class="label" for="ed-duration">Thời hạn</label>
         <input class="input" id="ed-duration" value="${esc(p ? p.durationLabel || '' : '')}" placeholder="1 năm"></div>
     </div>
-    <div class="field"><label class="label">Nhãn (HOT/NEW/SALE)</label>
+    <div class="field"><label class="label" for="ed-badge">Nhãn (HOT/NEW/SALE)</label>
       <input class="input" id="ed-badge" value="${esc(p && p.badge ? p.badge : '')}"></div>
-    <div class="field"><label class="label">Tính năng (mỗi dòng 1 mục)</label>
+    <div class="field"><label class="label" for="ed-features">Tính năng (mỗi dòng 1 mục)</label>
       <textarea class="textarea" id="ed-features">${esc(p && p.features ? p.features.join('\n') : '')}</textarea></div>
-    <div class="flex gap-2 mb-3">
-      <div class="field" style="flex:1"><label class="label">Kiểu giao hàng</label>
-        <select class="select" id="ed-delivery" style="width:100%">
-          ${[['key','Key có sẵn (kho)'],['account','Tài khoản (kho)'],['license','License sinh tự động'],['manual','Giao thủ công']]
-            .map(([v,t]) => `<option value="${v}"${(p ? p.deliveryType : 'key') === v ? ' selected' : ''}>${t}</option>`).join('')}
+    <div class="adm-form-row">
+      <div class="field"><label class="label" for="ed-delivery">Kiểu giao hàng</label>
+        <select class="select adm-select-full" id="ed-delivery">
+          ${[['key', 'Key có sẵn (kho)'], ['account', 'Tài khoản (kho)'], ['license', 'License sinh tự động'], ['manual', 'Giao thủ công']]
+            .map(([v, t]) => `<option value="${v}"${(p ? p.deliveryType : 'key') === v ? ' selected' : ''}>${t}</option>`).join('')}
         </select></div>
-      <div class="field" style="flex:1"><label class="label">Tiền tố license</label>
+      <div class="field"><label class="label" for="ed-licprefix">Tiền tố license</label>
         <input class="input" id="ed-licprefix" value="${esc(p && p.licensePrefix ? p.licensePrefix : 'AOE1')}" placeholder="AOE1"></div>
-      <div class="field" style="flex:1"><label class="label">Số ngày (0=vĩnh viễn)</label>
+      <div class="field"><label class="label" for="ed-licdays">Số ngày (0 = vĩnh viễn)</label>
         <input class="input" id="ed-licdays" type="number" value="${p && p.licenseDays !== undefined ? p.licenseDays : 30}"></div>
     </div>
-    <div class="flex gap-2 mb-3">
-      <label class="flex items-center gap-1" style="font-size:13px;cursor:pointer">
+    <div class="adm-check-row">
+      <label class="adm-check" for="ed-active">
         <input type="checkbox" id="ed-active" ${!p || p.active ? 'checked' : ''}> Đang bán
       </label>
-      <label class="flex items-center gap-1" style="font-size:13px;cursor:pointer">
+      <label class="adm-check" for="ed-featured">
         <input type="checkbox" id="ed-featured" ${p && p.featured ? 'checked' : ''}> Nổi bật
       </label>
     </div>
-    <div class="flex gap-1" style="justify-content:flex-end">
-      <button class="btn btn-ghost" data-cancel>Huỷ</button>
-      <button class="btn btn-primary" data-save>${isEdit ? 'Lưu' : 'Tạo'}</button>
+    <div class="adm-actions-end">
+      <button type="button" class="btn btn-ghost" data-cancel>Huỷ</button>
+      <button type="button" class="btn btn-primary" data-save>${isEdit ? 'Lưu' : 'Tạo'}</button>
     </div>
   `, {
     onMount(overlay, close) {
@@ -511,10 +575,10 @@ async function renderKeys(host, query) {
 
   host.innerHTML = `
     <div class="panel">
-      <div class="panel-title">🔑 Quản lý kho key</div>
+      <div class="panel-title">${icon('key', { size: 15 })} Quản lý kho key</div>
       <div class="field">
-        <label class="label">Chọn sản phẩm</label>
-        <select class="select" id="key-product" style="width:100%">
+        <label class="label" for="key-product">Chọn sản phẩm</label>
+        <select class="select adm-select-full" id="key-product">
           <option value="">— Chọn sản phẩm —</option>
           ${d.products.map((p) => `<option value="${esc(p.id)}"${productId === p.id ? ' selected' : ''}>${esc(p.name)} (${p.stock} key)</option>`).join('')}
         </select>
@@ -534,32 +598,42 @@ async function loadKeys(host, productId) {
     const d = await api(`/api/admin/products/${productId}/keys`);
     listHost.innerHTML = `
       <div class="alert alert-info">
-        <span class="ico">📊</span>
+        <span class="ico">${icon('chart', { size: 15 })}</span>
         <span>Tổng <strong>${d.keys.length}</strong> key ·
           Còn hàng: <strong class="text-green">${d.keys.filter((k) => k.status === 'available').length}</strong> ·
           Đã bán: <strong>${d.keys.filter((k) => k.status === 'sold').length}</strong></span>
       </div>
-      <div class="panel" style="background:rgba(255,255,255,.022)">
-        <div class="panel-title" style="font-size:14px">➕ Thêm key hàng loạt</div>
-        <textarea class="textarea" id="new-keys" placeholder="Mỗi dòng 1 key...&#10;XXXXX-XXXXX-XXXXX&#10;YYYYY-YYYYY-YYYYY" style="min-height:110px"></textarea>
-        <div class="flex gap-1 mt-1">
-          <input class="input" id="key-note" placeholder="Ghi chú (loại key, lô...)" style="flex:1">
-          <button class="btn btn-primary" id="btn-add-keys">Thêm key</button>
+      <div class="panel adm-panel-soft">
+        <div class="panel-title adm-panel-title-sm">${icon('plus', { size: 14 })} Thêm key hàng loạt</div>
+        <label class="sr-only" for="new-keys">Danh sách key mới, mỗi dòng một key</label>
+        <textarea class="textarea adm-textarea-keys" id="new-keys"
+          placeholder="Mỗi dòng 1 key...&#10;XXXXX-XXXXX-XXXXX&#10;YYYYY-YYYYY-YYYYY"></textarea>
+        <div class="adm-inline-row">
+          <input class="input" id="key-note" placeholder="Ghi chú (loại key, lô...)" aria-label="Ghi chú cho lô key">
+          <button type="button" class="btn btn-primary" id="btn-add-keys">Thêm key</button>
         </div>
       </div>
-      <div class="table-wrap mt-2">
-        <table>
-          <thead><tr><th>Key (đã che)</th><th>Ghi chú</th><th>Trạng thái</th><th>Tạo</th><th></th></tr></thead>
+      <div class="table-wrap adm-table-wrap mt-2">
+        <table class="adm-table">
+          <thead><tr>
+            <th scope="col">Key (đã che)</th>
+            <th scope="col">Ghi chú</th>
+            <th scope="col">Trạng thái</th>
+            <th scope="col">Tạo</th>
+            <th scope="col">Thao tác</th>
+          </tr></thead>
           <tbody>
             ${d.keys.length === 0
-              ? `<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--text-mute)">Chưa có key nào</td></tr>`
+              ? `<tr><td colspan="5" class="adm-empty">Chưa có key nào</td></tr>`
               : d.keys.map((k) => `
                 <tr>
-                  <td><span class="mono" style="font-size:12px">${esc(k.masked)}</span></td>
-                  <td style="font-size:12px;color:var(--text-mute)">${esc(k.note || '—')}</td>
+                  <td><span class="mono adm-mono-sm">${esc(k.masked)}</span></td>
+                  <td class="adm-cell-sub">${esc(k.note || '—')}</td>
                   <td><span class="pill ${k.status === 'available' ? 'pill-green' : k.status === 'sold' ? 'pill-blue' : 'pill-gray'}">${esc(k.status)}</span></td>
-                  <td style="font-size:11.5px;color:var(--text-mute)">${fmtDate(k.created_at)}</td>
-                  <td>${k.status === 'available' ? `<button class="btn btn-danger btn-sm" data-delkey="${esc(k.id)}">Xoá</button>` : ''}</td>
+                  <td class="adm-cell-sub">${fmtDate(k.created_at)}</td>
+                  <td>${k.status === 'available'
+                    ? `<button type="button" class="btn btn-danger btn-sm" data-delkey="${esc(k.id)}">Xoá</button>`
+                    : ''}</td>
                 </tr>`).join('')}
           </tbody>
         </table>
@@ -590,7 +664,8 @@ async function loadKeys(host, productId) {
       };
     });
   } catch (e) {
-    listHost.innerHTML = `<div class="empty-state"><div class="t">${esc(e.message)}</div></div>`;
+    listHost.innerHTML = `<div class="empty-state"><div class="ico">${icon('alert', { size: 26 })}</div>
+      <div class="t">${esc(e.message)}</div></div>`;
   }
 }
 
@@ -598,11 +673,11 @@ async function loadKeys(host, productId) {
 const LIC_STATUS = {
   active: ['pill-green', 'Hoạt động'],
   forever: ['pill-green', 'Vĩnh viễn'],
-  expiring: ['pill-yellow', 'Sắp hết'],
+  expiring: ['pill-yellow', 'Sắp hết hạn'],
   unbound: ['pill-blue', 'Chưa kích hoạt'],
   expired: ['pill-red', 'Hết hạn'],
   revoked: ['pill-red', 'Thu hồi'],
-  unknown: ['pill-gray', '?'],
+  unknown: ['pill-gray', 'Không rõ'],
 };
 
 async function renderLicenses(host) {
@@ -610,65 +685,88 @@ async function renderLicenses(host) {
   const load = async () => {
     const d = await api('/api/admin/licenses' + (q ? '?q=' + encodeURIComponent(q) : ''));
     if (!d.available) {
-      host.innerHTML = `<div class="alert alert-warn"><span class="ico">⚠️</span>
-        <span>Chưa cấu hình binding <code>LICENSE_DB</code>. Thêm D1 <code>xa_license</code> vào wrangler.toml rồi deploy lại.</span></div>`;
+      host.innerHTML = `<div class="alert alert-warn"><span class="ico">${icon('alert', { size: 15 })}</span>
+        <span>Chưa cấu hình binding <code class="mono">LICENSE_DB</code>. Thêm D1 <code>xa_license</code> vào wrangler.toml rồi deploy lại.</span></div>`;
       return;
     }
     const s = d.stats || {};
     host.innerHTML = `
       <div class="stat-grid">
         ${[
-          ['🎫', fmtNum(s.total || 0), 'Tổng license'],
-          ['✅', fmtNum(s.active || 0), 'Đang hoạt động'],
-          ['🔓', fmtNum(s.unbound || 0), 'Chưa kích hoạt'],
-          ['♾️', fmtNum(s.forever || 0), 'Vĩnh viễn'],
-          ['🚫', fmtNum(s.revoked || 0), 'Đã thu hồi'],
-          ['⏳', fmtNum(s.expiring7d || 0), 'Hết hạn 7 ngày'],
-        ].map(([ico, v, l]) => `<div class="stat-card"><div class="ico">${ico}</div><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')}
+          ['ticket', fmtNum(s.total || 0), 'Tổng license'],
+          ['check', fmtNum(s.active || 0), 'Đang hoạt động'],
+          ['unlock', fmtNum(s.unbound || 0), 'Chưa kích hoạt'],
+          ['infinity', fmtNum(s.forever || 0), 'Vĩnh viễn'],
+          ['ban', fmtNum(s.revoked || 0), 'Đã thu hồi'],
+          ['clock', fmtNum(s.expiring7d || 0), 'Hết hạn 7 ngày'],
+        ].map(([ico, v, l]) => `
+          <div class="stat-card">
+            <div class="ico">${icon(ico, { size: 16 })}</div>
+            <div class="v">${v}</div>
+            <div class="l">${l}</div>
+          </div>`).join('')}
       </div>
 
       <div class="panel mb-2">
-        <div class="panel-title" style="font-size:14px">➕ Tạo license thủ công</div>
-        <div class="flex gap-1" style="flex-wrap:wrap;align-items:flex-end">
-          <div><label class="label">Số lượng</label><input class="input" id="lc-count" type="number" value="1" style="width:90px"></div>
-          <div><label class="label">Số ngày</label><input class="input" id="lc-days" type="number" value="30" style="width:100px"></div>
-          <div><label class="label">Tiền tố</label><input class="input" id="lc-prefix" value="AOE1" style="width:100px"></div>
-          <div style="flex:1;min-width:160px"><label class="label">Ghi chú</label><input class="input" id="lc-note" placeholder="Tặng khách, bù lỗi..."></div>
-          <button class="btn btn-primary" id="lc-create">Tạo</button>
+        <div class="panel-title adm-panel-title-sm">${icon('plus', { size: 14 })} Tạo license thủ công</div>
+        <div class="adm-form-row">
+          <div class="field adm-field-narrow"><label class="label" for="lc-count">Số lượng</label>
+            <input class="input" id="lc-count" type="number" value="1"></div>
+          <div class="field adm-field-narrow"><label class="label" for="lc-days">Số ngày</label>
+            <input class="input" id="lc-days" type="number" value="30"></div>
+          <div class="field adm-field-narrow"><label class="label" for="lc-prefix">Tiền tố</label>
+            <input class="input" id="lc-prefix" value="AOE1"></div>
+          <div class="field adm-field-grow"><label class="label" for="lc-note">Ghi chú</label>
+            <input class="input" id="lc-note" placeholder="Tặng khách, bù lỗi..."></div>
+          <div class="field adm-field-action">
+            <button type="button" class="btn btn-primary" id="lc-create">Tạo</button>
+          </div>
         </div>
-        <pre id="lc-out" class="mono" style="margin:12px 0 0;color:#6ee7a0;white-space:pre-wrap;font-size:12.5px"></pre>
+        <pre id="lc-out" class="mono adm-pre"></pre>
       </div>
 
       <div class="panel">
-        <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:10px">
-          <div class="panel-title" style="margin:0">🎫 Danh sách license (${d.licenses.length})</div>
-          <div class="search-mini" style="width:240px">
-            <span style="color:var(--text-mute)">🔍</span>
+        <div class="adm-panel-head">
+          <div class="panel-title">${icon('ticket', { size: 15 })} Danh sách license (${d.licenses.length})</div>
+          <div class="search-mini adm-search">
+            ${icon('search', { size: 14 })}
+            <label class="sr-only" for="lc-q">Tìm license</label>
             <input id="lc-q" placeholder="Tìm key / ghi chú / HWID" value="${esc(q)}">
           </div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th><th>Máy</th><th>Ghi chú</th><th>Thao tác</th></tr></thead>
+        <div class="table-wrap adm-table-wrap">
+          <table class="adm-table">
+            <thead><tr>
+              <th scope="col">Key</th>
+              <th scope="col">Trạng thái</th>
+              <th scope="col">Hết hạn</th>
+              <th scope="col">Máy</th>
+              <th scope="col">Ghi chú</th>
+              <th scope="col">Thao tác</th>
+            </tr></thead>
             <tbody>
               ${d.licenses.length === 0
-                ? `<tr><td colspan="6" style="text-align:center;padding:28px;color:var(--text-mute)">Chưa có license</td></tr>`
+                ? `<tr><td colspan="6" class="adm-empty">Chưa có license</td></tr>`
                 : d.licenses.map((l) => {
                   const [cls, label] = LIC_STATUS[l.status] || LIC_STATUS.unknown;
                   return `<tr>
-                    <td><span class="mono" style="font-size:12px;color:#a99cff">${esc(l.key)}</span></td>
-                    <td><span class="pill ${cls}">${label}</span></td>
-                    <td style="font-size:11.5px;color:var(--text-mute)">${l.forever ? 'Vĩnh viễn' : l.expiresAt ? fmtDate(l.expiresAt * 1000) : '—'}</td>
-                    <td class="mono" style="font-size:11px;color:var(--text-mute)">${l.bound ? esc(l.hwidMasked) : '—'}</td>
-                    <td style="font-size:11.5px;color:var(--text-mute);max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(l.note || '')}</td>
+                    <td><span class="mono adm-mono-key">${esc(l.key)}</span></td>
+                    <td><span class="pill ${cls}">${esc(label)}</span></td>
+                    <td class="adm-cell-sub">${l.forever ? 'Vĩnh viễn' : l.expiresAt ? fmtDate(l.expiresAt * 1000) : '—'}</td>
+                    <td class="mono adm-mono-sm">${l.bound ? esc(l.hwidMasked) : '—'}</td>
+                    <td class="adm-note-cell">${esc(l.note || '')}</td>
                     <td>
-                      <div class="flex gap-1" style="flex-wrap:wrap">
-                        <button class="btn btn-ghost btn-sm" data-act="reset-hwid" data-key="${esc(l.key)}">Reset máy</button>
-                        ${l.rebinds >= l.maxRebind ? `<button class="btn btn-ghost btn-sm" data-act="reset-rebinds" data-key="${esc(l.key)}">Cấp lại lượt đổi</button>` : ''}
-                        <button class="btn btn-ghost btn-sm" data-act="extend" data-key="${esc(l.key)}">+30d</button>
-                        <button class="btn ${l.status === 'revoked' ? 'btn-ghost' : 'btn-danger'} btn-sm" data-act="${l.status === 'revoked' ? 'unrevoke' : 'revoke'}" data-key="${esc(l.key)}">${l.status === 'revoked' ? 'Mở' : 'Thu hồi'}</button>
+                      <div class="adm-actions">
+                        <button type="button" class="btn btn-ghost btn-sm" data-act="reset-hwid" data-key="${esc(l.key)}">Reset máy</button>
+                        ${l.rebinds >= l.maxRebind
+                          ? `<button type="button" class="btn btn-ghost btn-sm" data-act="reset-rebinds" data-key="${esc(l.key)}">Cấp lại lượt đổi</button>`
+                          : ''}
+                        <button type="button" class="btn btn-ghost btn-sm" data-act="extend" data-key="${esc(l.key)}">+30d</button>
+                        <button type="button" class="btn ${l.status === 'revoked' ? 'btn-ghost' : 'btn-danger'} btn-sm" data-act="${l.status === 'revoked' ? 'unrevoke' : 'revoke'}" data-key="${esc(l.key)}">${l.status === 'revoked' ? 'Mở' : 'Thu hồi'}</button>
                       </div>
-                      ${l.resetPending ? `<div style="font-size:10.5px;color:#fbbf24;margin-top:5px">⏳ Đang chờ khách đổi máy</div>` : ''}
+                      ${l.resetPending
+                        ? `<div class="adm-pending-note">${icon('clock', { size: 11 })} Đang chờ khách đổi máy</div>`
+                        : ''}
                     </td>
                   </tr>`;
                 }).join('')}
@@ -736,74 +834,81 @@ async function renderTrial(host) {
     host.innerHTML = `
       <div class="stat-grid">
         ${[
-          ['👥', fmtNum(totalAccounts), 'Tài khoản đã dùng thử'],
-          [`⏱️`, fmtNum(used1h), `Lượt 1 giờ đã dùng`],
-          [`📅`, fmtNum(used3d), `Lượt 3 ngày đã dùng`],
-          [`💰`, `${quota1h} + ${quota3d}`, `Lượt/tài khoản`],
+          ['users', fmtNum(totalAccounts), 'Tài khoản đã dùng thử'],
+          ['timer', fmtNum(used1h), 'Lượt 1 giờ đã dùng'],
+          ['calendar', fmtNum(used3d), 'Lượt 3 ngày đã dùng'],
+          ['coins', `${quota1h} + ${quota3d}`, 'Lượt/tài khoản'],
         ].map(([ico, v, l]) => `
           <div class="stat-card">
-            <div class="ico">${ico}</div>
+            <div class="ico">${icon(ico, { size: 16 })}</div>
             <div class="v">${v}</div>
             <div class="l">${l}</div>
           </div>`).join('')}
       </div>
 
       <div class="panel">
-        <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:10px">
-          <div class="panel-title" style="margin:0">🎁 Dùng thử (${accounts.length})</div>
-          <div class="flex gap-1">
-            <input class="input" id="tq-search" placeholder="Tìm tài khoản..." style="width:200px"
+        <div class="adm-panel-head">
+          <div class="panel-title">${icon('gift', { size: 15 })} Dùng thử (${accounts.length})</div>
+          <div class="adm-toolbar">
+            <label class="sr-only" for="tq-search">Tìm tài khoản dùng thử</label>
+            <input class="input adm-input-search" id="tq-search" placeholder="Tìm tài khoản..."
               value="${esc(filter)}">
-            <button class="btn btn-ghost btn-sm" id="tq-reload">↻</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="tq-reload"
+              aria-label="Tải lại danh sách" title="Tải lại">${icon('refresh', { size: 14 })}</button>
           </div>
         </div>
 
         ${accounts.length === 0 ? `
-          <div style="text-align:center;padding:36px;color:var(--text-mute)">
-            Chưa có ai dùng thử
+          <div class="empty-state adm-empty-sm">
+            <div class="ico">${icon('inbox', { size: 26 })}</div>
+            <div class="t">Chưa có ai dùng thử</div>
           </div>` : `
-        <div class="table-wrap">
-          <table>
+        <div class="table-wrap adm-table-wrap">
+          <table class="adm-table">
             <thead>
               <tr>
-                <th>Tài khoản</th>
-                <th>⏱️ 1 giờ</th>
-                <th>📅 3 ngày</th>
-                <th>Tổng lượt</th>
-                <th>Thao tác</th>
+                <th scope="col">Tài khoản</th>
+                <th scope="col">${icon('timer', { size: 12 })} 1 giờ</th>
+                <th scope="col">${icon('calendar', { size: 12 })} 3 ngày</th>
+                <th scope="col" class="adm-num">Tổng lượt</th>
+                <th scope="col">Thao tác</th>
               </tr>
             </thead>
             <tbody>
               ${accounts.map((a) => `
                 <tr>
                   <td>
-                    <div style="font-weight:700;font-size:13px">${esc(a.username || a.email || a.userId.slice(0, 8))}</div>
-                    <div style="font-size:11px;color:var(--text-mute)">${esc(a.fullName || '')}</div>
-                    ${a.status !== 'active' ? `<span class="pill pill-red" style="font-size:10px">${esc(a.status)}</span>` : ''}
+                    <div class="adm-cell-strong">${esc(a.username || a.email || a.userId.slice(0, 8))}</div>
+                    <div class="adm-cell-sub">${esc(a.fullName || '')}</div>
+                    ${a.status !== 'active' ? `<span class="pill pill-red adm-pill-sm">${esc(a.status)}</span>` : ''}
                   </td>
                   <td>
-                    <div style="font-size:12.5px">
+                    <div class="adm-count">
                       <strong>${a.t1h.used}/${a.t1h.quota}</strong>
-                      ${a.t1h.left > 0 ? `<span style="color:#4ade80"> (còn ${a.t1h.left})</span>` : `<span style="color:#f87171"> (hết)</span>`}
+                      ${a.t1h.left > 0
+                        ? `<span class="adm-count-left">(còn ${a.t1h.left})</span>`
+                        : `<span class="adm-count-out">(hết)</span>`}
                     </div>
-                    ${a.t1h.banned ? '<span class="pill pill-red" style="font-size:10px">Bị chặn</span>' : ''}
-                    ${a.t1h.resets > 0 ? `<div style="font-size:10.5px;color:var(--text-mute)">đã reset ${a.t1h.resets} lần</div>` : ''}
+                    ${a.t1h.banned ? '<span class="pill pill-red adm-pill-sm">Bị chặn</span>' : ''}
+                    ${a.t1h.resets > 0 ? `<div class="adm-reset-count">đã reset ${a.t1h.resets} lần</div>` : ''}
                   </td>
                   <td>
-                    <div style="font-size:12.5px">
+                    <div class="adm-count">
                       <strong>${a.t3d.used}/${a.t3d.quota}</strong>
-                      ${a.t3d.left > 0 ? `<span style="color:#4ade80"> (còn ${a.t3d.left})</span>` : `<span style="color:#f87171"> (hết)</span>`}
+                      ${a.t3d.left > 0
+                        ? `<span class="adm-count-left">(còn ${a.t3d.left})</span>`
+                        : `<span class="adm-count-out">(hết)</span>`}
                     </div>
-                    ${a.t3d.banned ? '<span class="pill pill-red" style="font-size:10px">Bị chặn</span>' : ''}
-                    ${a.t3d.resets > 0 ? `<div style="font-size:10.5px;color:var(--text-mute)">đã reset ${a.t3d.resets} lần</div>` : ''}
+                    ${a.t3d.banned ? '<span class="pill pill-red adm-pill-sm">Bị chặn</span>' : ''}
+                    ${a.t3d.resets > 0 ? `<div class="adm-reset-count">đã reset ${a.t3d.resets} lần</div>` : ''}
                   </td>
-                  <td style="font-size:12.5px;color:var(--text-mute)">${a.totalUses}</td>
+                  <td class="num adm-cell-sub">${a.totalUses}</td>
                   <td>
-                    <div class="flex gap-1" style="flex-wrap:wrap">
+                    <div class="adm-actions">
                       ${(a.t1h.used > 0 || a.t3d.used > 0)
-                        ? `<button class="btn btn-primary btn-sm" data-reset="${esc(a.userId)}" data-name="${esc(a.username || a.email || '')}">🔄 Reset</button>`
+                        ? `<button type="button" class="btn btn-primary btn-sm" data-reset="${esc(a.userId)}" data-name="${esc(a.username || a.email || '')}">${icon('refresh', { size: 13 })} Reset</button>`
                         : ''}
-                      <button class="btn btn-ghost btn-sm" data-uses="${esc(a.userId)}">📜 Lịch sử</button>
+                      <button type="button" class="btn btn-ghost btn-sm" data-uses="${esc(a.userId)}">${icon('log', { size: 13 })} Lịch sử</button>
                     </div>
                   </td>
                 </tr>`).join('')}
@@ -829,18 +934,18 @@ async function renderTrial(host) {
         const uid = b.dataset.reset;
         const name = b.dataset.name;
         openModal(`
-          <div class="modal-title">🔄 Reset dùng thử</div>
+          <div class="modal-title">${icon('refresh', { size: 16 })} Reset dùng thử</div>
           <div class="modal-sub">Tài khoản: <strong>${esc(name)}</strong></div>
 
-          <div class="alert alert-warn" style="margin-bottom:14px">
-            <span class="ico">⚠️</span>
+          <div class="alert alert-warn">
+            <span class="ico">${icon('alert', { size: 15 })}</span>
             <span>Reset sẽ đưa lượt đã dùng về <strong>0</strong> và
             <strong>thu hồi</strong> license dùng thử đang chạy. Lịch sử vẫn được giữ.</span>
           </div>
 
           <div class="field">
-            <label class="label">Reset loại nào?</label>
-            <select class="select" id="rs-kinds">
+            <label class="label" for="rs-kinds">Reset loại nào?</label>
+            <select class="select adm-select-full" id="rs-kinds">
               <option value="all">Cả hai (1 giờ + 3 ngày)</option>
               <option value="1h">Chỉ 1 giờ</option>
               <option value="3d">Chỉ 3 ngày</option>
@@ -848,21 +953,21 @@ async function renderTrial(host) {
           </div>
 
           <div class="field">
-            <label class="label">Lý do <span class="req">*</span></label>
+            <label class="label" for="rs-reason">Lý do <span class="req">*</span></label>
             <input class="input" id="rs-reason" placeholder="VD: Khách báo lỗi không dùng được, đã xác minh">
             <div class="form-hint">Bắt buộc, lưu vào nhật ký để đối soát sau.</div>
           </div>
 
-          <div class="field">
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <div class="field adm-check-field">
+            <label class="adm-check" for="rs-revoke">
               <input type="checkbox" id="rs-revoke" checked>
               <span>Thu hồi license dùng thử đang chạy</span>
             </label>
           </div>
 
-          <div class="flex gap-1" style="justify-content:flex-end">
-            <button class="btn btn-ghost" data-cancel>Huỷ</button>
-            <button class="btn btn-primary" data-ok>Xác nhận reset</button>
+          <div class="adm-actions-end">
+            <button type="button" class="btn btn-ghost" data-cancel>Huỷ</button>
+            <button type="button" class="btn btn-primary" data-ok>Xác nhận reset</button>
           </div>
         `, {
           onMount(overlay, close) {
@@ -903,26 +1008,31 @@ async function renderTrial(host) {
         const stateCls = { active: 'pill-green', expired: 'pill-gray', ended: 'pill-gray', hold: 'pill-yellow' };
 
         openModal(`
-          <div class="modal-title">📜 Lịch sử dùng thử</div>
+          <div class="modal-title">${icon('log', { size: 16 })} Lịch sử dùng thử</div>
           <div class="modal-sub">${uses.length} lần</div>
-          <div class="table-wrap" style="max-height:400px;overflow:auto">
-            <table>
-              <thead><tr><th>Loại</th><th>Mã</th><th>Trạng thái</th><th>Bắt đầu</th></tr></thead>
+          <div class="table-wrap adm-table-wrap adm-scroll">
+            <table class="adm-table">
+              <thead><tr>
+                <th scope="col">Loại</th>
+                <th scope="col">Mã</th>
+                <th scope="col">Trạng thái</th>
+                <th scope="col">Bắt đầu</th>
+              </tr></thead>
               <tbody>
                 ${uses.length === 0
-                  ? '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-mute)">Chưa có</td></tr>'
+                  ? '<tr><td colspan="4" class="adm-empty">Chưa có</td></tr>'
                   : uses.map((u) => `
                     <tr>
                       <td><strong>${esc(u.kind === '1h' ? '1 giờ' : '3 ngày')}</strong></td>
-                      <td class="mono" style="font-size:11px">${esc(u.key)}</td>
-                      <td><span class="pill ${stateCls[u.state] || 'pill-gray'}" style="font-size:10px">${esc(u.state)}</span></td>
-                      <td style="font-size:11.5px;color:var(--text-mute)">${u.startedAt ? fmtDate(u.startedAt * 1000) : '—'}</td>
+                      <td class="mono adm-mono-sm">${esc(u.key)}</td>
+                      <td><span class="pill ${stateCls[u.state] || 'pill-gray'} adm-pill-sm">${esc(u.state)}</span></td>
+                      <td class="adm-cell-sub">${u.startedAt ? fmtDate(u.startedAt * 1000) : '—'}</td>
                     </tr>`).join('')}
               </tbody>
             </table>
           </div>
-          <div class="flex gap-1" style="justify-content:flex-end;margin-top:14px">
-            <button class="btn btn-ghost" data-close>Đóng</button>
+          <div class="adm-actions-end adm-actions-topgap">
+            <button type="button" class="btn btn-ghost" data-close>Đóng</button>
           </div>
         `, {
           onMount(overlay, close) {
@@ -941,22 +1051,37 @@ async function renderUsers(host) {
   const d = await api('/api/admin/users');
   host.innerHTML = `
     <div class="panel">
-      <div class="panel-title">👥 Người dùng (${d.users.length})</div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Email</th><th>Họ tên</th><th>Số dư</th><th>Đơn</th><th>Vai trò</th><th>Trạng thái</th><th></th></tr></thead>
+      <div class="panel-title">${icon('users', { size: 15 })} Người dùng (${d.users.length})</div>
+      <div class="table-wrap adm-table-wrap">
+        <table class="adm-table">
+          <thead><tr>
+            <th scope="col">Email</th>
+            <th scope="col">Họ tên</th>
+            <th scope="col" class="adm-num">Số dư</th>
+            <th scope="col" class="adm-num">Đơn</th>
+            <th scope="col">Vai trò</th>
+            <th scope="col">Trạng thái</th>
+            <th scope="col">Thao tác</th>
+          </tr></thead>
           <tbody>
-            ${d.users.map((u) => `
+            ${d.users.length === 0
+              ? `<tr><td colspan="7" class="adm-empty">Chưa có người dùng</td></tr>`
+              : d.users.map((u) => `
               <tr>
-                <td style="font-size:12.5px">${esc(u.email)}</td>
-                <td style="font-size:13px">${esc(u.fullName || '—')}</td>
-                <td><strong class="text-green">${fmtVnd(u.balance)}</strong></td>
-                <td>${u.orderCount}</td>
+                <td class="adm-cell-main">${esc(u.email)}</td>
+                <td class="adm-cell-strong">${esc(u.fullName || '—')}</td>
+                <td class="adm-num"><strong class="text-green">${fmtVnd(u.balance)}</strong></td>
+                <td class="adm-num">${u.orderCount}</td>
                 <td><span class="pill ${u.role === 'admin' ? 'pill-red' : 'pill-gray'}">${esc(u.role)}</span></td>
                 <td><span class="pill ${u.status === 'active' ? 'pill-green' : 'pill-red'}">${esc(u.status)}</span></td>
                 <td>
-                  <button class="btn btn-ghost btn-sm" data-adj="${esc(u.id)}" data-email="${esc(u.email)}">💰</button>
-                  <button class="btn btn-ghost btn-sm" data-lock="${esc(u.id)}">${u.status === 'active' ? '🔒' : '🔓'}</button>
+                  <div class="adm-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" data-adj="${esc(u.id)}" data-email="${esc(u.email)}"
+                      aria-label="Điều chỉnh số dư" title="Điều chỉnh số dư">${icon('wallet', { size: 14 })}</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-lock="${esc(u.id)}"
+                      aria-label="${u.status === 'active' ? 'Khoá tài khoản' : 'Mở khoá tài khoản'}"
+                      title="${u.status === 'active' ? 'Khoá tài khoản' : 'Mở khoá tài khoản'}">${u.status === 'active' ? icon('lock', { size: 14 }) : icon('unlock', { size: 14 })}</button>
+                  </div>
                 </td>
               </tr>`).join('')}
           </tbody>
@@ -969,13 +1094,13 @@ async function renderUsers(host) {
       openModal(`
         <div class="modal-title">Điều chỉnh số dư</div>
         <div class="modal-sub">${esc(b.dataset.email)}</div>
-        <div class="field"><label class="label">Số tiền (âm để trừ)</label>
+        <div class="field"><label class="label" for="adj-amount">Số tiền (âm để trừ)</label>
           <input class="input" id="adj-amount" type="number" placeholder="50000 hoặc -50000"></div>
-        <div class="field"><label class="label">Lý do <span class="req">*</span></label>
+        <div class="field"><label class="label" for="adj-reason">Lý do <span class="req">*</span></label>
           <input class="input" id="adj-reason" placeholder="Bồi thường, hoàn tiền..."></div>
-        <div class="flex gap-1" style="justify-content:flex-end">
-          <button class="btn btn-ghost" data-cancel>Huỷ</button>
-          <button class="btn btn-primary" data-ok>Xác nhận</button>
+        <div class="adm-actions-end">
+          <button type="button" class="btn btn-ghost" data-cancel>Huỷ</button>
+          <button type="button" class="btn btn-primary" data-ok>Xác nhận</button>
         </div>
       `, {
         onMount(overlay, close) {
@@ -1020,82 +1145,84 @@ async function renderSettings(host) {
   const s = d.settings;
   host.innerHTML = `
     <div class="panel">
-      <div class="panel-title">⚙️ Cài đặt hệ thống</div>
+      <div class="panel-title">${icon('settings', { size: 15 })} Cài đặt hệ thống</div>
       <form id="settings-form">
-        <div class="field"><label class="label">Tên ngân hàng</label>
+        <div class="field"><label class="label" for="st-bank">Tên ngân hàng</label>
           <input class="input" id="st-bank" value="${esc(s.bank_name || '')}" placeholder="MB Bank"></div>
-        <div class="field"><label class="label">Số tài khoản</label>
+        <div class="field"><label class="label" for="st-acc">Số tài khoản</label>
           <input class="input" id="st-acc" value="${esc(s.bank_account || '')}"></div>
-        <div class="field"><label class="label">Chủ tài khoản</label>
-          <input class="input" id="st-owner" value="${esc(s.bank_owner || '')}" style="text-transform:uppercase"></div>
-        <div class="flex gap-2">
-          <div class="field" style="flex:1"><label class="label">Nạp tối thiểu (₫)</label>
+        <div class="field"><label class="label" for="st-owner">Chủ tài khoản</label>
+          <input class="input adm-upper" id="st-owner" value="${esc(s.bank_owner || '')}"></div>
+        <div class="adm-form-row">
+          <div class="field"><label class="label" for="st-min">Nạp tối thiểu (₫)</label>
             <input class="input" id="st-min" type="number" value="${esc(s.topup_min || '20000')}"></div>
-          <div class="field" style="flex:1"><label class="label">Nạp tối đa (₫)</label>
+          <div class="field"><label class="label" for="st-max">Nạp tối đa (₫)</label>
             <input class="input" id="st-max" type="number" value="${esc(s.topup_max || '50000000')}"></div>
         </div>
-        <button class="btn btn-primary" type="submit">Lưu cài đặt</button>
+        <button class="btn btn-primary" type="submit">${icon('check', { size: 14 })} Lưu cài đặt</button>
       </form>
-      <div class="alert alert-info mt-2" style="margin-bottom:0">
-        <span class="ico">ℹ️</span>
+      <div class="alert alert-info mt-2 adm-alert-last">
+        <span class="ico">${icon('info', { size: 15 })}</span>
         <span>Thông tin ngân hàng dùng để tạo mã VietQR cho khách nạp tiền. Cần khớp với tài khoản đã kết nối webhook.</span>
       </div>
 
-      <div style="margin-top:26px;padding-top:26px;border-top:1px solid var(--border)">
-        <div class="panel-title" style="margin-bottom:6px">🔗 Kết nối webhook tự động</div>
-        <p style="font-size:13px;color:var(--text-mute);line-height:1.7;margin-bottom:16px">
+      <div class="adm-section">
+        <div class="panel-title adm-panel-title-sm">${icon('link', { size: 14 })} Kết nối webhook tự động</div>
+        <p class="adm-p">
           Dán URL bên dưới vào dashboard dịch vụ để tiền tự vào ví khi khách chuyển khoản.
           Không nối thì phải duyệt tay ở tab <strong>Nạp tiền</strong>.
         </p>
 
-        <div id="wh-status" style="margin-bottom:18px">Đang kiểm tra...</div>
+        <div id="wh-status" class="adm-wh-status">Đang kiểm tra...</div>
 
-        <div style="padding:16px;border-radius:12px;background:rgba(124,92,255,.06);border:1px solid rgba(124,92,255,.24);margin-bottom:14px">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:8px">SePay / Casso</div>
-          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.9">
+        <div class="adm-provider">
+          <div class="adm-provider-head">${icon('bank', { size: 15 })} SePay / Casso</div>
+          <div class="adm-kv">
             URL:
-            <code class="mono" id="wh-sepay-url" style="background:rgba(0,0,0,.4);padding:3px 8px;border-radius:6px;cursor:pointer"
-              title="Bấm để copy">${esc(location.origin)}/api/webhooks/sepay</code>
+            <button type="button" class="mono adm-code" id="wh-sepay-url" title="Bấm để sao chép"
+              aria-label="Sao chép URL webhook SePay">${esc(location.origin)}/api/webhooks/sepay</button>
           </div>
-          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.9">
-            Xác thực: <code class="mono">Authorization: Apikey &lt;WEBHOOK_SECRET&gt;</code>
+          <div class="adm-kv">
+            Xác thực: <code class="mono adm-code-plain">Authorization: Apikey &lt;WEBHOOK_SECRET&gt;</code>
           </div>
         </div>
 
-        <div style="padding:16px;border-radius:12px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.24)">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:8px">payOS</div>
-          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.9;margin-bottom:10px">
+        <div class="adm-provider">
+          <div class="adm-provider-head">${icon('card', { size: 15 })} payOS</div>
+          <div class="adm-kv">
             URL:
-            <code class="mono" id="wh-payos-url" style="background:rgba(0,0,0,.4);padding:3px 8px;border-radius:6px;cursor:pointer"
-              title="Bấm để copy">${esc(location.origin)}/api/webhooks/payos</code>
+            <button type="button" class="mono adm-code" id="wh-payos-url" title="Bấm để sao chép"
+              aria-label="Sao chép URL webhook payOS">${esc(location.origin)}/api/webhooks/payos</button>
           </div>
-          <div class="field" style="margin-bottom:10px">
-            <label class="label">Checksum Key</label>
+          <div class="field">
+            <label class="label" for="wh-payos-key">Checksum Key</label>
             <input class="input" id="wh-payos-key" type="password" placeholder="Dán checksum key từ my.payos.vn">
-            <div class="form-hint">Lấy ở my.payos.vn → Kênh thanh toán → Checksum Key. Khuyến nghị dùng
+            <div class="form-hint">Lấy ở my.payos.vn, mục Kênh thanh toán, phần Checksum Key. Khuyến nghị dùng
               <code class="mono">wrangler secret put PAYOS_CHECKSUM_KEY</code> để bảo mật hơn.</div>
           </div>
-          <button class="btn btn-primary btn-sm" id="wh-save-payos">Lưu checksum key</button>
-          <button class="btn btn-ghost btn-sm" id="wh-clear-payos" style="margin-left:6px">Xoá</button>
+          <div class="adm-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="wh-save-payos">Lưu checksum key</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="wh-clear-payos">Xoá</button>
+          </div>
         </div>
 
-        <div style="padding:16px;border-radius:12px;background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.24);margin-top:14px">
-          <div class="flex items-center gap-1" style="margin-bottom:8px">
-            <span style="font-size:13.5px;font-weight:800">📱 Telegram</span>
+        <div class="adm-provider">
+          <div class="adm-provider-head">
+            ${icon('send', { size: 15 })} Telegram
             <span id="tg-badge"></span>
           </div>
-          <p style="font-size:12.5px;color:var(--text-mute);line-height:1.7;margin-bottom:12px">
-            Có tiền vào là báo ngay về điện thoại, kèm nút <strong>Duyệt</strong> /
+          <p class="adm-p adm-p-tight">
+            Có tiền vào là báo ngay về điện thoại, kèm nút <strong>Duyệt</strong> và
             <strong>Từ chối</strong> — không cần mở web.
           </p>
 
-          <div class="field" style="margin-bottom:10px">
-            <label class="label">Bot Token</label>
+          <div class="field">
+            <label class="label" for="tg-token">Bot Token</label>
             <input class="input" id="tg-token" type="password" placeholder="123456789:ABCdefGHI...">
-            <div class="form-hint">Tạo bot với <code class="mono">@BotFather</code> trên Telegram → copy token.</div>
+            <div class="form-hint">Tạo bot với <code class="mono">@BotFather</code> trên Telegram rồi sao chép token.</div>
           </div>
-          <div class="field" style="margin-bottom:10px">
-            <label class="label">Chat ID</label>
+          <div class="field">
+            <label class="label" for="tg-chat">Chat ID</label>
             <input class="input" id="tg-chat" placeholder="123456789">
             <div class="form-hint">
               Nhắn <code class="mono">/start</code> cho bot, hoặc thêm bot vào nhóm rồi nhắn
@@ -1103,23 +1230,23 @@ async function renderSettings(host) {
             </div>
           </div>
 
-          <div class="flex gap-1" style="flex-wrap:wrap">
-            <button class="btn btn-primary btn-sm" id="tg-save">Lưu</button>
-            <button class="btn btn-ghost btn-sm" id="tg-test">📤 Gửi tin thử</button>
-            <button class="btn btn-ghost btn-sm" id="tg-clear">Xoá</button>
+          <div class="adm-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="tg-save">Lưu</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="tg-test">${icon('send', { size: 13 })} Gửi tin thử</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="tg-clear">Xoá</button>
           </div>
 
-          <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)">
-            <div style="font-size:12px;color:var(--text-mute);line-height:1.8;margin-bottom:8px">
+          <div class="adm-subsection">
+            <div class="adm-hint adm-hint-strong">
               <strong>Bắt buộc</strong> — dán URL này vào Telegram để nút bấm hoạt động:
             </div>
-            <code class="mono" id="tg-webhook-url" style="display:block;background:rgba(0,0,0,.4);padding:8px 10px;border-radius:6px;font-size:11.5px;word-break:break-all;cursor:pointer"
-              title="Bấm để copy">${esc(location.origin)}/api/telegram/webhook</code>
-            <div style="font-size:11.5px;color:var(--text-mute);line-height:1.7;margin-top:8px">
+            <button type="button" class="mono adm-code adm-code-block" id="tg-webhook-url" title="Bấm để sao chép"
+              aria-label="Sao chép URL webhook Telegram">${esc(location.origin)}/api/telegram/webhook</button>
+            <div class="adm-hint">
               Cần đặt secret trước:
               <code class="mono">wrangler secret put TG_WEBHOOK_SECRET</code><br>
               Rồi gọi:<br>
-              <code class="mono" style="font-size:11px;word-break:break-all">curl "https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook?url=https://xienhl.com/api/telegram/webhook&amp;secret_token=&lt;SECRET&gt;"</code>
+              <code class="mono adm-code-plain adm-wrap">curl "https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook?url=https://xienhl.com/api/telegram/webhook&amp;secret_token=&lt;SECRET&gt;"</code>
             </div>
           </div>
         </div>
@@ -1148,22 +1275,22 @@ async function renderSettings(host) {
     try {
       const h = await api('/api/webhooks/health');
       const badge = (c) => c
-        ? '<span class="pill pill-green">✅ Đã nối</span>'
-        : '<span class="pill pill-yellow">⚠️ Chưa nối</span>';
+        ? `<span class="pill pill-green">${icon('check', { size: 11 })} Đã nối</span>`
+        : `<span class="pill pill-yellow">${icon('alert', { size: 11 })} Chưa nối</span>`;
       host.querySelector('#wh-status').innerHTML = `
-        <div class="flex gap-2" style="flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
+        <div class="adm-legend">
+          <div class="adm-legend-item">
             SePay: ${badge(h.sepay?.configured)}
-            ${h.sepay?.source !== 'none' ? `<span style="color:var(--text-mute)">(${esc(h.sepay.source)})</span>` : ''}
+            ${h.sepay?.source !== 'none' ? `<span class="adm-legend-src">(${esc(h.sepay.source)})</span>` : ''}
           </div>
-          <div style="display:flex;align-items:center;gap:8px;font-size:12.5px">
+          <div class="adm-legend-item">
             payOS: ${badge(h.payos?.configured)}
-            ${h.payos?.source !== 'none' ? `<span style="color:var(--text-mute)">(${esc(h.payos.source)})</span>` : ''}
+            ${h.payos?.source !== 'none' ? `<span class="adm-legend-src">(${esc(h.payos.source)})</span>` : ''}
           </div>
         </div>`;
     } catch {
       host.querySelector('#wh-status').innerHTML =
-        '<span class="pill pill-red">Không kiểm tra được</span>';
+        `<span class="pill pill-red">${icon('alert', { size: 11 })} Không kiểm tra được</span>`;
     }
   };
   await loadWh();
@@ -1211,14 +1338,14 @@ async function renderSettings(host) {
     const badge = host.querySelector('#tg-badge');
     if (!badge) return;
     try {
-      const s = await api('/api/admin/telegram/status');
-      badge.innerHTML = s.configured
-        ? `<span class="pill pill-green">✅ Đã nối</span>${s.source !== 'none' ? ` <span style="color:var(--text-mute);font-size:11.5px">(${esc(s.source)})</span>` : ''}`
-        : '<span class="pill pill-yellow">⚠️ Chưa nối</span>';
-      if (s.botTokenHint) host.querySelector('#tg-token').placeholder = s.botTokenHint;
-      if (s.chatId) host.querySelector('#tg-chat').placeholder = s.chatId;
+      const st = await api('/api/admin/telegram/status');
+      badge.innerHTML = st.configured
+        ? `<span class="pill pill-green">${icon('check', { size: 11 })} Đã nối</span>${st.source !== 'none' ? ` <span class="adm-legend-src">(${esc(st.source)})</span>` : ''}`
+        : `<span class="pill pill-yellow">${icon('alert', { size: 11 })} Chưa nối</span>`;
+      if (st.botTokenHint) host.querySelector('#tg-token').placeholder = st.botTokenHint;
+      if (st.chatId) host.querySelector('#tg-chat').placeholder = st.chatId;
     } catch {
-      badge.innerHTML = '<span class="pill pill-red">Lỗi</span>';
+      badge.innerHTML = `<span class="pill pill-red">${icon('alert', { size: 11 })} Lỗi</span>`;
     }
   };
   await loadTg();
@@ -1258,7 +1385,7 @@ async function renderSettings(host) {
         await api('/api/admin/telegram/test', { method: 'POST', body: {} });
         toast('Đã gửi! Kiểm tra Telegram trên điện thoại.', 'success', 6000);
       } catch (err) { toast(err.message, 'error', 7000); }
-      finally { tgTest.disabled = false; tgTest.textContent = '📤 Gửi tin thử'; }
+      finally { tgTest.disabled = false; tgTest.innerHTML = icon('send', { size: 13 }) + ' Gửi tin thử'; }
     };
   }
 
@@ -1280,19 +1407,24 @@ async function renderLogs(host) {
   const d = await api('/api/admin/logs');
   host.innerHTML = `
     <div class="panel">
-      <div class="panel-title">📜 Nhật ký hoạt động (${d.logs.length})</div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Hành động</th><th>Người thực hiện</th><th>Đối tượng</th><th>Thời gian</th></tr></thead>
+      <div class="panel-title">${icon('log', { size: 15 })} Nhật ký hoạt động (${d.logs.length})</div>
+      <div class="table-wrap adm-table-wrap">
+        <table class="adm-table">
+          <thead><tr>
+            <th scope="col">Hành động</th>
+            <th scope="col">Người thực hiện</th>
+            <th scope="col">Đối tượng</th>
+            <th scope="col">Thời gian</th>
+          </tr></thead>
           <tbody>
             ${d.logs.length === 0
-              ? `<tr><td colspan="4" style="text-align:center;padding:28px;color:var(--text-mute)">Chưa có nhật ký</td></tr>`
+              ? `<tr><td colspan="4" class="adm-empty">Chưa có nhật ký</td></tr>`
               : d.logs.map((l) => `
                 <tr>
-                  <td><span class="mono" style="font-size:12px;color:#a99cff">${esc(l.action)}</span></td>
-                  <td style="font-size:12.5px">${esc(l.actor)}</td>
-                  <td class="mono" style="font-size:11px;color:var(--text-mute)">${esc(l.target || '—')}</td>
-                  <td style="font-size:11.5px;color:var(--text-mute)">${fmtDate(l.createdAt)}</td>
+                  <td><span class="mono adm-mono-sm adm-code-inline">${esc(l.action)}</span></td>
+                  <td class="adm-cell-main">${esc(l.actor)}</td>
+                  <td class="mono adm-mono-sm">${esc(l.target || '—')}</td>
+                  <td class="adm-cell-sub">${fmtDate(l.createdAt)}</td>
                 </tr>`).join('')}
           </tbody>
         </table>

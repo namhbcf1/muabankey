@@ -1,13 +1,17 @@
 /** Trang thanh toán. */
-import { api, esc, fmtVnd, toast, navigate, loadingBlock, decodeKey, copyText, store } from '../lib.js';
-import { state, cartSubtotal, clearCart, refreshBalance, removeFromCart, saveCart } from '../state.js';
+import { api, esc, fmtVnd, toast, navigate, loadingBlock, decodeKey, copyText, store, emptyBlock } from '../lib.js';
+import { icon } from '../icons.js';
+import { state, clearCart, refreshBalance, removeFromCart, saveCart } from '../state.js';
 
 export function renderCheckout() {
   return `
   <div id="site-header"></div>
   <section class="section-sm">
     <div class="container">
-      <div class="pd-breadcrumb"><a href="#/">Trang chủ</a><span>/</span><span>Thanh toán</span></div>
+      <nav class="pd-breadcrumb" aria-label="Đường dẫn">
+        <a href="#/">Trang chủ</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}
+        <span class="text-dim">Thanh toán</span>
+      </nav>
       <div id="checkout-content">${loadingBlock('Đang chuẩn bị đơn hàng...')}</div>
     </div>
   </section>
@@ -36,12 +40,12 @@ export async function mountCheckout(root, query = {}) {
   const items = buyNowItems || state.cart;
 
   if (items.length === 0) {
-    host.innerHTML = `<div class="empty-state">
-      <div class="ico">🛒</div>
-      <div class="t">Giỏ hàng trống</div>
-      <div class="d">Thêm sản phẩm trước khi thanh toán</div>
-      <button class="btn btn-primary btn-sm" onclick="location.hash='#/products'">Xem sản phẩm</button>
-    </div>`;
+    host.innerHTML = emptyBlock({
+      ico: 'cart',
+      title: 'Giỏ hàng trống',
+      desc: 'Thêm sản phẩm trước khi thanh toán.',
+      action: '<a class="btn btn-primary btn-sm" href="#/products">Xem sản phẩm</a>',
+    });
     return;
   }
 
@@ -91,12 +95,14 @@ export async function mountCheckout(root, query = {}) {
   } catch { /* mạng lỗi -> dùng giá cũ, server vẫn là nguồn sự thật */ }
 
   if (items.length === 0) {
-    host.innerHTML = `<div class="empty-state">
-      <div class="ico">🛒</div>
-      <div class="t">Không còn sản phẩm hợp lệ</div>
-      <div class="d">${removed.length ? removed.map((r) => esc(r.name) + ' (' + esc(r.reason) + ')').join(', ') : 'Giỏ hàng trống'}</div>
-      <button class="btn btn-primary btn-sm" onclick="location.hash='#/products'">Xem sản phẩm</button>
-    </div>`;
+    host.innerHTML = emptyBlock({
+      ico: 'cart',
+      title: 'Không còn sản phẩm hợp lệ',
+      desc: removed.length
+        ? removed.map((r) => `${r.name} (${r.reason})`).join(', ')
+        : 'Giỏ hàng trống',
+      action: '<a class="btn btn-primary btn-sm" href="#/products">Xem sản phẩm</a>',
+    });
     return;
   }
 
@@ -105,13 +111,14 @@ export async function mountCheckout(root, query = {}) {
   let appliedCoupon = null;
 
   const priceNotice = (priceChanges.length || removed.length) ? `
-    <div class="alert ${priceChanges.length ? 'alert-warn' : 'alert-info'}" style="margin-bottom:18px">
-      <span class="ico">${priceChanges.length ? '⚠️' : 'ℹ️'}</span>
+    <div class="alert ${priceChanges.length ? 'alert-warn' : 'alert-info'} alert-block">
+      <span class="ico">${icon(priceChanges.length ? 'alert' : 'info', { size: 15 })}</span>
       <span>
-        ${removed.length ? `<strong>Đã xoá khỏi giỏ:</strong> ${removed.map((r) => esc(r.name) + ' (' + esc(r.reason) + ')').join('; ')}<br>` : ''}
+        ${removed.length ? `<strong>Đã xoá khỏi giỏ:</strong> ${removed.map((r) => esc(r.name) + ' (' + esc(r.reason) + ')').join('; ')}` : ''}
+        ${removed.length && priceChanges.length ? '<br>' : ''}
         ${priceChanges.length
           ? `<strong>Giá đã thay đổi, vui lòng kiểm tra lại:</strong><br>` +
-            priceChanges.map((c) => `• ${esc(c.name)}: <s>${fmtVnd(c.from)}</s> → <strong>${fmtVnd(c.to)}</strong>`).join('<br>')
+            priceChanges.map((c) => `${esc(c.name)}: <s>${fmtVnd(c.from)}</s> ${icon('arrowRight', { size: 11 })} <strong>${fmtVnd(c.to)}</strong>`).join('<br>')
           : ''}
       </span>
     </div>` : '';
@@ -121,26 +128,27 @@ export async function mountCheckout(root, query = {}) {
     <div class="checkout-grid">
       <div>
         <div class="panel">
-          <div class="panel-title">📦 Sản phẩm trong đơn</div>
-          <div id="checkout-items" style="display:flex;flex-direction:column;gap:12px">
+          <h2 class="panel-title">${icon('bag', { size: 15 })} Sản phẩm trong đơn</h2>
+          <div id="checkout-items" class="ck-items">
             ${items.map((i) => `
-              <div class="flex justify-between items-center" style="gap:12px;padding:12px;border-radius:12px;background:rgba(255,255,255,.032);border:1px solid var(--border)">
-                <div class="flex gap-1 items-center" style="min-width:0">
-                  <img src="${esc(i.imageUrl || '')}" alt="" class="cart-thumb" style="width:48px;height:48px"
-                    onerror="this.style.display='none'">
-                  <div style="min-width:0">
-                    <div style="font-size:13.5px;font-weight:800;margin-bottom:2px">${esc(i.name)}</div>
-                    <div style="font-size:12.5px;color:var(--text-mute)">${fmtVnd(i.price)} × ${i.quantity}</div>
-                  </div>
+              <div class="ck-item">
+                <span class="ck-item-thumb">
+                  ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy"
+                    onerror="this.remove()">` : ''}
+                  ${icon('package', { size: 18 })}
+                </span>
+                <div class="ck-item-main">
+                  <div class="ck-item-name">${esc(i.name)}</div>
+                  <div class="ck-item-meta">${fmtVnd(i.price)} × ${i.quantity}</div>
                 </div>
-                <div style="font-weight:800;font-size:14px;white-space:nowrap">${fmtVnd(i.price * i.quantity)}</div>
+                <div class="ck-item-total">${fmtVnd(i.price * i.quantity)}</div>
               </div>`).join('')}
           </div>
         </div>
 
         <div class="panel mt-2">
-          <div class="panel-title" style="margin-bottom:10px">
-            <label for="order-note" style="cursor:pointer">📝 Ghi chú đơn hàng</label>
+          <div class="panel-title ck-note-title">
+            <label for="order-note">${icon('edit', { size: 15 })} Ghi chú đơn hàng</label>
           </div>
           <textarea class="textarea" id="order-note" placeholder="Yêu cầu đặc biệt (không bắt buộc)"
             maxlength="500" aria-label="Ghi chú đơn hàng"></textarea>
@@ -148,33 +156,33 @@ export async function mountCheckout(root, query = {}) {
       </div>
 
       <div>
-        <div class="panel" style="position:sticky;top:calc(var(--header-h) + 20px)">
-          <div class="panel-title">💳 Thanh toán</div>
+        <div class="panel ck-summary">
+          <h2 class="panel-title">${icon('wallet', { size: 15 })} Thanh toán</h2>
 
           <div class="summary-row"><span>Tạm tính</span><span id="sum-subtotal">${fmtVnd(subtotal)}</span></div>
-          <div class="summary-row" id="sum-discount-row" style="display:none">
+          <div class="summary-row" id="sum-discount-row" hidden>
             <span>Giảm giá</span><span class="text-green" id="sum-discount">—</span>
           </div>
           <div class="summary-row total"><span>Tổng cộng</span><span class="val" id="sum-total">${fmtVnd(subtotal)}</span></div>
 
-          <div style="margin:18px 0;padding:14px;border-radius:12px;background:rgba(255,255,255,.035);border:1px solid var(--border)">
-            <div class="flex justify-between items-center mb-1">
-              <span style="font-size:12.5px;color:var(--text-mute)">Số dư ví</span>
-              <strong style="font-size:14px;color:#4ade80" id="wallet-balance">${fmtVnd(state.user.balance)}</strong>
+          <div class="ck-wallet">
+            <div class="ck-wallet-row">
+              <span class="ck-wallet-label">${icon('wallet', { size: 13 })} Số dư ví</span>
+              <strong class="ck-wallet-val" id="wallet-balance">${fmtVnd(state.user.balance)}</strong>
             </div>
-            <div id="balance-warning" style="font-size:12.5px;color:#fbbf24;display:none;margin-top:6px"></div>
+            <div class="ck-wallet-warn" id="balance-warning" role="status" hidden></div>
           </div>
 
           <button class="btn btn-primary btn-lg btn-block" id="btn-place-order">
-            🔒 Xác nhận thanh toán
+            ${icon('lock', { size: 15 })}Xác nhận thanh toán
           </button>
-          <button class="btn btn-ghost btn-block mt-1" id="btn-topup" style="display:none">
-            💰 Nạp thêm tiền
+          <button class="btn btn-ghost btn-block mt-1" id="btn-topup" hidden>
+            ${icon('plus', { size: 15 })}Nạp thêm tiền
           </button>
 
-          <div class="alert alert-info mt-2" style="margin-bottom:0;font-size:12.5px">
-            <span class="ico">🔒</span>
-            <span>Thanh toán an toàn. Key được giao ngay lập tức sau khi trừ tiền từ ví.</span>
+          <div class="alert alert-info ck-secure">
+            <span class="ico">${icon('shieldCheck', { size: 14 })}</span>
+            <span>Giao dịch được xử lý qua kết nối mã hoá. Key hiển thị ngay sau khi trừ tiền từ ví.</span>
           </div>
         </div>
       </div>
@@ -189,10 +197,10 @@ export async function mountCheckout(root, query = {}) {
     host.querySelector('#sum-subtotal').textContent = fmtVnd(subtotal);
     const dRow = host.querySelector('#sum-discount-row');
     if (discount > 0) {
-      dRow.style.display = 'flex';
+      dRow.hidden = false;
       host.querySelector('#sum-discount').textContent = '-' + fmtVnd(discount);
     } else {
-      dRow.style.display = 'none';
+      dRow.hidden = true;
     }
     host.querySelector('#sum-total').textContent = fmtVnd(total);
 
@@ -200,22 +208,23 @@ export async function mountCheckout(root, query = {}) {
     const warn = host.querySelector('#balance-warning');
     const topupBtn = host.querySelector('#btn-topup');
     if (bal < total) {
-      warn.style.display = 'block';
-      warn.textContent = `⚠️ Thiếu ${fmtVnd(total - bal)}. Vui lòng nạp thêm tiền vào ví.`;
-      topupBtn.style.display = 'flex';
+      warn.hidden = false;
+      warn.textContent = `Thiếu ${fmtVnd(total - bal)}. Vui lòng nạp thêm tiền vào ví.`;
+      topupBtn.hidden = false;
     } else {
-      warn.style.display = 'none';
-      topupBtn.style.display = 'none';
+      warn.hidden = true;
+      topupBtn.hidden = true;
     }
   }
+
+  const payBtn = host.querySelector('#btn-place-order');
 
   host.querySelector('#btn-topup').onclick = () => navigate('/wallet');
   updateTotals();
 
-  const btn = host.querySelector('#btn-place-order');
-  btn.onclick = async () => {
-    btn.disabled = true;
-    btn.textContent = 'Đang xử lý...';
+  payBtn.onclick = async () => {
+    payBtn.disabled = true;
+    payBtn.textContent = 'Đang xử lý...';
     try {
       const orderData = await api('/api/orders', {
         method: 'POST',
@@ -238,8 +247,8 @@ export async function mountCheckout(root, query = {}) {
         updateTotals();
         navigate('/wallet');
       }
-      btn.disabled = false;
-      btn.textContent = '🔒 Xác nhận thanh toán';
+      payBtn.disabled = false;
+      payBtn.innerHTML = `${icon('lock', { size: 15 })}Xác nhận thanh toán`;
     }
   };
 }
@@ -251,77 +260,81 @@ function showSuccess(host, order, created) {
   const balAfter = state.user ? state.user.balance : null;
 
   host.innerHTML = `
-    <div class="panel" style="max-width:680px;margin:0 auto;padding:38px 28px">
-      <div style="text-align:center">
-        <div style="font-size:56px;margin-bottom:12px">🎉</div>
-        <h2 style="font-size:1.6rem;font-weight:800;letter-spacing:-.03em;margin-bottom:8px">Thanh toán thành công!</h2>
-        <p style="color:var(--text-dim);font-size:14px;margin-bottom:16px">
-          Mã đơn hàng: <strong class="mono" style="color:#a99cff">${esc(order.code)}</strong>
+    <div class="panel ck-done">
+      <div class="ck-done-head">
+        <span class="ck-done-badge" aria-hidden="true">${icon('check', { size: 26, stroke: 2.4 })}</span>
+        <h2 class="ck-done-title">Thanh toán thành công</h2>
+        <p class="ck-done-sub">
+          Mã đơn hàng: <strong class="mono ck-done-code">${esc(order.code)}</strong>
         </p>
 
-        <div style="display:inline-block;text-align:left;padding:16px 22px;border-radius:14px;
-                    background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.3);margin-bottom:22px">
-          ${sub != null ? `<div style="font-size:13px;color:var(--text-mute)">Tạm tính: ${fmtVnd(sub)}</div>` : ''}
-          ${disc > 0 ? `<div style="font-size:13px;color:#4ade80">Giảm giá: −${fmtVnd(disc)}</div>` : ''}
-          <div style="font-size:20px;font-weight:800;color:#4ade80;margin-top:4px">
-            Đã trừ: ${fmtVnd(paid)}
-          </div>
-          ${balAfter != null ? `<div style="font-size:12.5px;color:var(--text-mute);margin-top:3px">
-            Số dư còn lại: ${fmtVnd(balAfter)}</div>` : ''}
+        <div class="ck-done-receipt">
+          ${sub != null ? `<div class="ck-receipt-row"><span>Tạm tính</span><span>${fmtVnd(sub)}</span></div>` : ''}
+          ${disc > 0 ? `<div class="ck-receipt-row text-green"><span>Giảm giá</span><span>−${fmtVnd(disc)}</span></div>` : ''}
+          <div class="ck-receipt-row ck-receipt-total"><span>Đã trừ</span><span>${fmtVnd(paid)}</span></div>
+          ${balAfter != null ? `<div class="ck-receipt-row ck-receipt-balance">
+            <span>Số dư còn lại</span><span>${fmtVnd(balAfter)}</span></div>` : ''}
         </div>
 
-        <p style="color:var(--text-mute);font-size:13px;margin-bottom:26px">
-          ${order.status === 'delivered' ? 'Sản phẩm của bạn đã được giao bên dưới.' : 'Đơn hàng đang được xử lý, chúng tôi sẽ giao trong 5-15 phút.'}
+        <p class="ck-done-note">
+          ${order.status === 'delivered'
+            ? 'Sản phẩm của bạn đã được giao bên dưới.'
+            : 'Đơn hàng đang được xử lý. Chúng tôi sẽ giao trong 5–15 phút.'}
         </p>
       </div>
 
-      <div style="text-align:left">
+      <div class="ck-delivered">
         ${order.delivered.map((d) => `
-          <div style="margin-bottom:20px">
-            <div style="font-size:14px;font-weight:800;margin-bottom:8px">📦 ${esc(d.name)}</div>
+          <section class="ck-delivered-item">
+            <h3 class="ck-delivered-name">${icon('package', { size: 15 })} ${esc(d.name)}</h3>
             ${d.manual
-              ? `<div class="alert alert-warn"><span class="ico">⏳</span><span>Sản phẩm này cần giao thủ công. Chúng tôi sẽ liên hệ bạn qua email/Telegram trong 5-15 phút.</span></div>`
+              ? `<div class="alert alert-warn ck-alert-flat">
+                   <span class="ico">${icon('clock', { size: 15 })}</span>
+                   <span>Sản phẩm này cần giao thủ công. Chúng tôi sẽ liên hệ bạn qua email hoặc Telegram trong 5–15 phút.</span>
+                 </div>`
               : d.license
                 ? d.keys.map((raw) => {
                     const key = decodeKey(raw);
                     return `
                       <div class="key-box">
-                        <div class="key-value">${esc(key)}</div>
-                        <button class="key-copy" data-copy="${esc(key)}">📋 Key</button>
-                      </div>
-                      <div style="margin-top:10px;padding:15px;border-radius:12px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.3)">
-                        <div style="font-size:12.5px;font-weight:800;color:#67e8f9;margin-bottom:9px">
-                          ⚡ LẤY LỆNH CÀI ĐẶT
-                        </div>
-                        <div style="font-size:12px;color:var(--text-mute);line-height:1.65;margin-bottom:11px">
-                          Vào <strong>License của tôi</strong> để lấy lệnh cài đặt riêng cho key này
-                          (mỗi lệnh dùng 1 lần, hết hạn sau 24 giờ).
-                        </div>
-                        <button class="btn btn-primary btn-sm" onclick="location.hash='#/licenses'">
-                          🔑 Lấy lệnh cài đặt
+                        <span class="key-value">${esc(key)}</span>
+                        <button type="button" class="key-copy" data-copy="${esc(key)}">
+                          ${icon('copy', { size: 13 })}Sao chép
                         </button>
+                      </div>
+                      <div class="ck-license-hint">
+                        <div class="ck-license-title">${icon('bolt', { size: 13 })} Lấy lệnh cài đặt</div>
+                        <p class="ck-license-desc">
+                          Vào <strong>License của tôi</strong> để lấy lệnh cài đặt riêng cho key này
+                          (mỗi lệnh dùng một lần, hết hạn sau 24 giờ).
+                        </p>
+                        <a class="btn btn-primary btn-sm" href="#/licenses">
+                          ${icon('key', { size: 13 })}Lấy lệnh cài đặt
+                        </a>
                       </div>`;
                   }).join('')
                 : d.keys.map((raw) => {
                     const key = decodeKey(raw);
                     return `
                       <div class="key-box">
-                        <div class="key-value">${esc(key)}</div>
-                        <button class="key-copy" data-copy="${esc(key)}">📋 Sao chép</button>
+                        <span class="key-value">${esc(key)}</span>
+                        <button type="button" class="key-copy" data-copy="${esc(key)}">
+                          ${icon('copy', { size: 13 })}Sao chép
+                        </button>
                       </div>`;
                   }).join('')}
-          </div>`).join('')}
+          </section>`).join('')}
       </div>
 
-      <div class="alert alert-info" style="text-align:left">
-        <span class="ico">📄</span>
+      <div class="alert alert-info ck-alert-flat">
+        <span class="ico">${icon('info', { size: 15 })}</span>
         <span>Key cũng được lưu trong mục <strong>Đơn hàng</strong> và <strong>License của tôi</strong>. Vui lòng bảo mật key.</span>
       </div>
 
-      <div class="flex gap-1 mt-3" style="justify-content:center;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="location.hash='#/licenses'">🔑 Xem License</button>
-        <button class="btn btn-ghost" onclick="location.hash='#/orders'">📦 Đơn hàng</button>
-        <button class="btn btn-ghost" onclick="location.hash='#/products'">Tiếp tục mua sắm</button>
+      <div class="ck-done-actions">
+        <a class="btn btn-primary" href="#/licenses">${icon('key', { size: 14 })}Xem License</a>
+        <a class="btn btn-ghost" href="#/orders">${icon('receipt', { size: 14 })}Đơn hàng</a>
+        <a class="btn btn-ghost" href="#/products">Tiếp tục mua sắm</a>
       </div>
     </div>
   `;

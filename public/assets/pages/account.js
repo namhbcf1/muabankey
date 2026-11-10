@@ -1,5 +1,6 @@
 /** Trang tài khoản người dùng. */
-import { api, esc, fmtVnd, fmtNum, fmtDate, toast, navigate, loadingBlock, copyText } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, toast, navigate, loadingBlock } from '../lib.js';
+import { icon } from '../icons.js';
 import { state, notify, loadUser } from '../state.js';
 
 export function renderAccount() {
@@ -7,7 +8,15 @@ export function renderAccount() {
   <div id="site-header"></div>
   <section class="section-sm">
     <div class="container">
-      <div class="pd-breadcrumb"><a href="#/">Trang chủ</a><span>/</span><span>Tài khoản</span></div>
+      <nav class="pd-breadcrumb" aria-label="Đường dẫn">
+        <a href="#/">Trang chủ</a><span>/</span><span>Tài khoản</span>
+      </nav>
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Tài khoản</h1>
+          <p class="page-desc">Thông tin cá nhân, mật khẩu và số dư ví của bạn.</p>
+        </div>
+      </div>
       <div id="account-content">${loadingBlock()}</div>
     </div>
   </section>
@@ -31,64 +40,73 @@ export async function mountAccount(root) {
 
   const u = me.user;
   const s = me.stats;
+  const initial = esc((u.fullName || u.email || '?')[0].toUpperCase());
+
+  // Huy hiệu vai trò chỉ là phần trình bày; quyền truy cập vẫn do server quyết định.
+  const role = u.role === 'admin'
+    ? { tone: 'pill-red', ico: 'shieldCheck', label: 'Quản trị viên' }
+    : u.role === 'staff'
+      ? { tone: 'pill-blue', ico: 'shield', label: 'Nhân viên' }
+      : { tone: 'pill-gray', ico: 'user', label: 'Thành viên' };
 
   host.innerHTML = `
     <div class="checkout-grid">
       <div>
         <div class="panel">
-          <div class="flex items-center gap-2 mb-3">
-            <div style="width:62px;height:62px;border-radius:19px;display:grid;place-items:center;font-size:25px;font-weight:800;background:var(--grad-brand);color:#fff">
-              ${esc((u.fullName || u.email)[0].toUpperCase())}
-            </div>
-            <div>
-              <div style="font-size:19px;font-weight:800;letter-spacing:-.025em">${esc(u.fullName || 'Khách hàng')}</div>
-              <div style="font-size:13.5px;color:var(--text-mute)">${esc(u.email)}</div>
-              <div class="flex gap-1 mt-1">
-                <span class="pill ${u.role === 'admin' ? 'pill-red' : 'pill-blue'}">${u.role === 'admin' ? '⚙️ Quản trị viên' : '👤 Thành viên'}</span>
+          <div class="identity">
+            <div class="avatar" aria-hidden="true">${initial}</div>
+            <div class="identity-main">
+              <div class="identity-name">${esc(u.fullName || 'Khách hàng')}</div>
+              <div class="identity-mail">${esc(u.email)}</div>
+              <div class="pill-row mt-1">
+                <span class="pill ${role.tone}">${icon(role.ico, { size: 11 })} ${role.label}</span>
               </div>
             </div>
           </div>
 
-          <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:0">
-            <div class="stat-card" style="padding:15px">
-              <div class="ico">💰</div>
-              <div class="v" style="font-size:18px;color:#4ade80">${fmtVnd(u.balance)}</div>
-              <div class="l">Số dư ví</div>
+          <div class="metric-row">
+            <div class="metric">
+              <div class="metric-val">${fmtVnd(u.balance)}</div>
+              <div class="metric-lbl">Số dư ví</div>
             </div>
-            <div class="stat-card" style="padding:15px">
-              <div class="ico">📦</div>
-              <div class="v" style="font-size:18px">${fmtNum(s.orders)}</div>
-              <div class="l">Đơn hàng</div>
+            <div class="metric">
+              <div class="metric-val">${fmtNum(s.orders)}</div>
+              <div class="metric-lbl">Đơn hàng</div>
             </div>
-            <div class="stat-card" style="padding:15px">
-              <div class="ico">💎</div>
-              <div class="v" style="font-size:18px">${fmtVnd(s.spent)}</div>
-              <div class="l">Tổng chi tiêu</div>
+            <div class="metric">
+              <div class="metric-val">${fmtVnd(s.spent)}</div>
+              <div class="metric-lbl">Tổng chi tiêu</div>
             </div>
           </div>
         </div>
 
         <div class="panel mt-2">
-          <div class="panel-title">👤 Thông tin cá nhân</div>
+          <h2 class="panel-title">${icon('user', { size: 15 })} Thông tin cá nhân</h2>
           <form id="profile-form">
             <div class="field">
-              <label class="label" for="pf-name">Họ và tên</label>
-              <input class="input" id="pf-name" value="${esc(u.fullName || '')}" required>
+              <label class="label" for="pf-name">Họ và tên <span class="req">*</span></label>
+              <input class="input" id="pf-name" name="fullName" autocomplete="name"
+                value="${esc(u.fullName || '')}" required>
             </div>
             <div class="field">
               <label class="label" for="pf-phone">Số điện thoại</label>
-              <input class="input" id="pf-phone" value="${esc(u.phone || '')}" placeholder="0912345678">
+              <input class="input" id="pf-phone" name="phone" type="tel" autocomplete="tel"
+                value="${esc(u.phone || '')}" placeholder="0912345678"
+                aria-describedby="pf-phone-hint">
+              <span class="form-hint" id="pf-phone-hint">Dùng để liên hệ khi cần hỗ trợ đơn hàng.</span>
             </div>
             <div class="field">
-              <label class="label">Email</label>
-              <input class="input" value="${esc(u.email)}" disabled style="opacity:.6">
+              <label class="label" for="pf-email">Email</label>
+              <input class="input" id="pf-email" type="email" value="${esc(u.email)}" disabled
+                aria-describedby="pf-email-hint">
+              <span class="form-hint" id="pf-email-hint">Email đăng nhập không thể thay đổi.</span>
             </div>
-            <button class="btn btn-primary" type="submit">Lưu thay đổi</button>
+            <button class="btn btn-primary" type="submit">${icon('check', { size: 14 })} Lưu thay đổi</button>
           </form>
         </div>
 
         <div class="panel mt-2">
-          <div class="panel-title">🔒 Đổi mật khẩu</div>
+          <h2 class="panel-title">${icon('lock', { size: 15 })} Đổi mật khẩu</h2>
           <form id="pwd-form">
             <div class="field">
               <label class="label" for="pw-cur">Mật khẩu hiện tại</label>
@@ -96,36 +114,57 @@ export async function mountAccount(root) {
             </div>
             <div class="field">
               <label class="label" for="pw-new">Mật khẩu mới</label>
-              <input class="input" id="pw-new" type="password" autocomplete="new-password" placeholder="Tối thiểu 8 ký tự, có chữ và số" required>
+              <input class="input" id="pw-new" type="password" autocomplete="new-password"
+                placeholder="Tối thiểu 8 ký tự, có chữ và số" aria-describedby="pw-new-hint" required>
+              <span class="form-hint" id="pw-new-hint">Tối thiểu 8 ký tự, nên có cả chữ và số.</span>
             </div>
             <div class="field">
               <label class="label" for="pw-confirm">Xác nhận mật khẩu mới</label>
               <input class="input" id="pw-confirm" type="password" autocomplete="new-password" required>
             </div>
-            <button class="btn btn-primary" type="submit">Đổi mật khẩu</button>
+            <button class="btn btn-primary" type="submit">${icon('shield', { size: 14 })} Đổi mật khẩu</button>
           </form>
         </div>
       </div>
 
       <div>
         <div class="panel">
-          <div class="panel-title">⚡ Thao tác nhanh</div>
-          <div class="flex flex-col gap-1">
-            <button class="btn btn-primary btn-block" data-go="/wallet">💰 Nạp tiền vào ví</button>
-            <button class="btn btn-ghost btn-block" data-go="/orders">📦 Đơn hàng của tôi</button>
-            <button class="btn btn-ghost btn-block" data-go="/licenses">🔑 License của tôi</button>
-            <button class="btn btn-ghost btn-block" data-go="/products">🛍️ Tiếp tục mua sắm</button>
+          <h2 class="panel-title">${icon('sliders', { size: 15 })} Thao tác nhanh</h2>
+          <div class="action-list">
+            <button class="action-item" data-go="/wallet">
+              ${icon('wallet', { size: 15 })} Nạp tiền vào ví ${icon('chevronRight', { size: 14, cls: 'chev' })}
+            </button>
+            <button class="action-item" data-go="/orders">
+              ${icon('package', { size: 15 })} Đơn hàng của tôi ${icon('chevronRight', { size: 14, cls: 'chev' })}
+            </button>
+            <button class="action-item" data-go="/licenses">
+              ${icon('key', { size: 15 })} License của tôi ${icon('chevronRight', { size: 14, cls: 'chev' })}
+            </button>
+            <button class="action-item" data-go="/products">
+              ${icon('bag', { size: 15 })} Tiếp tục mua sắm ${icon('chevronRight', { size: 14, cls: 'chev' })}
+            </button>
             ${u.role === 'admin' || u.role === 'staff'
-              ? `<button class="btn btn-ghost btn-block" data-go="/admin">⚙️ Trang quản trị</button>` : ''}
+              ? `<button class="action-item" data-go="/admin">
+                   ${icon('settings', { size: 15 })} Trang quản trị ${icon('chevronRight', { size: 14, cls: 'chev' })}
+                 </button>` : ''}
           </div>
         </div>
 
         <div class="panel mt-2">
-          <div class="panel-title">🛡️ Bảo mật tài khoản</div>
-          <div style="font-size:13px;color:var(--text-dim);line-height:1.8">
-            <div class="flex justify-between"><span>Mật khẩu</span><span class="text-green">Đã đặt ✓</span></div>
-            <div class="flex justify-between mt-1"><span>Phiên đăng nhập</span><span>Cookie HttpOnly</span></div>
-            <div class="flex justify-between mt-1"><span>Kết nối</span><span class="text-green">HTTPS ✓</span></div>
+          <h2 class="panel-title">${icon('shieldCheck', { size: 15 })} Bảo mật tài khoản</h2>
+          <div class="def-list">
+            <div class="def-row">
+              <span class="k">Mật khẩu</span>
+              <span class="v"><span class="pill pill-green">${icon('check', { size: 10 })} Đã đặt</span></span>
+            </div>
+            <div class="def-row">
+              <span class="k">Phiên đăng nhập</span>
+              <span class="v">Cookie HttpOnly</span>
+            </div>
+            <div class="def-row">
+              <span class="k">Kết nối</span>
+              <span class="v"><span class="pill pill-green">${icon('lock', { size: 10 })} HTTPS</span></span>
+            </div>
           </div>
         </div>
       </div>
@@ -162,7 +201,7 @@ export async function mountAccount(root) {
         body: { currentPassword: cur, newPassword: nw },
       });
       toast('Đã đổi mật khẩu. Các phiên khác đã bị đăng xuất.', 'success');
-      host.querySelector('#pw-form').reset();
+      host.querySelector('#pwd-form').reset();
     } catch (err) { toast(err.message, 'error'); }
   };
 }

@@ -1,7 +1,21 @@
 /** Trang chi tiết sản phẩm. */
-import { api, esc, fmtVnd, fmtNum, fmtDate, toast, navigate, loadingBlock, store } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, fmtDate, toast, navigate, loadingBlock, store, emptyBlock } from '../lib.js';
+import { icon } from '../icons.js';
 import { addToCart, state, notify } from '../state.js';
 import { productCard, bindProductCards } from './home.js';
+
+/** Dải sao dùng SVG — trước đây là ký tự sao phụ thuộc font hệ thống. */
+function ratingStars(value, size = 13) {
+  const rounded = Math.round(Number(value) || 0);
+  return `<span class="pd-stars" role="img" aria-label="${rounded} trên 5 sao">${
+    Array.from({ length: 5 }, (_, i) => icon('star', {
+      size,
+      fill: i < rounded,
+      cls: i < rounded ? 'star-on' : 'star-off',
+      stroke: i < rounded ? 1.2 : 1.4,
+    })).join('')
+  }</span>`;
+}
 
 export function renderProductDetail() {
   return `
@@ -18,12 +32,12 @@ export async function mountProductDetail(root, slug) {
   try {
     data = await api('/api/products/' + encodeURIComponent(slug));
   } catch (e) {
-    host.innerHTML = `<div class="empty-state">
-      <div class="ico">🔍</div>
-      <div class="t">Không tìm thấy sản phẩm</div>
-      <div class="d">${esc(e.message)}</div>
-      <button class="btn btn-primary btn-sm" onclick="location.hash='#/products'">Xem sản phẩm khác</button>
-    </div>`;
+    host.innerHTML = emptyBlock({
+      ico: 'search',
+      title: 'Không tìm thấy sản phẩm',
+      desc: e.message,
+      action: '<a class="btn btn-primary btn-sm" href="#/products">Xem sản phẩm khác</a>',
+    });
     return;
   }
 
@@ -31,75 +45,87 @@ export async function mountProductDetail(root, slug) {
   const isLicense = p.deliveryType === 'license';
   const inStock = p.stock > 0 || p.deliveryType === 'manual' || isLicense;
   const maxQty = isLicense ? 10 : Math.min(p.stock || 20, 20);
+  const stockLabel = inStock
+    ? (isLicense ? 'Giao tự động' : `Còn ${p.deliveryType === 'manual' ? 'hàng' : fmtNum(p.stock)}`)
+    : 'Hết hàng';
+  const badgeCls = p.badge === 'HOT' ? 'badge-hot' : p.badge === 'SALE' ? 'badge-sale' : 'badge-new';
 
   host.innerHTML = `
-    <div class="pd-breadcrumb">
-      <a href="#/">Trang chủ</a><span>/</span>
+    <nav class="pd-breadcrumb" aria-label="Đường dẫn">
+      <a href="#/">Trang chủ</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}
       <a href="#/products?category=${esc(p.categorySlug || '')}">${esc(p.categoryName || 'Sản phẩm')}</a>
-      <span>/</span><span style="color:var(--text)">${esc(p.name)}</span>
-    </div>
+      ${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}
+      <span class="text-dim">${esc(p.name)}</span>
+    </nav>
 
     <div class="pd-grid">
       <div>
         <div class="pd-image">
-          <img src="${esc(p.imageUrl || '')}" alt="${esc(p.name)}"
-            onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 400 275%22%3E%3Crect fill=%22%23141424%22 width=%22400%22 height=%22275%22/%3E%3Ctext x=%2250%25%22 y=%2255%25%22 font-size=%2270%22 text-anchor=%22middle%22%3E%F0%9F%94%91%3C/text%3E%3C/svg%3E'">
+          ${p.imageUrl
+            ? `<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" onerror="this.remove()">`
+            : ''}
+          <span class="pd-image-fallback" aria-hidden="true">${icon('package', { size: 34 })}</span>
         </div>
 
         <div class="info-strips">
           <div class="info-strip">
-            <div class="ico">⚡</div>
+            <div class="ico">${icon('bolt', { size: 17 })}</div>
             <div class="t">Giao tự động</div>
             <div class="d">Nhận key ngay sau thanh toán</div>
           </div>
           <div class="info-strip">
-            <div class="ico">🛡️</div>
-            <div class="t">Bảo hành ${p.warrantyDays} ngày</div>
-            <div class="d">1 đổi 1 nếu key lỗi</div>
+            <div class="ico">${icon('shieldCheck', { size: 17 })}</div>
+            <div class="t">Bảo hành ${fmtNum(p.warrantyDays)} ngày</div>
+            <div class="d">Đổi mới nếu key không hoạt động</div>
           </div>
           <div class="info-strip">
-            <div class="ico">💳</div>
+            <div class="ico">${icon('card', { size: 17 })}</div>
             <div class="t">VietQR</div>
-            <div class="d">Nạp ví tự động 24/7</div>
+            <div class="d">Nạp ví tự động, không gián đoạn</div>
           </div>
         </div>
 
         <div class="panel mt-3">
-          <div class="panel-title">📋 Mô tả sản phẩm</div>
-          <div style="font-size:14px;color:var(--text-dim);line-height:1.75;white-space:pre-wrap">${esc(p.description || p.shortDesc || 'Đang cập nhật...')}</div>
+          <h2 class="panel-title">${icon('file', { size: 15 })} Mô tả sản phẩm</h2>
+          <div class="pd-desc">${esc(p.description || p.shortDesc || 'Đang cập nhật.')}</div>
         </div>
 
         ${data.reviews && data.reviews.length ? `
         <div class="panel mt-3">
-          <div class="panel-title">💬 Đánh giá từ khách hàng (${fmtNum(p.ratingCount)})</div>
-          <div style="display:flex;flex-direction:column;gap:14px">
+          <h2 class="panel-title">${icon('messageCircle', { size: 15 })} Đánh giá từ khách hàng
+            <span class="pd-count">${fmtNum(p.ratingCount)}</span>
+          </h2>
+          <div class="pd-reviews">
             ${data.reviews.map((r) => `
-              <div style="padding:14px;border-radius:12px;background:rgba(255,255,255,.035);border:1px solid var(--border)">
-                <div class="flex justify-between items-center mb-1" style="gap:10px">
-                  <div style="font-size:13.5px;font-weight:800">${esc(r.author)}</div>
-                  <div style="color:var(--gold);font-size:12.5px">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</div>
-                </div>
-                <div style="font-size:13.5px;color:var(--text-dim);line-height:1.6">${esc(r.comment || '')}</div>
-                <div style="font-size:11.5px;color:var(--text-mute);margin-top:6px">${fmtDate(r.createdAt)}</div>
-              </div>`).join('')}
+              <article class="pd-review">
+                <header class="pd-review-head">
+                  <span class="pd-review-author">${esc(r.author)}</span>
+                  ${ratingStars(r.rating, 12)}
+                </header>
+                <p class="pd-review-body">${esc(r.comment || '')}</p>
+                <time class="pd-review-time">${fmtDate(r.createdAt)}</time>
+              </article>`).join('')}
           </div>
         </div>` : ''}
       </div>
 
       <div>
-        <div class="panel" style="position:sticky;top:calc(var(--header-h) + 20px)">
-          <div class="flex gap-1 mb-2" style="flex-wrap:wrap">
-            ${p.badge ? `<span class="badge ${p.badge === 'HOT' ? 'badge-hot' : p.badge === 'SALE' ? 'badge-sale' : 'badge-new'}" style="position:static">${esc(p.badge)}</span>` : ''}
-            <span class="pill ${inStock ? 'pill-green' : 'pill-red'}">${inStock ? (isLicense ? '● Giao tự động' : `● Còn ${p.deliveryType === 'manual' ? 'hàng' : p.stock}`) : '● Hết hàng'}</span>
-            <span class="pill pill-blue">${esc(p.durationLabel || 'Theo gói')}</span>
+        <div class="panel pd-buy">
+          <div class="pd-flags">
+            ${p.badge ? `<span class="badge ${badgeCls} pd-badge-inline">${esc(p.badge)}</span>` : ''}
+            <span class="pill ${inStock ? 'pill-green' : 'pill-red'}">
+              <span class="dot"></span>${stockLabel}
+            </span>
+            ${p.durationLabel ? `<span class="pill pill-gray">${esc(p.durationLabel)}</span>` : ''}
           </div>
 
-          <h1 class="pd-title" style="font-size:clamp(1.4rem,2.6vw,1.9rem)">${esc(p.name)}</h1>
+          <h1 class="pd-title">${esc(p.name)}</h1>
 
           <div class="pd-rating">
-            <span style="color:var(--gold);font-size:15px">${'★'.repeat(Math.round(p.rating))}</span>
-            <span><strong style="color:var(--text)">${Number(p.rating).toFixed(1)}</strong> (${fmtNum(p.ratingCount)} đánh giá)</span>
-            <span>·</span><span>Đã bán ${fmtNum(p.sold)}</span>
+            ${ratingStars(p.rating)}
+            <span><strong class="text-strong">${Number(p.rating).toFixed(1)}</strong> (${fmtNum(p.ratingCount)} đánh giá)</span>
+            <span class="pd-dot" aria-hidden="true">·</span>
+            <span>Đã bán ${fmtNum(p.sold)}</span>
           </div>
 
           <div class="pd-price">
@@ -110,33 +136,33 @@ export async function mountProductDetail(root, slug) {
 
           ${p.features && p.features.length ? `
           <ul class="feature-list">
-            ${p.features.map((f) => `<li><span class="tick">✓</span><span>${esc(f)}</span></li>`).join('')}
+            ${p.features.map((f) => `<li><span class="tick">${icon('check', { size: 11, stroke: 2.4 })}</span><span>${esc(f)}</span></li>`).join('')}
           </ul>` : ''}
 
           <div class="qty-row">
-            <span class="label" style="margin:0">Số lượng</span>
+            <label class="label pd-qty-label" for="qty-val">Số lượng</label>
             <div class="qty-ctrl">
-              <button id="qty-dec" aria-label="Giảm">−</button>
+              <button type="button" id="qty-dec" aria-label="Giảm số lượng">${icon('minus', { size: 14 })}</button>
               <input id="qty-val" type="text" value="1" inputmode="numeric" aria-label="Số lượng">
-              <button id="qty-inc" aria-label="Tăng">+</button>
+              <button type="button" id="qty-inc" aria-label="Tăng số lượng">${icon('plus', { size: 14 })}</button>
             </div>
-            <span style="font-size:12.5px;color:var(--text-mute)">Tối đa ${maxQty}</span>
+            <span class="pd-qty-max">Tối đa ${maxQty}</span>
           </div>
 
-          <div class="flex gap-1" style="flex-direction:column">
+          <div class="pd-actions">
             <button class="btn btn-primary btn-lg btn-block" id="btn-add-cart" ${!inStock ? 'disabled' : ''}>
-              🛒 ${inStock ? 'Thêm vào giỏ hàng' : 'Tạm hết hàng'}
+              ${icon('cart', { size: 16 })}${inStock ? 'Thêm vào giỏ hàng' : 'Tạm hết hàng'}
             </button>
-            <button class="btn btn-gold btn-block" id="btn-buy-now" ${!inStock ? 'disabled' : ''}>
-              ⚡ Mua ngay
+            <button class="btn btn-ghost btn-block" id="btn-buy-now" ${!inStock ? 'disabled' : ''}>
+              ${icon('bolt', { size: 15 })}Mua ngay
             </button>
           </div>
 
-          <div class="alert alert-info mt-2" style="margin-bottom:0">
-            <span class="ico">${isLicense ? '⚡' : '💡'}</span>
+          <div class="alert alert-info pd-note">
+            <span class="ico">${icon(isLicense ? 'key' : 'info', { size: 15 })}</span>
             <span>${isLicense
-              ? 'Sau khi thanh toán, bạn nhận <strong>lệnh CMD cài đặt tự động</strong> — dán vào CMD là tool tự cài, kích hoạt và tạo shortcut Desktop.'
-              : 'Sau khi thanh toán, key sẽ hiển thị ngay trong mục <strong>Đơn hàng</strong> và gửi về email của bạn.'}</span>
+              ? 'Sau khi thanh toán, bạn nhận <strong>lệnh CMD cài đặt tự động</strong>. Dán vào CMD để tool tự cài, kích hoạt và tạo shortcut trên Desktop.'
+              : 'Sau khi thanh toán, key hiển thị ngay trong mục <strong>Đơn hàng</strong> và được gửi về email của bạn.'}</span>
           </div>
         </div>
       </div>
@@ -145,8 +171,10 @@ export async function mountProductDetail(root, slug) {
     ${data.related && data.related.length ? `
     <div class="mt-4">
       <div class="sec-head">
-        <h2 class="sec-title" style="font-size:1.35rem">Sản phẩm liên quan</h2>
-        <a href="#/products?category=${esc(p.categorySlug || '')}" class="sec-link">Xem tất cả →</a>
+        <h2 class="sec-title pd-related-title">Sản phẩm liên quan</h2>
+        <a href="#/products?category=${esc(p.categorySlug || '')}" class="sec-link">
+          Xem tất cả${icon('arrowRight', { size: 13 })}
+        </a>
       </div>
       <div class="grid-products" id="related-grid">${data.related.map(productCard).join('')}</div>
     </div>` : ''}

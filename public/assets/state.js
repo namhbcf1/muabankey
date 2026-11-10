@@ -135,9 +135,10 @@ export async function refreshBalance() {
 }
 
 export function updateBalanceChip() {
+  // #balance-chip nằm trong nút ví ở header; chỉ cập nhật phần số, giữ nguyên icon.
   const el = document.getElementById('balance-chip');
   if (el && state.user) {
-    el.innerHTML = `💰 ${new Intl.NumberFormat('vi-VN').format(state.user.balance)}₫`;
+    el.textContent = `${new Intl.NumberFormat('vi-VN').format(state.user.balance)}₫`;
   }
 }
 

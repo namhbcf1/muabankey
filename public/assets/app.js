@@ -1,6 +1,7 @@
 /** MuaBanKey SPA — bộ định tuyến & khởi tạo. */
-import { parseRoute, navigate, toast, loadingBlock } from './lib.js';
+import { parseRoute, navigate, toast, loadingBlock, esc } from './lib.js';
 import { state, loadUser, loadCategories, refreshBalance } from './state.js';
+import { icon } from './icons.js';
 import {
   renderHeader, bindHeader, renderFooter, renderAiWidget, bindAiWidget,
 } from './components.js';
@@ -34,18 +35,26 @@ const ROUTES = [
 
 let currentCleanup = null;
 
-function renderNotFound(app) {
+function renderNotFound() {
   return `
   <div id="site-header"></div>
-  <div class="container section" style="text-align:center;min-height:60vh;display:grid;place-items:center">
-    <div>
-      <div style="font-size:80px;margin-bottom:16px">🔍</div>
-      <h1 style="font-size:2rem;font-weight:800;letter-spacing:-.03em;margin-bottom:10px">Không tìm thấy trang</h1>
-      <p style="color:var(--text-dim);margin-bottom:24px">Đường dẫn bạn truy cập không tồn tại hoặc đã bị di chuyển.</p>
-      <button class="btn btn-primary" onclick="location.hash='#/'">← Về trang chủ</button>
+  <div class="nf-wrap">
+    <div class="nf-inner">
+      <div class="nf-eyebrow">${icon('search', { size: 13 })}<span>Lỗi 404</span></div>
+      <h1 class="nf-title">Không tìm thấy trang</h1>
+      <p class="nf-desc">Đường dẫn bạn truy cập không tồn tại hoặc đã bị di chuyển.</p>
+      <div class="nf-actions">
+        <button class="btn btn-primary" data-nf-home>${icon('arrowLeft', { size: 15 })} Về trang chủ</button>
+        <button class="btn btn-ghost" data-nf-products>Xem sản phẩm</button>
+      </div>
     </div>
   </div>
   <div id="site-footer"></div>`;
+}
+
+function bindNotFound(app) {
+  app.querySelector('[data-nf-home]')?.addEventListener('click', () => navigate('/'));
+  app.querySelector('[data-nf-products]')?.addEventListener('click', () => navigate('/products'));
 }
 
 function mountChrome(app) {
@@ -93,8 +102,9 @@ async function router() {
   }
 
   if (!matched) {
-    app.innerHTML = renderNotFound(app);
+    app.innerHTML = renderNotFound();
     mountChrome(app);
+    bindNotFound(app);
     window.scrollTo(0, 0);
     return;
   }
@@ -111,7 +121,7 @@ async function router() {
     const contentHost = app.querySelector('.container') || app;
     if (app.querySelector('.empty-state') === null) {
       contentHost.insertAdjacentHTML('afterbegin',
-        `<div class="alert alert-error"><span class="ico">⚠️</span><span>${e.message || 'Đã có lỗi xảy ra'}</span></div>`);
+        `<div class="alert alert-error"><span class="ico">${icon('alert', { size: 15 })}</span><span>${esc(e.message || 'Đã có lỗi xảy ra')}</span></div>`);
     }
   }
 

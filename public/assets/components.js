@@ -1,6 +1,7 @@
 /** Các component tái sử dụng: header, footer, cart drawer, AI chat. */
 import { state, notify, cartCount, cartSubtotal, updateCartQty, removeFromCart, clearCart, addToCart, loadUser, refreshBalance } from './state.js';
 import { api, esc, fmtVnd, toast, navigate, copyText, confirmDialog, openModal } from './lib.js';
+import { icon } from './icons.js';
 
 /* ---------------- Header ---------------- */
 export function renderHeader() {
@@ -9,25 +10,32 @@ export function renderHeader() {
   const isActive = (p) => (p === '/' ? path === '/' : path.startsWith(p));
 
   const userArea = u
-    ? `<div class="balance-chip" id="balance-chip" title="Số dư ví">💰 ${new Intl.NumberFormat('vi-VN').format(u.balance)}₫</div>
-       <button class="icon-btn" data-nav="/account" title="Tài khoản">
-         <span style="font-size:15px">${esc((u.fullName || u.email)[0].toUpperCase())}</span>
+    ? `<button class="balance-chip" data-nav="/wallet" title="Số dư ví" aria-label="Số dư ví, mở trang nạp tiền">
+         ${icon('wallet', { size: 14 })}
+         <span id="balance-chip">${new Intl.NumberFormat('vi-VN').format(u.balance)}₫</span>
+       </button>
+       <button class="icon-btn" data-nav="/account" aria-label="Tài khoản">
+         <span style="font-size:11.5px;font-weight:600">${esc((u.fullName || u.email || 'U')[0].toUpperCase())}</span>
        </button>
        ${u.role === 'admin' || u.role === 'staff'
-         ? `<button class="btn btn-ghost btn-sm" data-nav="/admin">⚙️ Quản trị</button>`
+         ? `<button class="icon-btn" data-nav="/admin" aria-label="Quản trị" title="Quản trị">${icon('sliders', { size: 15 })}</button>`
          : ''}
-       <button class="btn btn-ghost btn-sm" id="btn-logout" title="Đăng xuất">⏻</button>`
+       <button class="icon-btn" id="btn-logout" aria-label="Đăng xuất" title="Đăng xuất">${icon('logout', { size: 15 })}</button>`
     : `<button class="btn btn-ghost btn-sm" data-nav="/login">Đăng nhập</button>
        <button class="btn btn-primary btn-sm" data-nav="/register">Đăng ký</button>`;
 
   return `
   <header class="header" id="main-header">
     <div class="header-inner">
-      <a href="#/" class="logo">
-        <div class="logo-mark">🔑</div>
-        <div class="logo-text">MuaBanKey</div>
+      <button class="icon-btn nav-toggle" id="nav-toggle" aria-label="Mở menu điều hướng"
+        aria-expanded="false" aria-controls="mobile-nav">
+        ${icon('menu', { size: 16 })}
+      </button>
+      <a href="#/" class="logo" aria-label="MuaBanKey — trang chủ">
+        <div class="logo-mark">${icon('key', { size: 16, stroke: 1.8 })}</div>
+        <div class="logo-text">Mua<b>Ban</b>Key</div>
       </a>
-      <nav class="nav">
+      <nav class="nav" aria-label="Điều hướng chính">
         <a href="#/" class="nav-link ${isActive('/') ? 'active' : ''}">Trang chủ</a>
         <a href="#/products" class="nav-link ${isActive('/products') ? 'active' : ''}">Sản phẩm</a>
         <a href="#/orders" class="nav-link ${isActive('/orders') ? 'active' : ''}">Đơn hàng</a>
@@ -35,24 +43,36 @@ export function renderHeader() {
         <a href="#/support" class="nav-link ${isActive('/support') ? 'active' : ''}">Hỗ trợ</a>
       </nav>
       <div class="search-mini">
-        <span style="color:var(--text-mute);font-size:14px">🔍</span>
-        <input type="search" id="search-input" placeholder="Tìm key, phần mềm..." aria-label="Tìm kiếm sản phẩm">
+        ${icon('search', { size: 14 })}
+        <input type="search" id="search-input" placeholder="Tìm sản phẩm..." aria-label="Tìm kiếm sản phẩm">
       </div>
       <div class="header-actions">
-        <button class="icon-btn" id="btn-cart" title="Giỏ hàng">
-          🛒<span class="badge-dot" id="cart-badge" style="display:none">0</span>
+        <button class="icon-btn" id="btn-cart" aria-label="Giỏ hàng" title="Giỏ hàng">
+          ${icon('cart', { size: 15 })}
+          <span class="badge-dot" id="cart-badge" style="display:none" aria-hidden="true">0</span>
         </button>
         ${userArea}
       </div>
+    </div>
+    <div class="mobile-nav" id="mobile-nav">
+      <nav aria-label="Điều hướng di động">
+        <a href="#/" class="mobile-nav-link ${isActive('/') ? 'active' : ''}">${icon('home', { size: 15 })} Trang chủ</a>
+        <a href="#/products" class="mobile-nav-link ${isActive('/products') ? 'active' : ''}">${icon('grid', { size: 15 })} Sản phẩm</a>
+        <a href="#/orders" class="mobile-nav-link ${isActive('/orders') ? 'active' : ''}">${icon('receipt', { size: 15 })} Đơn hàng</a>
+        <a href="#/wallet" class="mobile-nav-link ${isActive('/wallet') ? 'active' : ''}">${icon('wallet', { size: 15 })} Nạp tiền</a>
+        <a href="#/support" class="mobile-nav-link ${isActive('/support') ? 'active' : ''}">${icon('help', { size: 15 })} Hỗ trợ</a>
+      </nav>
     </div>
   </header>`;
 }
 
 export function bindHeader() {
   const header = document.getElementById('main-header');
-  window.addEventListener('scroll', () => {
-    if (header) header.classList.toggle('scrolled', window.scrollY > 10);
-  }, { passive: true });
+  if (header) {
+    const onScroll = () => header.classList.toggle('scrolled', window.scrollY > 10);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  }
 
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => navigate(el.dataset.nav));
@@ -87,6 +107,39 @@ export function bindHeader() {
     });
   }
 
+  /*
+   * Menu di động. Trước đây .nav bị ẩn dưới 900px mà không có phương án thay
+   * thế, nên trên điện thoại không có cách nào tới Đơn hàng / Nạp tiền / Hỗ trợ.
+   * Menu đóng khi chọn một mục, bấm ngoài, hoặc nhấn Escape.
+   */
+  const navToggle = document.getElementById('nav-toggle');
+  const mobileNav = document.getElementById('mobile-nav');
+  if (navToggle && mobileNav) {
+    const setOpen = (open) => {
+      mobileNav.classList.toggle('open', open);
+      navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      navToggle.setAttribute('aria-label', open ? 'Đóng menu điều hướng' : 'Mở menu điều hướng');
+    };
+    navToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(!mobileNav.classList.contains('open'));
+    });
+    mobileNav.querySelectorAll('a').forEach((a) => {
+      a.addEventListener('click', () => setOpen(false));
+    });
+    document.addEventListener('click', (e) => {
+      if (!mobileNav.classList.contains('open')) return;
+      if (mobileNav.contains(e.target) || navToggle.contains(e.target)) return;
+      setOpen(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && mobileNav.classList.contains('open')) {
+        setOpen(false);
+        navToggle.focus();
+      }
+    });
+  }
+
   const badge = document.getElementById('cart-badge');
   if (badge) {
     const n = cartCount();
@@ -117,6 +170,8 @@ export function openCartDrawer() {
     drawer = document.createElement('aside');
     drawer.className = 'drawer';
     drawer.id = 'cart-drawer';
+    drawer.setAttribute('role', 'dialog');
+    drawer.setAttribute('aria-label', 'Giỏ hàng');
     document.body.appendChild(drawer);
   }
   overlay.onclick = closeCartDrawer;
@@ -125,6 +180,8 @@ export function openCartDrawer() {
     overlay.classList.add('open');
     drawer.classList.add('open');
   });
+  const closeBtn = drawer.querySelector('#close-cart');
+  if (closeBtn) closeBtn.focus();
 }
 
 export function closeCartDrawer() {
@@ -139,15 +196,17 @@ function renderCartDrawer(drawer) {
   drawer.innerHTML = `
     <div class="drawer-head">
       <div>
-        <div class="drawer-title">🛒 Giỏ hàng</div>
-        <div style="font-size:12.5px;color:var(--text-mute);margin-top:2px">${items.length} sản phẩm</div>
+        <div class="drawer-title">${icon('cart', { size: 16 })} Giỏ hàng</div>
+        <div style="font-size:12px;color:var(--text-mute);margin-top:2px">${items.length} sản phẩm</div>
       </div>
-      <button class="icon-btn" id="close-cart" style="width:36px;height:36px">✕</button>
+      <button class="icon-btn" id="close-cart" style="width:30px;height:30px" aria-label="Đóng giỏ hàng">
+        ${icon('x', { size: 14 })}
+      </button>
     </div>
     <div class="drawer-body" id="cart-body">
       ${items.length === 0
         ? `<div class="empty-state">
-             <div class="ico">🛒</div>
+             <div class="ico">${icon('cart', { size: 28 })}</div>
              <div class="t">Giỏ hàng trống</div>
              <div class="d">Khám phá các sản phẩm bản quyền chất lượng</div>
              <button class="btn btn-primary btn-sm" data-nav-close="/products">Xem sản phẩm</button>
@@ -155,25 +214,27 @@ function renderCartDrawer(drawer) {
         : items.map((i) => `
             <div class="cart-item" data-pid="${esc(i.productId)}">
               <img class="cart-thumb" src="${esc(i.imageUrl || '')}" alt="" loading="lazy"
-                onerror="this.style.background='#1a1a2e';this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%94%91%3C/text%3E%3C/svg%3E'">
+                onerror="this.style.background='var(--surface-2)';this.removeAttribute('src')">
               <div class="cart-info">
                 <div class="cart-name">${esc(i.name)}</div>
                 <div class="cart-price">${fmtVnd(i.price)}</div>
-                <div class="qty-ctrl" style="margin-top:7px;transform:scale(.86);transform-origin:left">
-                  <button data-dec>−</button>
-                  <input value="${i.quantity}" data-qty readonly aria-label="Số lượng">
-                  <button data-inc>+</button>
+                <div class="qty-ctrl" style="margin-top:7px;height:28px">
+                  <button data-dec aria-label="Giảm số lượng" style="width:28px;height:26px">${icon('minus', { size: 12 })}</button>
+                  <input value="${i.quantity}" data-qty readonly aria-label="Số lượng" style="width:34px;height:26px;font-size:12.5px">
+                  <button data-inc aria-label="Tăng số lượng" style="width:28px;height:26px">${icon('plus', { size: 12 })}</button>
                 </div>
               </div>
-              <button class="cart-remove" data-rm title="Xoá">✕</button>
+              <button class="cart-remove" data-rm aria-label="Xoá khỏi giỏ">${icon('x', { size: 14 })}</button>
             </div>`).join('')}
     </div>
     ${items.length > 0 ? `
     <div class="drawer-foot">
       <div class="summary-row"><span>Tạm tính</span><span>${fmtVnd(subtotal)}</span></div>
       <div class="summary-row total"><span>Tổng cộng</span><span class="val">${fmtVnd(subtotal)}</span></div>
-      <button class="btn btn-primary btn-block mt-2" id="goto-checkout">Thanh toán ngay →</button>
-      <button class="btn btn-ghost btn-block mt-1" id="clear-cart" style="font-size:13px">Xoá giỏ hàng</button>
+      <button class="btn btn-primary btn-block mt-2" id="goto-checkout">
+        Thanh toán ${icon('arrowRight', { size: 14 })}
+      </button>
+      <button class="btn btn-ghost btn-block mt-1" id="clear-cart" style="font-size:12.5px">Xoá giỏ hàng</button>
     </div>` : ''}
   `;
 
@@ -227,26 +288,29 @@ export function renderFooter() {
     <div class="container">
       <div class="footer-grid">
         <div class="footer-brand">
-          <div class="logo"><div class="logo-mark">🔑</div><div class="logo-text">MuaBanKey</div></div>
+          <div class="logo">
+            <div class="logo-mark">${icon('key', { size: 16, stroke: 1.8 })}</div>
+            <div class="logo-text">Mua<b>Ban</b>Key</div>
+          </div>
           <p class="footer-desc">
             Nền tảng mua bán bản quyền số hàng đầu Việt Nam. Key chính hãng, giao tự động 24/7,
             bảo hành 1 đổi 1, thanh toán an toàn qua VietQR.
           </p>
-          <div class="flex gap-1 mt-2">
-            <span class="pill pill-green">🔒 SSL 256-bit</span>
-            <span class="pill pill-blue">⚡ Uptime 99.9%</span>
+          <div class="flex gap-1 mt-2" style="flex-wrap:wrap">
+            <span class="pill pill-gray">${icon('lock', { size: 11 })} SSL 256-bit</span>
+            <span class="pill pill-gray">${icon('activity', { size: 11 })} Uptime 99.9%</span>
           </div>
         </div>
         <div class="footer-col">
-          <h4>Sản phẩm</h4>
-          <a href="#/products?category=windows-office">Windows & Office</a>
+          <h2 class="footer-h">Sản phẩm</h2>
+          <a href="#/products?category=windows-office">Windows &amp; Office</a>
           <a href="#/products?category=ai-tools">Công cụ AI</a>
           <a href="#/products?category=thiet-ke">Thiết kế</a>
           <a href="#/products?category=giai-tri">Giải trí</a>
           <a href="#/products?category=lap-trinh">Lập trình</a>
         </div>
         <div class="footer-col">
-          <h4>Hỗ trợ</h4>
+          <h2 class="footer-h">Hỗ trợ</h2>
           <a href="#/support">Trung tâm hỗ trợ</a>
           <a href="#/support#warranty">Chính sách bảo hành</a>
           <a href="#/support#refund">Chính sách hoàn tiền</a>
@@ -254,16 +318,16 @@ export function renderFooter() {
           <a href="#/support#faq">Câu hỏi thường gặp</a>
         </div>
         <div class="footer-col">
-          <h4>Liên hệ</h4>
-          <a href="https://t.me/muabankey" target="_blank" rel="noopener">✈️ Telegram</a>
-          <a href="https://zalo.me/0836768597" target="_blank" rel="noopener">💬 Zalo</a>
-          <a href="mailto:support@muabankey.vn">✉️ support@muabankey.vn</a>
-          <a href="#/account">👤 Tài khoản</a>
+          <h2 class="footer-h">Liên hệ</h2>
+          <a href="https://t.me/muabankey" target="_blank" rel="noopener">${icon('send', { size: 13 })} Telegram</a>
+          <a href="https://zalo.me/0836768597" target="_blank" rel="noopener">${icon('messageCircle', { size: 13 })} Zalo</a>
+          <a href="mailto:support@muabankey.vn">${icon('mail', { size: 13 })} support@muabankey.vn</a>
+          <a href="#/account">${icon('user', { size: 13 })} Tài khoản</a>
         </div>
       </div>
       <div class="footer-bottom">
         <div>© ${new Date().getFullYear()} MuaBanKey. Toàn quyền được bảo lưu.</div>
-        <div>Hệ thống vận hành trên Cloudflare Edge — 300+ điểm hiện diện toàn cầu</div>
+        <div>Vận hành trên Cloudflare Edge — 300+ điểm hiện diện toàn cầu</div>
       </div>
     </div>
   </footer>`;
@@ -272,29 +336,33 @@ export function renderFooter() {
 /* ---------------- AI Chat ---------------- */
 export function renderAiWidget() {
   return `
-    <button class="ai-fab" id="ai-fab" title="Trợ lý AI tư vấn" aria-label="Mở trợ lý AI">🤖</button>
-    <div class="ai-panel" id="ai-panel">
+    <button class="ai-fab" id="ai-fab" aria-label="Mở trợ lý tư vấn" title="Trợ lý tư vấn">
+      ${icon('sparkles', { size: 19 })}
+    </button>
+    <div class="ai-panel" id="ai-panel" role="dialog" aria-label="Trợ lý tư vấn">
       <div class="ai-head">
-        <div class="ai-avatar">🤖</div>
+        <div class="ai-avatar">${icon('bot', { size: 17 })}</div>
         <div style="flex:1">
           <div class="ai-name">Key Bot</div>
           <div class="ai-status"><span class="dot"></span>Trực tuyến 24/7</div>
         </div>
-        <button class="icon-btn" id="ai-close" style="width:32px;height:32px;font-size:13px">✕</button>
+        <button class="icon-btn" id="ai-close" style="width:28px;height:28px" aria-label="Đóng trợ lý">
+          ${icon('x', { size: 13 })}
+        </button>
       </div>
       <div class="ai-body" id="ai-body">
         <div class="ai-msg bot">
-          Xin chào 👋 Mình là Key Bot. Bạn đang tìm phần mềm gì? Mình sẽ tư vấn sản phẩm phù hợp nhất với nhu cầu của bạn.
+          Xin chào. Mình là Key Bot — cho mình biết bạn đang tìm phần mềm gì, mình sẽ gợi ý sản phẩm phù hợp nhất.
         </div>
         <div class="ai-sugg">
-          <button class="ai-sugg-item" data-q="Tôi cần mua Windows 11 bản quyền">Mua Windows 11 bản quyền <span class="p">→</span></button>
-          <button class="ai-sugg-item" data-q="Gói AI nào tốt nhất cho công việc?">Gói AI tốt nhất cho công việc <span class="p">→</span></button>
-          <button class="ai-sugg-item" data-q="Hướng dẫn nạp tiền vào ví">Cách nạp tiền vào ví <span class="p">→</span></button>
+          <button class="ai-sugg-item" data-q="Tôi cần mua Windows 11 bản quyền">Mua Windows 11 bản quyền ${icon('arrowRight', { size: 12 })}</button>
+          <button class="ai-sugg-item" data-q="Gói AI nào tốt nhất cho công việc?">Gói AI tốt nhất cho công việc ${icon('arrowRight', { size: 12 })}</button>
+          <button class="ai-sugg-item" data-q="Hướng dẫn nạp tiền vào ví">Cách nạp tiền vào ví ${icon('arrowRight', { size: 12 })}</button>
         </div>
       </div>
       <div class="ai-input-row">
-        <input class="ai-input" id="ai-input" placeholder="Nhập câu hỏi..." aria-label="Câu hỏi cho trợ lý AI">
-        <button class="ai-send" id="ai-send" aria-label="Gửi">➤</button>
+        <input class="ai-input" id="ai-input" placeholder="Nhập câu hỏi..." aria-label="Câu hỏi cho trợ lý">
+        <button class="ai-send" id="ai-send" aria-label="Gửi">${icon('send', { size: 15 })}</button>
       </div>
     </div>`;
 }
@@ -310,7 +378,7 @@ export function bindAiWidget() {
 
   const toggle = () => {
     panel.classList.toggle('open');
-    if (panel.classList.contains('open')) setTimeout(() => input?.focus(), 320);
+    if (panel.classList.contains('open')) setTimeout(() => input?.focus(), 220);
   };
   fab.onclick = toggle;
   if (close) close.onclick = () => panel.classList.remove('open');

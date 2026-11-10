@@ -1,5 +1,6 @@
 /** Trang hỗ trợ: FAQ, chính sách, hướng dẫn. */
 import { esc } from '../lib.js';
+import { icon } from '../icons.js';
 
 const FAQS = [
   ['Key tôi mua có phải hàng chính hãng không?',
@@ -16,6 +17,36 @@ const FAQS = [
    'Về mặt kỹ thuật key đã bind vào tài khoản của bạn nên không chuyển nhượng được. Chúng tôi không hỗ trợ việc mua bán lại.'],
 ];
 
+/** Bốn bước mua hàng — tách ra ngoài để template dễ đọc. */
+const STEPS = [
+  ['1', 'Tạo tài khoản', 'Đăng ký bằng tài khoản và mật khẩu. Xác nhận trong vài giây, không cần chờ duyệt.'],
+  ['2', 'Nạp tiền vào ví', 'Vào mục "Nạp tiền", chọn số tiền, quét mã VietQR bằng app ngân hàng. Tiền vào ví tự động.'],
+  ['3', 'Chọn sản phẩm', 'Thêm sản phẩm vào giỏ hàng hoặc bấm "Mua ngay". Kiểm tra tồn kho trước khi đặt.'],
+  ['4', 'Thanh toán và nhận key', 'Bấm "Xác nhận thanh toán". Key hiển thị ngay và được lưu vĩnh viễn trong mục Đơn hàng.'],
+];
+
+const WARRANTY_ROWS = [
+  ['Windows & Office', '365 ngày, 1 đổi 1'],
+  ['Công cụ AI (ChatGPT, Claude, Gemini)', '30 ngày'],
+  ['Streaming (Netflix, Spotify, YouTube)', 'Đổi mới ngay khi có lỗi'],
+  ['Bảo mật & VPN', '365 ngày'],
+];
+
+const REFUND_ROWS = [
+  'Đơn hàng không được giao trong 24 giờ',
+  'Key không hoạt động và không có hàng thay thế',
+  'Sản phẩm không đúng mô tả',
+];
+
+/** Danh sách có dấu tích. Mỗi dòng là HTML đã an toàn (tự dựng, không từ người dùng). */
+function checkList(rows) {
+  return `<ul class="sp-list">
+    ${rows.map((r) => `
+      <li><span class="sp-check">${icon('check', { size: 13, stroke: 2.2 })}</span>
+        <span>${r}</span></li>`).join('')}
+  </ul>`;
+}
+
 export function renderSupport() {
   return `
   <div id="site-header"></div>
@@ -25,92 +56,129 @@ export function renderSupport() {
       <div class="sec-head">
         <div>
           <h1 class="sec-title">Trung tâm hỗ trợ</h1>
-          <p class="sec-desc">Mọi thứ bạn cần biết về mua hàng, bảo hành và thanh toán</p>
+          <p class="sec-desc">Mua hàng, bảo hành, hoàn tiền và các câu hỏi thường gặp.</p>
         </div>
       </div>
 
+      <nav class="sp-jump" aria-label="Mục lục trang hỗ trợ">
+        <a href="#/support#guide" class="cat-chip">Hướng dẫn mua hàng</a>
+        <a href="#/support#warranty" class="cat-chip">Bảo hành</a>
+        <a href="#/support#refund" class="cat-chip">Hoàn tiền</a>
+        <a href="#/support#faq" class="cat-chip">Câu hỏi thường gặp</a>
+      </nav>
+
       <div class="checkout-grid">
-        <div>
-          <div class="panel" id="guide">
-            <div class="panel-title">🛒 Hướng dẫn mua hàng</div>
-            <div style="display:flex;flex-direction:column;gap:16px">
-              ${[
-                ['1', 'Tạo tài khoản', 'Đăng ký bằng email và mật khẩu. Xác nhận trong vài giây, không cần chờ duyệt.'],
-                ['2', 'Nạp tiền vào ví', 'Vào mục "Nạp tiền", chọn số tiền, quét mã VietQR bằng app ngân hàng. Tiền vào ví tự động.'],
-                ['3', 'Chọn sản phẩm', 'Thêm sản phẩm vào giỏ hàng hoặc bấm "Mua ngay". Kiểm tra tồn kho trước khi đặt.'],
-                ['4', 'Thanh toán & nhận key', 'Bấm "Xác nhận thanh toán". Key hiển thị ngay và được lưu vĩnh viễn trong mục Đơn hàng.'],
-              ].map(([n, t, d]) => `
-                <div class="flex gap-1" style="align-items:flex-start">
-                  <div style="width:29px;height:29px;border-radius:9px;display:grid;place-items:center;background:var(--grad-brand);color:#fff;font-weight:800;font-size:13px;flex-shrink:0">${n}</div>
-                  <div>
-                    <div style="font-size:14px;font-weight:800;margin-bottom:3px">${esc(t)}</div>
-                    <div style="font-size:13px;color:var(--text-mute);line-height:1.6">${esc(d)}</div>
-                  </div>
-                </div>`).join('')}
-            </div>
-          </div>
+        <div class="sp-col">
+          <section class="panel" id="guide" aria-labelledby="guide-title">
+            <h2 class="panel-title" id="guide-title">
+              <span class="pt-ico">${icon('cart', { size: 15 })}</span>
+              Hướng dẫn mua hàng
+            </h2>
+            <ol class="sp-steps">
+              ${STEPS.map(([n, t, d]) => `
+                <li class="sp-step">
+                  <span class="sp-step-n" aria-hidden="true">${n}</span>
+                  <span class="sp-step-body">
+                    <span class="sp-step-t">${esc(t)}</span>
+                    <span class="sp-step-d">${esc(d)}</span>
+                  </span>
+                </li>`).join('')}
+            </ol>
+          </section>
 
-          <div class="panel mt-2" id="warranty">
-            <div class="panel-title">🛡️ Chính sách bảo hành</div>
-            <div style="font-size:13.5px;color:var(--text-dim);line-height:1.8">
-              <p style="margin-bottom:12px"><strong style="color:var(--text)">Thời hạn bảo hành:</strong></p>
-              <ul style="list-style:none;display:flex;flex-direction:column;gap:7px;margin-bottom:16px">
-                <li>✓ Windows & Office: <strong>365 ngày</strong> (1 đổi 1)</li>
-                <li>✓ Công cụ AI (ChatGPT, Claude, Gemini): <strong>30 ngày</strong></li>
-                <li>✓ Streaming (Netflix, Spotify, YouTube): <strong>đổi mới ngay khi có lỗi</strong></li>
-                <li>✓ Bảo mật & VPN: <strong>365 ngày</strong></li>
-              </ul>
-              <p><strong style="color:var(--text)">Điều kiện bảo hành:</strong> Key không kích hoạt được, bị vô hiệu hoá bởi nhà sản xuất, hoặc tài khoản bị lỗi không do người dùng. Không áp dụng cho trường hợp cài đặt sai, dùng phần mềm crack, hoặc chia sẻ key cho nhiều người.</p>
+          <section class="panel mt-2" id="warranty" aria-labelledby="warranty-title">
+            <h2 class="panel-title" id="warranty-title">
+              <span class="pt-ico">${icon('shieldCheck', { size: 15 })}</span>
+              Chính sách bảo hành
+            </h2>
+            <div class="sp-body">
+              <div class="sp-label">Thời hạn bảo hành</div>
+              ${checkList(WARRANTY_ROWS.map(([k, v]) => `${esc(k)}: <strong>${esc(v)}</strong>`))}
+              <p>
+                <strong class="sp-strong">Điều kiện áp dụng:</strong>
+                key không kích hoạt được, bị vô hiệu hoá bởi nhà sản xuất, hoặc tài khoản bị lỗi
+                không do người dùng. Không áp dụng cho trường hợp cài đặt sai, dùng phần mềm crack
+                hoặc chia sẻ key cho nhiều người.
+              </p>
             </div>
-          </div>
+          </section>
 
-          <div class="panel mt-2" id="refund">
-            <div class="panel-title">↩️ Chính sách hoàn tiền</div>
-            <div style="font-size:13.5px;color:var(--text-dim);line-height:1.8">
-              <p style="margin-bottom:12px">Bạn được <strong class="text-green">hoàn 100% vào ví</strong> trong các trường hợp:</p>
-              <ul style="list-style:none;display:flex;flex-direction:column;gap:7px">
-                <li>✓ Đơn hàng không được giao trong 24 giờ</li>
-                <li>✓ Key không hoạt động và không có hàng thay thế</li>
-                <li>✓ Sản phẩm không đúng mô tả</li>
-              </ul>
-              <p class="mt-2">Tiền hoàn về ví trong vòng 1-2 giờ làm việc. Yêu cầu qua Telegram/Zalo kèm mã đơn hàng.</p>
+          <section class="panel mt-2" id="refund" aria-labelledby="refund-title">
+            <h2 class="panel-title" id="refund-title">
+              <span class="pt-ico">${icon('undo', { size: 15 })}</span>
+              Chính sách hoàn tiền
+            </h2>
+            <div class="sp-body">
+              <p>Bạn được <strong class="text-green">hoàn 100% vào ví</strong> trong các trường hợp:</p>
+              ${checkList(REFUND_ROWS.map(esc))}
+              <p>
+                Tiền hoàn về ví trong vòng 1-2 giờ làm việc. Gửi yêu cầu qua Telegram/Zalo kèm mã đơn hàng.
+              </p>
             </div>
-          </div>
+          </section>
 
-          <div class="panel mt-2" id="faq">
-            <div class="panel-title">❓ Câu hỏi thường gặp</div>
-            <div style="display:flex;flex-direction:column;gap:2px">
-              ${FAQS.map(([q, a], i) => `
-                <details style="border-bottom:1px solid var(--border);padding:13px 0">
-                  <summary style="cursor:pointer;font-size:14px;font-weight:700;list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-                    <span>${esc(q)}</span>
-                    <span style="color:#a99cff;font-size:18px;line-height:1;flex-shrink:0">+</span>
+          <section class="panel mt-2" id="faq" aria-labelledby="faq-title">
+            <h2 class="panel-title" id="faq-title">
+              <span class="pt-ico">${icon('help', { size: 15 })}</span>
+              Câu hỏi thường gặp
+            </h2>
+            <div class="sp-faq">
+              ${FAQS.map(([q, a]) => `
+                <details>
+                  <summary>
+                    <span class="sp-faq-q">${esc(q)}</span>
+                    <span class="sp-faq-ico" aria-hidden="true">${icon('chevronDown', { size: 15 })}</span>
                   </summary>
-                  <div style="font-size:13.5px;color:var(--text-dim);line-height:1.7;margin-top:10px">${esc(a)}</div>
+                  <div class="sp-faq-a">${esc(a)}</div>
                 </details>`).join('')}
             </div>
-          </div>
+          </section>
         </div>
 
         <div>
-          <div class="panel" style="position:sticky;top:calc(var(--header-h) + 20px)">
-            <div class="panel-title">📞 Liên hệ hỗ trợ</div>
-            <div class="flex flex-col gap-1">
-              <a class="btn btn-primary btn-block" href="https://t.me/muabankey" target="_blank" rel="noopener">✈️ Telegram (nhanh nhất)</a>
-              <a class="btn btn-ghost btn-block" href="https://zalo.me/0836768597" target="_blank" rel="noopener">💬 Zalo</a>
-              <a class="btn btn-ghost btn-block" href="mailto:support@muabankey.vn">✉️ support@muabankey.vn</a>
-            </div>
-            <div class="alert alert-info mt-2" style="margin-bottom:0;font-size:12.5px">
-              <span class="ico">⏰</span>
-              <span>Thời gian hỗ trợ: <strong>8:00 - 23:00</strong> hàng ngày (kể cả cuối tuần)</span>
+          <div class="panel sp-aside">
+            <h2 class="panel-title">
+              <span class="pt-ico">${icon('messageCircle', { size: 15 })}</span>
+              Liên hệ hỗ trợ
+            </h2>
+            <a class="btn btn-primary btn-block" href="https://t.me/muabankey" target="_blank" rel="noopener">
+              ${icon('send', { size: 15 })} Telegram — phản hồi nhanh nhất
+            </a>
+            <div class="sp-contact">
+              <a class="sp-contact-item" href="https://zalo.me/0836768597" target="_blank" rel="noopener">
+                <span class="ic-box">${icon('message', { size: 15 })}</span>
+                <span class="sp-contact-body">
+                  <span class="sp-contact-t">Zalo</span>
+                  <span class="sp-contact-d">0836 768 597</span>
+                </span>
+                ${icon('arrowUpRight', { size: 13, cls: 'sp-contact-go' })}
+              </a>
+              <a class="sp-contact-item" href="mailto:support@muabankey.vn">
+                <span class="ic-box">${icon('mail', { size: 15 })}</span>
+                <span class="sp-contact-body">
+                  <span class="sp-contact-t">Email</span>
+                  <span class="sp-contact-d">support@muabankey.vn</span>
+                </span>
+                ${icon('arrowUpRight', { size: 13, cls: 'sp-contact-go' })}
+              </a>
             </div>
 
-            <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
-              <div class="panel-title" style="font-size:14px;margin-bottom:12px">🤖 Trợ lý AI</div>
-              <p style="font-size:13px;color:var(--text-mute);line-height:1.6;margin-bottom:12px">
-                Key Bot có thể tư vấn sản phẩm và trả lời câu hỏi 24/7 tức thì.
+            <div class="alert alert-info mt-2 sp-hours">
+              <span class="ico">${icon('clock', { size: 14 })}</span>
+              <span>Hỗ trợ <strong>8:00 - 23:00</strong> hàng ngày, kể cả cuối tuần.</span>
+            </div>
+
+            <div class="sp-divide">
+              <h3 class="sp-subtitle">
+                <span class="pt-ico">${icon('bot', { size: 15 })}</span>
+                Trợ lý AI
+              </h3>
+              <p class="sp-muted">
+                Key Bot tư vấn sản phẩm và trả lời câu hỏi 24/7.
               </p>
-              <button class="btn btn-gold btn-block" id="open-ai-support">💬 Hỏi Key Bot ngay</button>
+              <button class="btn btn-ghost btn-block" id="open-ai-support">
+                ${icon('sparkles', { size: 15 })} Hỏi Key Bot
+              </button>
             </div>
           </div>
         </div>
