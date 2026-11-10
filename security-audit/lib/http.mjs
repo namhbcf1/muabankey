@@ -55,7 +55,19 @@ export function makeClient(label) {
         if (typeof body === 'string' || body instanceof Uint8Array) payload = body;
         else { payload = JSON.stringify(body); h['content-type'] = 'application/json'; }
       }
-      const res = await fetch(BASE + path, { method, headers: h, body: payload, redirect: 'manual' });
+      let res;
+      let lastErr;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          res = await fetch(BASE + path, { method, headers: h, body: payload, redirect: 'manual' });
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        }
+      }
+      if (!res) throw new Error(`fetch ${method} ${path} failed after retries: ${lastErr?.message || lastErr}`);
       api.setCookieFrom(res);
       const text = await res.text();
       let json = null;

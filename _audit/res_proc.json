@@ -1,0 +1,92 @@
+[
+ {
+  "case": "B22 --once khong co game",
+  "args": [
+   "--once"
+  ],
+  "rc": 3,
+  "secs": 20.84,
+  "ok": null,
+  "stdout": "  May chua kich hoat -> bat dung thu 3 ngay.\r\n  (gui ma may HWID toi http://127.0.0.1:1 de tao ban dung thu)\r\n  (kiem tra mang roi chay lai, hoac nhap key)\r\n",
+  "stderr": "  khong bat duoc dung thu: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>\r\nDa huy.\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B22",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "B22b --off khong co game",
+  "args": [
+   "--off"
+  ],
+  "rc": 1,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "XArena No Fog -- tra byte goc (17 cong)\r\nGame khong chay -- khong co gi de tra goc.\r\n(byte goc chi ton tai trong bo nho process game)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B22",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "B22c --dump khong co game",
+  "args": [
+   "--dump"
+  ],
+  "rc": 3,
+  "secs": 9.19,
+  "ok": null,
+  "stdout": "  May chua kich hoat -> bat dung thu 3 ngay.\r\n  (gui ma may HWID toi http://127.0.0.1:1 de tao ban dung thu)\r\n  (kiem tra mang roi chay lai, hoac nhap key)\r\n",
+  "stderr": "  khong bat duoc dung thu: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>\r\nDa huy.\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B22",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "B22d --off khong license",
+  "args": [
+   "--off"
+  ],
+  "rc": 1,
+  "secs": 0.13,
+  "ok": null,
+  "stdout": "XArena No Fog -- tra byte goc (17 cong)\r\nGame khong chay -- khong co gi de tra goc.\r\n(byte goc chi ton tai trong bo nho process game)\r\n",
+  "stderr": "",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B22d",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "B23b --dump voi game gia",
+  "args": [
+   "--dump"
+  ],
+  "rc": "TIMEOUT",
+  "secs": 60.02,
+  "ok": null,
+  "stdout": "",
+  "stderr": "  khong bat duoc dung thu: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B23",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ },
+ {
+  "case": "B23c --once game gia (patch fail)",
+  "args": [
+   "--once"
+  ],
+  "rc": "TIMEOUT",
+  "secs": 60.02,
+  "ok": null,
+  "stdout": "",
+  "stderr": "  khong bat duoc dung thu: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>\r\n",
+  "statedir": "C:\\Users\\ADMIN\\AppData\\Local\\XA_audit_B23c",
+  "env": {
+   "XA_API_BASE": "http://127.0.0.1:1"
+  }
+ }
+]

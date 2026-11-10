@@ -1102,22 +1102,122 @@ _validate()
 def acquire_mutex():
     """Tra True neu day la ban duy nhat. Giu handle toi khi thoat.
 
-    Neu tao mutex that bai (vd khong co quyen voi namespace Global), ta
-    KHONG coi la duy nhat -- that bai roi xuong Local namespace, van bao
-    ve trong phien dang nhap. Chi khi ca hai deu fail moi cho chay.
+    VAN DE da gap: 2 instance cung chay duoc. Nguyen nhan:
+      - PyInstaller --onefile sinh 2 process (bootloader + tool that).
+        Bootloader thoat ngay sau khi spawn -> mutex no tao bi giai phong
+        truoc khi tool that kip tao mutex cua no.
+      - Lay GetLastError() sau CreateMutexW nhung co the bi ghi de.
+
+    GIAI PHAP: tao mutex SOM (ngay dau run()) va GIU handle den khi thoat.
+    Kem theo: neu khong tao duoc Global thi thu Local, va ghi PID ra file
+    de kiem tra cheo.
     """
     global _mutex_handle
     for name in (MUTEX_NAME, 'XArenaNoFogPro_Local'):
         try:
+            ctypes.set_last_error(0)                     # reset truoc
             h = kernel32.CreateMutexW(None, False, name)
+            err = ctypes.get_last_error()                # doc NGAY, truoc lenh khac
             if not h:
                 continue
-            err = ctypes.get_last_error()
+            if err == ERROR_ALREADY_EXISTS:
+                # Da co ban khac -> dong handle vua mo, bao that bai
+                try:
+                    kernel32.CloseHandle(h)
+                except Exception:
+                    pass
+                _mutex_handle = None
+                return False
             _mutex_handle = h
-            return err != ERROR_ALREADY_EXISTS
+            return True
         except Exception:
             continue
-    # Khong tao duoc mutex nao -> khong the bao ve. Cho chay nhung canh bao.
+    # Khong tao duoc mutex nao -> khong the bao ve
+    return True
+
+
+# --------------------------------------------------------- instance lock ----
+# Mutex mot minh khong du: PyInstaller --onefile sinh 2 process, bootloader
+# thoat som nen mutex no tao bi giai phong truoc khi tool that kip giu.
+# Them lock file chua PID + kiem tra process con song khong.
+
+_LOCK_FILE = os.path.join(STATE_DIR, 'run.lock')
+
+
+def _pid_alive(pid):
+    """True neu process con song (Windows)."""
+    try:
+        import ctypes as _c
+        k = _c.WinDLL('kernel32', use_last_error=True)
+        PROCESS_QUERY_LIMITED = 0x1000
+        h = k.OpenProcess(PROCESS_QUERY_LIMITED, False, int(pid))
+        if not h:
+            return False
+        code = _c.c_ulong()
+        ok = k.GetExitCodeProcess(h, _c.byref(code))
+        k.CloseHandle(h)
+        # 259 = STILL_ACTIVE
+        return bool(ok) and code.value == 259
+    except Exception:
+        return False
+
+
+def _read_lock_pid():
+    try:
+        with open(_LOCK_FILE, 'r', encoding='utf-8') as f:
+            return int(f.read().strip() or 0)
+    except Exception:
+        return 0
+
+
+def _write_lock_pid(pid):
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        tmp = _LOCK_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(str(int(pid)))
+        os.replace(tmp, _LOCK_FILE)
+    except Exception:
+        pass
+
+
+def _clear_lock_pid():
+    try:
+        if os.path.exists(_LOCK_FILE):
+            os.remove(_LOCK_FILE)
+    except Exception:
+        pass
+
+
+def acquire_instance_lock():
+    """Lay ca mutex LAN lock file. Tra True neu doc quyen.
+
+    Neu ban cu da chet nhung con lock file -> tu don va cho chay.
+    """
+    # 1. Mutex (nhanh, tu dong giai phong khi process chet)
+    if not acquire_mutex():
+        return False
+
+    # 2. Lock file (chac chan hon, xu ly PyInstaller bootloader)
+    old = _read_lock_pid()
+    if old and old != os.getpid() and _pid_alive(old):
+        # Con ban khac song that -> tu bo, dong mutex vua lay
+        try:
+            if _mutex_handle:
+                kernel32.CloseHandle(_mutex_handle)
+        except Exception:
+            pass
+        return False
+
+    # Ban cu da chet hoac chua co -> ghi PID moi
+    _write_lock_pid(os.getpid())
+
+    # Dang ky don dep khi thoat
+    try:
+        import atexit
+        atexit.register(_clear_lock_pid)
+    except Exception:
+        pass
     return True
 
 
@@ -1803,8 +1903,17 @@ def run():
     resident_mode = not once_mode and not watch_mode
 
     # Chi mot ban chay o che do thuong tru. --once/--off/--dump thi khong can.
-    if resident_mode and not acquire_mutex():
+    # Dung 2 lop: mutex (nhanh) + lock file voi PID (chac chan, chong
+    # PyInstaller bootloader giai phong mutex qua som).
+    if resident_mode and not acquire_instance_lock():
         print('Da co ban khac dang chay. Khong mo them.')
+        try:
+            other = _read_lock_pid()
+            if other:
+                print('(ban dang chay: PID %s)' % other)
+        except Exception:
+            pass
+        print('Tat ban cu truoc, hoac bam Ctrl-C o cua so do.')
         return EXIT_ALREADY_RUNNING
 
     if opts['restore']:
@@ -1815,20 +1924,45 @@ def run():
         print('XArena No Fog -- watch 0.5s (%d cong)' % len(sites))
     elif resident_mode:
         _st0 = load_state()
-        if is_trial(_st0):
-            left = _days_left(_st0) or 0
-            title('XA NoFog - DUNG THU con %.0f ngay' % left)
-            print('DANG CHAY (dung thu con %.1f ngay). Cho game bat...' % left)
+        _fmt = '%H:%M:%S %d/%m/%Y'
+
+        # Bắt đầu = lúc kích hoạt, hoặc lúc mở tool nếu server chưa có
+        _act = _st0.get('activated_at') or 0
+        _start_txt = (time.strftime(_fmt, time.localtime(_act))
+                      if _act else 'chua kich hoat')
+
+        _exp = _st0.get('expires_at')
+        _trial = is_trial(_st0)
+
+        if _exp == 0:
+            # Vĩnh viễn: server trả expires_at = 0
+            _han_txt = 'VINH VIEN'
+            title('XA NoFog - Vinh vien')
+        elif _exp:
+            _left = _days_left(_st0) or 0
+            _han_txt = '%s  (con %.2f ngay)' % (
+                time.strftime(_fmt, time.localtime(_exp)), _left)
+            title('XA NoFog - %s con %.0f ngay'
+                  % ('DUNG THU' if _trial else 'con', _left))
         else:
-            left = _days_left(_st0)
-            if left is not None and left > 0:
-                title('XA NoFog - con %.0f ngay' % left)
-                print('DANG CHAY (con %.1f ngay). Cho game bat...' % left)
-            else:
-                title('XA NoFog - dang cho game')
-                print('DANG CHAY. Cho game bat...')
+            _han_txt = 'khong xac dinh'
+            title('XA NoFog - dang cho game')
+
+        print('')
+        print('  ' + '-' * 58)
+        if _trial:
+            print('   DANG DUNG THU %d NGAY' % TRIAL_DAYS)
+        else:
+            print('   BAN QUYEN HOP LE')
+        print('  ' + '-' * 58)
+        print('   Bat dau : %s' % _start_txt)
+        print('   Het han : %s' % _han_txt)
+        print('  ' + '-' * 58)
+        print('')
+        print('DANG CHAY. Cho game bat...')
         print('(de cua so nay mo. Ctrl-C de dung)')
-        print('(can mang: tool xac minh ban quyen moi %d phut)' % (TRIAL_RECHECK_SEC // 60))
+        print('(can mang: tool xac minh ban quyen moi %d phut)'
+              % (TRIAL_RECHECK_SEC // 60))
 
     cur_pid = 0
     h = None

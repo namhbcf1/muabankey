@@ -3,13 +3,24 @@
  */
 import { record, loginAs, freshUser, makeClient, ACCOUNTS } from '../lib/record.mjs';
 import { execFileSync } from 'node:child_process';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
+const TMP = mkdtempSync(join(tmpdir(), 'mbk-audit-'));
+let sqlSeq = 0;
+
+/** Chạy SQL qua file tạm (tránh lỗi quoting của shell trên Windows). */
 export function d1(sql) {
+  sqlSeq += 1;
+  const f = join(TMP, `q${sqlSeq}.sql`);
+  writeFileSync(f, sql, 'utf8');
   const out = execFileSync('npx', [
     'wrangler', 'd1', 'execute', 'muabankey-audit-db', '--local',
-    '--config', 'wrangler.audit.toml', '--json', '--command', sql,
-  ], { encoding: 'utf8', shell: true });
+    '--config', 'wrangler.audit.toml', '--json', `--file=${f}`,
+  ], { encoding: 'utf8', shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const start = out.indexOf('[');
+  if (start < 0) return [{ results: [] }];
   return JSON.parse(out.slice(start));
 }
 export function q1(sql) {

@@ -145,26 +145,57 @@ export default {
         ).bind(now).run();
 
         // 2. Đơn pending quá 45 phút -> cancelled, trả lại coupon
+        // Dùng coupon_released để KHÔNG trả 2 lần: payOrder có thể đã
+        // releaseCoupon khi hết hàng, rồi cron lại trả lần nữa -> used_count
+        // thấp hơn thực tế -> coupon bị dùng vượt hạn mức.
         const stale = await env.DB.prepare(
-          "SELECT id, coupon_code FROM orders WHERE status='pending' AND created_at < ?"
+          `SELECT id, coupon_code, coupon_released FROM orders
+           WHERE status='pending' AND created_at < ?`
         ).bind(now - 45 * 60 * 1000).all();
         for (const o of stale.results || []) {
-          await env.DB.prepare("UPDATE orders SET status='cancelled' WHERE id = ? AND status='pending'")
-            .bind(o.id).run();
-          if (o.coupon_code) {
+          const c = await env.DB.prepare(
+            "UPDATE orders SET status='cancelled' WHERE id = ? AND status='pending'"
+          ).bind(o.id).run();
+          if (!c.meta || c.meta.changes !== 1) continue;
+          if (o.coupon_code && !o.coupon_released) {
             await env.DB.prepare(
               'UPDATE coupons SET used_count = MAX(0, used_count - 1) WHERE code = ?'
             ).bind(o.coupon_code).run();
+            await env.DB.prepare(
+              'UPDATE orders SET coupon_released = 1 WHERE id = ?'
+            ).bind(o.id).run();
           }
         }
 
         // 3. Đơn kẹt 'processing'/'refunding' quá 10 phút (worker chết giữa chừng)
+        //
+        // QUAN TRỌNG: dùng cột mốc RIÊNG, KHÔNG dùng created_at.
+        // Trước đây dùng created_at -> đơn tạo >10 phút trước bị "hồi sinh":
+        //   refunding -> delivered -> admin refund lại -> hoàn tiền nhiều lần.
+        // Đã xảy ra thật: MBK-L5W87H hoàn 70.000đ hai lần.
         await env.DB.prepare(
-          "UPDATE orders SET status='pending', paid_at=NULL WHERE status='processing' AND paid_at < ?"
+          `UPDATE orders SET status='pending', paid_at=NULL, processing_started_at=NULL
+           WHERE status='processing'
+             AND processing_started_at IS NOT NULL
+             AND processing_started_at < ?`
         ).bind(now - 10 * 60 * 1000).run();
+
+        // Đơn 'refunding' kẹt: KHÔNG đưa về 'delivered' (sẽ refund lại được).
+        // Đưa về 'paid' để admin xử lý lại tay, và ghi mốc đã reset.
         await env.DB.prepare(
-          "UPDATE orders SET status='delivered' WHERE status='refunding' AND created_at < ?"
+          `UPDATE orders SET status='paid', refund_started_at=NULL
+           WHERE status='refunding'
+             AND refund_started_at IS NOT NULL
+             AND refund_started_at < ?`
         ).bind(now - 10 * 60 * 1000).run();
+
+        // Đơn 'processing' cũ chưa có mốc (dữ liệu cũ) -> giữ nguyên, chỉ log
+        const orphan = await env.DB.prepare(
+          "SELECT COUNT(*) n FROM orders WHERE status='processing' AND processing_started_at IS NULL"
+        ).first();
+        if ((orphan?.n || 0) > 0) {
+          console.warn(`Có ${orphan.n} đơn processing thiếu mốc processing_started_at`);
+        }
 
         // 4. Dọn token hết hạn
         await env.DB.prepare('DELETE FROM rebind_tokens WHERE expires_at < ?').bind(nowS).run();

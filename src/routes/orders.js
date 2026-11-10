@@ -8,12 +8,34 @@ import { syncStock, audit } from './products.js';
 import { deliverLicenseLine } from './license.js';
 
 /** Trả lại lượt dùng coupon khi đơn không thành công. */
-export async function releaseCoupon(env, code) {
+/**
+ * Trả lại lượt dùng coupon.
+ *
+ * @param {string=} orderId Nếu có, đánh dấu order.coupon_released = 1 để
+ *   cron không trả thêm lần nữa (gây used_count thấp hơn thực tế).
+ */
+export async function releaseCoupon(env, code, orderId) {
   if (!code) return;
   try {
+    const upper = String(code).toUpperCase();
+
+    // Nếu đã đánh dấu rồi thì bỏ qua (idempotent)
+    if (orderId) {
+      const o = await env.DB.prepare(
+        'SELECT coupon_released FROM orders WHERE id = ?'
+      ).bind(orderId).first();
+      if (o?.coupon_released) return;
+    }
+
     await env.DB.prepare(
       'UPDATE coupons SET used_count = MAX(0, used_count - 1) WHERE code = ?'
-    ).bind(String(code).toUpperCase()).run();
+    ).bind(upper).run();
+
+    if (orderId) {
+      await env.DB.prepare(
+        'UPDATE orders SET coupon_released = 1 WHERE id = ?'
+      ).bind(orderId).run();
+    }
   } catch { /* không chặn luồng chính */ }
 }
 
@@ -180,9 +202,9 @@ export async function payOrder(env, request, orderId) {
   // UPDATE có điều kiện dưới đây đảm bảo CHỈ MỘT request chuyển được pending -> processing.
   const claimAt = Date.now();
   const claim = await env.DB.prepare(
-    `UPDATE orders SET status = 'processing', paid_at = ?
+    `UPDATE orders SET status = 'processing', paid_at = ?, processing_started_at = ?
      WHERE id = ? AND status = 'pending'`
-  ).bind(claimAt, orderId).run();
+  ).bind(claimAt, claimAt, orderId).run();
   if (!claim.meta || claim.meta.changes !== 1) {
     throw new ApiError(409, 'Đơn hàng đã được thanh toán', 'ALREADY_PAID');
   }
@@ -204,7 +226,65 @@ export async function payOrder(env, request, orderId) {
     'SELECT * FROM order_items WHERE order_id = ?'
   ).bind(orderId).all();
 
-  // Trừ tiền có điều kiện (lớp bảo vệ thứ hai)
+  // ===== KIỂM TRA SẢN PHẨM TỒN TẠI / ĐỦ HÀNG TRƯỚC KHI TRỪ TIỀN =====
+  // Trước đây trừ tiền xong mới kiểm tra -> sản phẩm bị xoá thì throw
+  // PRODUCT_GONE mà KHÔNG hoàn tiền, cũng không ghi sổ cái.
+  // Đã xảy ra thật: MBK-3KWKLR mất 123.000đ không dấu vết.
+  const planned = [];
+  let allDelivered = true;
+
+  for (const item of items || []) {
+    const product = await env.DB.prepare(
+      'SELECT id, name, delivery_type, license_prefix, license_days FROM products WHERE id = ?'
+    ).bind(item.product_id).first();
+
+    if (!product) {
+      // Chưa trừ tiền -> chỉ cần nhả đơn, không cần hoàn
+      await env.DB.prepare(
+        "UPDATE orders SET status='pending', paid_at=NULL, note = ? WHERE id = ? AND status='processing'"
+      ).bind(`Sản phẩm đã bị xoá: ${item.product_name}`, orderId).run();
+      await releaseCoupon(env, order.coupon_code, orderId);
+      throw new ApiError(409,
+        `Sản phẩm "${item.product_name}" không còn tồn tại. Chưa trừ tiền, vui lòng đặt lại đơn.`,
+        'PRODUCT_GONE');
+    }
+
+    // Dòng đã giao ở lần trước (đơn bị trả về pending) -> không giao lại
+    const already = safeParse(item.delivered_keys);
+    if (already.length > 0) {
+      if (product.delivery_type === 'manual') allDelivered = false;
+      planned.push({ item, product, qty: item.quantity, kind: 'already', keys: already });
+      continue;
+    }
+
+    if (product.delivery_type === 'manual') {
+      allDelivered = false;
+      planned.push({ item, product, qty: item.quantity, kind: 'manual' });
+      continue;
+    }
+
+    if (product.delivery_type === 'license') {
+      planned.push({ item, product, qty: item.quantity, kind: 'license' });
+      continue;
+    }
+
+    // Hàng key: kiểm tra tồn kho trước
+    const avail = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM product_keys WHERE product_id = ? AND status = 'available'"
+    ).bind(item.product_id).first();
+    if ((avail?.n || 0) < item.quantity) {
+      await env.DB.prepare(
+        "UPDATE orders SET status='pending', paid_at=NULL, note = ? WHERE id = ? AND status='processing'"
+      ).bind(`Hết hàng: ${item.product_name}`, orderId).run();
+      await releaseCoupon(env, order.coupon_code, orderId);
+      throw new ApiError(409,
+        `Sản phẩm "${item.product_name}" chỉ còn ${avail?.n || 0}. Chưa trừ tiền, vui lòng đặt lại đơn.`,
+        'OUT_OF_STOCK');
+    }
+    planned.push({ item, product, qty: item.quantity, kind: 'key' });
+  }
+
+  // ===== TRỪ TIỀN (sau khi đã chắc chắn giao được) =====
   const debit = await env.DB.prepare(
     'UPDATE users SET balance = balance - ?, updated_at = ? WHERE id = ? AND balance >= ?'
   )
@@ -217,131 +297,111 @@ export async function payOrder(env, request, orderId) {
     throw new ApiError(400, 'Số dư không đủ hoặc giao dịch đồng thời. Vui lòng thử lại.', 'CONFLICT');
   }
 
+  // Từ đây tiền ĐÃ TRỪ. Mọi lỗi phải hoàn tiền + ghi sổ.
   const now = Date.now();
   const delivered = [];
-  let allDelivered = true;
 
-  // ===== BƯỚC 1: KIỂM TRA TOÀN BỘ TỒN KHO TRƯỚC KHI GIAO BẤT KỲ THỨ GÌ =====
-  // Trước đây giao từng dòng rồi mới phát hiện dòng sau hết hàng -> đã giao
-  // dòng 1 nhưng hoàn tiền cả đơn, khách giữ được hàng miễn phí.
-  const planned = [];
-  for (const item of items || []) {
-    const product = await env.DB.prepare(
-      'SELECT id, name, delivery_type, license_prefix, license_days FROM products WHERE id = ?'
-    ).bind(item.product_id).first();
+  try {
+    // ===== BƯỚC 3: GIAO HÀNG =====
+    for (const plan of planned) {
+      const { item, product, qty, kind } = plan;
 
-    if (!product) {
-      throw new ApiError(409, `Sản phẩm "${item.product_name}" không còn tồn tại.`, 'PRODUCT_GONE');
-    }
+      if (kind === 'manual') {
+        delivered.push({
+          productId: item.product_id, name: item.product_name, keys: [], manual: true,
+        });
+        continue;
+      }
 
-    // Dòng đã giao ở lần trước (đơn bị trả về pending) -> bỏ qua, không giao lại
-    const already = safeParse(item.delivered_keys);
-    if (already.length > 0) {
-      delivered.push({
-        productId: item.product_id, name: item.product_name,
-        keys: already, license: product.delivery_type === 'license',
-        manual: product.delivery_type === 'manual',
-      });
-      if (product.delivery_type === 'manual') allDelivered = false;
-      continue;
-    }
+      if (kind === 'already') {
+        delivered.push({
+          productId: item.product_id, name: item.product_name,
+          keys: plan.keys, license: product.delivery_type === 'license',
+          manual: false,
+        });
+        continue;
+      }
 
-    if (product.delivery_type === 'manual') {
-      allDelivered = false;
-      delivered.push({ productId: item.product_id, name: item.product_name, keys: [], manual: true });
-      planned.push({ item, product, qty: item.quantity, kind: 'manual' });
-      continue;
-    }
+      if (kind === 'license') {
+        const licKeys = await deliverLicenseLine(env, {
+          order, orderId, userId: user.id, product, quantity: qty,
+        });
+        await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
+          .bind(JSON.stringify(licKeys), item.id).run();
+        await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')
+          .bind(qty, item.product_id).run();
+        delivered.push({
+          productId: item.product_id, name: item.product_name,
+          keys: licKeys.map((k) => btoaSafe(k)), raw: licKeys, license: true,
+        });
+        continue;
+      }
 
-    if (product.delivery_type === 'license') {
-      planned.push({ item, product, qty: item.quantity, kind: 'license' });
-      continue;
-    }
+      // Lấy & giữ key hàng loạt
+      const { results: keys } = await env.DB.prepare(
+        `SELECT id, secret FROM product_keys
+         WHERE product_id = ? AND status = 'available'
+         ORDER BY created_at ASC LIMIT ?`
+      ).bind(item.product_id, qty).all();
 
-    // Kiểm tra đủ key TRƯỚC khi giao
-    const avail = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM product_keys WHERE product_id = ? AND status = 'available'"
-    ).bind(item.product_id).first();
-    if ((avail?.n || 0) < item.quantity) {
-      // Chưa giao gì cả -> hoàn tiền toàn phần, an toàn
-      await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-        .bind(order.total, Date.now(), user.id).run();
-      await env.DB.prepare(
-        "UPDATE orders SET status='pending', paid_at=NULL, note = ? WHERE id = ?"
-      ).bind(`Hết hàng: ${item.product_name}`, orderId).run();
-      await releaseCoupon(env, order.coupon_code);
-      throw new ApiError(409,
-        `Sản phẩm "${item.product_name}" chỉ còn ${avail?.n || 0}. Đã hoàn tiền, chưa giao sản phẩm nào.`,
-        'OUT_OF_STOCK');
-    }
-    planned.push({ item, product, qty: item.quantity, kind: 'key' });
-  }
+      const secrets = [];
+      for (const k of keys || []) {
+        const up = await env.DB.prepare(
+          `UPDATE product_keys SET status='sold', order_id=?, delivered_at=?
+           WHERE id = ? AND status='available'`
+        ).bind(orderId, now, k.id).run();
+        if (up.meta && up.meta.changes === 1) secrets.push(k.secret);
+      }
 
-  // ===== BƯỚC 2: GIAO HÀNG (đã chắc chắn đủ hàng cho tất cả các dòng) =====
-  for (const plan of planned) {
-    const { item, product, qty, kind } = plan;
+      if (secrets.length < qty) {
+        // Race hiếm: trả lại key đã giữ rồi throw -> catch bên ngoài hoàn tiền
+        for (const k of keys || []) {
+          await env.DB.prepare(
+            `UPDATE product_keys SET status='available', order_id=NULL, delivered_at=NULL
+             WHERE id = ? AND order_id = ?`
+          ).bind(k.id, orderId).run();
+        }
+        throw new ApiError(409, 'Có lỗi khi giữ hàng, đã hoàn tiền. Vui lòng thử lại.', 'CONFLICT');
+      }
 
-    if (kind === 'manual') continue;
-
-    if (kind === 'license') {
-      const licKeys = await deliverLicenseLine(env, {
-        order, orderId, userId: user.id, product, quantity: qty,
-      });
       await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
-        .bind(JSON.stringify(licKeys), item.id).run();
+        .bind(JSON.stringify(secrets), item.id).run();
       await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')
         .bind(qty, item.product_id).run();
-      delivered.push({
-        productId: item.product_id, name: item.product_name,
-        keys: licKeys.map((k) => btoaSafe(k)), raw: licKeys, license: true,
-      });
-      continue;
+      delivered.push({ productId: item.product_id, name: item.product_name, keys: secrets, manual: false });
+      await syncStock(env, item.product_id);
     }
+  } catch (err) {
+    // ===== GIAO HÀNG LỖI -> HOÀN TIỀN NGAY, GHI SỔ ĐẦY ĐỦ =====
+    // Đây là chỗ trước đây bỏ sót: throw mà không hoàn tiền.
+    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+      .bind(order.total, Date.now(), user.id).run();
+    await env.DB.prepare(
+      "UPDATE orders SET status='pending', paid_at=NULL WHERE id = ? AND status='processing'"
+    ).bind(orderId).run();
+    await releaseCoupon(env, order.coupon_code, orderId);
 
-    // Lấy & giữ key hàng loạt
-    const { results: keys } = await env.DB.prepare(
-      `SELECT id, secret FROM product_keys
-       WHERE product_id = ? AND status = 'available'
-       ORDER BY created_at ASC LIMIT ?`
-    ).bind(item.product_id, qty).all();
-
-    const secrets = [];
-    for (const k of keys || []) {
-      const up = await env.DB.prepare(
-        `UPDATE product_keys SET status='sold', order_id=?, delivered_at=?
-         WHERE id = ? AND status='available'`
-      ).bind(orderId, now, k.id).run();
-      if (up.meta && up.meta.changes === 1) secrets.push(k.secret);
-    }
-
-    if (secrets.length < qty) {
-      // Rất hiếm (race): trả lại key đã giữ, hoàn tiền phần chênh
-      for (const k of keys || []) {
-        await env.DB.prepare(
-          `UPDATE product_keys SET status='available', order_id=NULL, delivered_at=NULL
-           WHERE id = ? AND order_id = ?`
-        ).bind(k.id, orderId).run();
-      }
-      await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-        .bind(order.total, Date.now(), user.id).run();
+    // Ghi sổ hoàn tiền để sổ cái khớp (debit ở trên + credit ở đây = 0)
+    try {
+      const balNow = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
+        .bind(user.id).first();
       await env.DB.prepare(
-        "UPDATE orders SET status='pending', paid_at=NULL WHERE id = ?"
-      ).bind(orderId).run();
-      await releaseCoupon(env, order.coupon_code);
-      throw new ApiError(409, 'Có lỗi khi giữ hàng, đã hoàn tiền. Vui lòng thử lại.', 'CONFLICT');
-    }
+        `INSERT INTO wallet_transactions
+           (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+         VALUES (?,?,'refund',?,?,'success',?,?,?)`
+      ).bind(uuid(), user.id, order.total, balNow.balance, order.code,
+        `Hoàn tiền do lỗi giao hàng đơn ${order.code}`, Date.now()).run();
+    } catch { /* không để lỗi ghi sổ che lỗi gốc */ }
 
-    await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
-      .bind(JSON.stringify(secrets), item.id).run();
-    await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')
-      .bind(qty, item.product_id).run();
-    delivered.push({ productId: item.product_id, name: item.product_name, keys: secrets, manual: false });
-    await syncStock(env, item.product_id);
+    await audit(env, null, 'order.deliver_failed_refund', orderId, {
+      amount: order.total, error: err.message,
+    });
+    throw err;
   }
 
   const finalStatus = allDelivered ? 'delivered' : 'paid';
   await env.DB.prepare(
-    `UPDATE orders SET status = ?, paid_at = COALESCE(paid_at, ?), delivered_at = ? WHERE id = ?`
+    `UPDATE orders SET status = ?, paid_at = COALESCE(paid_at, ?), delivered_at = ?, ledger_written = 1 WHERE id = ?`
   ).bind(finalStatus, now, allDelivered ? now : null, orderId).run();
 
   const balRow = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first();
@@ -529,9 +589,9 @@ export async function adminRefund(env, request, orderId) {
   // ===== GIÀNH ĐƠN NGUYÊN TỬ =====
   // Nhiều request refund đồng thời đều pass kiểm tra và cộng tiền nhiều lần.
   const claim = await env.DB.prepare(
-    `UPDATE orders SET status = 'refunding'
+    `UPDATE orders SET status = 'refunding', refund_started_at = ?
      WHERE id = ? AND status IN ('paid','delivered')`
-  ).bind(orderId).run();
+  ).bind(Date.now(), orderId).run();
   if (!claim.meta || claim.meta.changes !== 1) {
     throw new ApiError(409, 'Đơn đã được hoàn tiền', 'BAD_STATE');
   }
@@ -586,7 +646,7 @@ export async function adminRefund(env, request, orderId) {
   await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
     .bind(o.total, now, o.user_id).run();
   await env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?").bind(orderId).run();
-  await releaseCoupon(env, o.coupon_code);
+  await releaseCoupon(env, o.coupon_code, orderId);
 
   const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(o.user_id).first();
   await env.DB.prepare(

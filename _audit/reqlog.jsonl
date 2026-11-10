@@ -14,3 +14,8 @@
 {"at": 1794317656.183577, "path": "/api/activate", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}
 {"at": 1794317656.1888335, "path": "/api/check", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}
 {"at": 1794317656.5656455, "path": "/api/activate", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}
+{"at": 1794318134.7619123, "path": "/api/activate", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}
+{"at": 1794318134.7775164, "path": "/api/check", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}
+{"at": 1794318134.9206436, "path": "/api/check", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}
+{"at": 1794318138.9421008, "path": "/api/check", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}
+{"at": 1794318142.431086, "path": "/api/check", "body": {"key": "AOE1-TEST-TEST-TEST", "hwid": "251bc0f0192491ffa341f6896620f9dc", "app": "XArena No Fog"}, "ua": "XArena No Fog/1.2.0", "ctype": "application/json"}

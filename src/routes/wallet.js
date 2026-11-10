@@ -662,8 +662,14 @@ export async function adminTelegramConfig(env, request) {
   // Trước đây đánh dấu 'expired' và bỏ qua -> khách mất tiền, shop giữ.
   if (amountIn < topup.amount) {
     const credited = Math.floor(amountIn);
-    await env.DB.prepare("UPDATE topups SET status='partial', txn_ref = ? WHERE id = ?")
-      .bind(ref, topup.id).run();
+    // Guard: chỉ cộng nếu thực sự chuyển được sang 'partial'.
+    // Thiếu guard -> webhook retry hoặc 2 webhook song song cộng tiền nhiều lần.
+    const claimPartial = await env.DB.prepare(
+      "UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status != 'paid'"
+    ).bind(ref, topup.id).run();
+    if (!claimPartial.meta || claimPartial.meta.changes !== 1) {
+      return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
+    }
     await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
       .bind(credited, now, topup.user_id).run();
     const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
@@ -694,8 +700,12 @@ export async function adminTelegramConfig(env, request) {
   const credited = topup.amount;
   const excess = Math.floor(amountIn) - topup.amount;
 
-  await env.DB.prepare("UPDATE topups SET status='paid', txn_ref = ?, paid_at = ? WHERE id = ?")
-    .bind(ref, now, topup.id).run();
+  const claimPaid = await env.DB.prepare(
+    "UPDATE topups SET status='paid', txn_ref = ?, paid_at = ? WHERE id = ? AND status != 'paid'"
+  ).bind(ref, now, topup.id).run();
+  if (!claimPaid.meta || claimPaid.meta.changes !== 1) {
+    return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
+  }
   await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
     .bind(credited, now, topup.user_id).run();
 
@@ -760,7 +770,7 @@ export async function sepayWebhook(env, request) {
   // Trước đây đánh dấu 'expired' và bỏ qua -> khách mất tiền, shop giữ.
   if (amountIn < topup.amount) {
     const credited = Math.floor(amountIn);
-    await env.DB.prepare("UPDATE topups SET status='partial', txn_ref = ? WHERE id = ?")
+    await env.DB.prepare("UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status != 'paid'")
       .bind(ref, topup.id).run();
     await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
       .bind(credited, now, topup.user_id).run();
@@ -781,7 +791,7 @@ export async function sepayWebhook(env, request) {
   const credited = topup.amount;
   const excess = Math.floor(amountIn) - topup.amount;
 
-  await env.DB.prepare("UPDATE topups SET status='paid', txn_ref = ?, paid_at = ? WHERE id = ?")
+  await env.DB.prepare("UPDATE topups SET status='paid', txn_ref = ?, paid_at = ? WHERE id = ? AND status != 'paid'")
     .bind(ref, now, topup.id).run();
   await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
     .bind(credited, now, topup.user_id).run();
@@ -880,12 +890,71 @@ export async function adminApproveTopup(env, request, topupId) {
 
   const t = await env.DB.prepare('SELECT * FROM topups WHERE id = ?').bind(topupId).first();
   if (!t) throw new AE(404, 'Lệnh nạp không tồn tại', 'NOT_FOUND');
-  if (t.status === 'paid') throw new AE(409, 'Lệnh nạp đã được duyệt rồi', 'BAD_STATE');
+
+  // ===== CHẶN DUYỆT LẠI =====
+  // 'partial' = webhook đã cộng PHẦN ĐÃ NHẬN rồi. Duyệt tiếp sẽ cộng ĐỦ
+  // -> cộng đôi. Đã xảy ra thật: topup JPEM7 cộng 150k cho lệnh 100k.
+  if (t.status === 'paid') {
+    throw new AE(409, 'Lệnh nạp đã được duyệt rồi', 'BAD_STATE');
+  }
+  if (t.status === 'partial') {
+    // Tính phần còn thiếu thay vì cộng đủ lần nữa
+    const { results: paidTx } = await env.DB.prepare(
+      `SELECT COALESCE(SUM(amount),0) AS da_cong FROM wallet_transactions
+       WHERE reference = ? AND type = 'topup' AND status = 'success'`
+    ).bind(t.code).all();
+    const daCong = paidTx?.[0]?.da_cong || 0;
+    const conThieu = Math.max(0, t.amount - daCong);
+    if (conThieu === 0) {
+      throw new AE(409,
+        `Lệnh này đã nhận đủ ${t.amount.toLocaleString('vi-VN')}đ trước đó.`,
+        'BAD_STATE');
+    }
+    // Cho duyệt phần còn thiếu
+    const notePartial = str(body.note, 'note', { required: false, max: 300 })
+      || `Duyệt phần còn thiếu (đã nhận ${daCong.toLocaleString('vi-VN')}đ)`;
+    const creditedPartial = body.amount !== undefined
+      ? Math.min(int(body.amount, 'amount', { min: 1000, max: 500_000_000 }), conThieu)
+      : conThieu;
+
+    const claimP = await env.DB.prepare(
+      `UPDATE topups SET status='paid', paid_at = ?, txn_ref = COALESCE(txn_ref, ?)
+       WHERE id = ? AND status = 'partial'`
+    ).bind(Date.now(), 'ADMIN-PARTIAL-' + admin.id.slice(0, 6), topupId).run();
+    if (!claimP.meta || claimP.meta.changes !== 1) {
+      throw new AE(409, 'Lệnh đã được duyệt bởi người khác', 'BAD_STATE');
+    }
+
+    const nowP = Date.now();
+    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+      .bind(creditedPartial, nowP, t.user_id).run();
+    const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(t.user_id).first();
+    await env.DB.prepare(
+      `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+       VALUES (?,?,'topup',?,?,'success',?,?,?)`
+    ).bind(uuid(), t.user_id, creditedPartial, balP.balance, t.code,
+      `Nạp phần còn thiếu (${t.code}) — ${notePartial}`, nowP).run();
+
+    await audit(env, admin.id, 'topup.approve_partial', topupId,
+      { credited: creditedPartial, daCong, note: notePartial });
+    return ok({ id: topupId, credited: creditedPartial, balance: balP.balance,
+      was_partial: true, already_received: daCong });
+  }
 
   // Số tiền thực nhận: cho admin nhập nếu khách chuyển khác
   let credited = t.amount;
   if (body.amount !== undefined) {
     credited = int(body.amount, 'amount', { min: 1000, max: 500_000_000 });
+    // CẢNH BÁO: nhập lệch quá nhiều so với số khách đặt là dấu hiệu nhầm.
+    // Đã xảy ra thật: topup 20.000đ bị duyệt thành 500.000.000đ.
+    const lech = credited - t.amount;
+    if (Math.abs(lech) > t.amount * 10 && Math.abs(lech) > 1_000_000) {
+      throw new AE(400,
+        `Số tiền duyệt (${credited.toLocaleString('vi-VN')}đ) lệch quá nhiều so với `
+        + `lệnh nạp (${t.amount.toLocaleString('vi-VN')}đ). `
+        + `Kiểm tra lại app ngân hàng trước khi duyệt.`,
+        'AMOUNT_MISMATCH');
+    }
   }
   const note = str(body.note, 'note', { required: false, max: 300 }) || 'Admin duyệt tay';
 
