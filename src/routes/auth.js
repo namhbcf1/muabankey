@@ -1,43 +1,94 @@
 /** Route xác thực: đăng ký, đăng nhập, đăng xuất, hồ sơ. */
 import { ok, ApiError, readJson } from '../lib/http.js';
-import { email as vEmail, password as vPassword, str } from '../lib/validate.js';
+import { email as vEmail, password as vPassword, str, username as vUsername } from '../lib/validate.js';
 import { hashPassword, verifyPassword, uuid } from '../lib/crypto.js';
 import { createSession, sessionCookie, clearCookie, destroySession, requireUser } from '../lib/auth.js';
 import { rateLimit, clientIp } from '../lib/ratelimit.js';
 import { audit } from './products.js';
 
+/**
+ * Đăng ký — ĐƠN GIẢN: chỉ cần tài khoản + mật khẩu.
+ *
+ * Nhận MỘT trong hai:
+ *   { username, password }        -- khuyến nghị, không cần email
+ *   { email, password }           -- vẫn hỗ trợ cho tương thích
+ *
+ * Không xác minh email, không OTP, không captcha.
+ * fullName là tuỳ chọn, nếu không có thì dùng luôn username.
+ */
 export async function register(env, request) {
   const ip = clientIp(request);
-  // 20/giờ/IP: đủ thoáng cho hộ gia đình / NAT chung, vẫn chặn spam tạo acc hàng loạt
-  await rateLimit(env, `reg:${ip}`, 20, 3600);
+  // 100/giờ/IP: thoáng cho quán net và NAT chung, vẫn chặn spam tự động hàng loạt
+  await rateLimit(env, `reg:${ip}`, 100, 3600);
 
   const body = await readJson(request);
-  const email = vEmail(body.email);
+
+  // Xác định tài khoản: ưu tiên username, fallback email
+  let loginName;
+  let email = null;
+  let isEmail = false;
+
+  if (body.username !== undefined && String(body.username).trim() !== '') {
+    loginName = vUsername(body.username);
+  } else if (body.email !== undefined && String(body.email).trim() !== '') {
+    email = vEmail(body.email);
+    loginName = email;
+    isEmail = true;
+  } else {
+    throw new ApiError(400, 'Nhập tên đăng nhập và mật khẩu', 'VALIDATION');
+  }
+
   const password = vPassword(body.password);
-  const fullName = str(body.fullName, 'fullName', { min: 2, max: 120 });
+
+  // Tên hiển thị: tuỳ chọn
+  let fullName;
+  if (body.fullName !== undefined && String(body.fullName).trim() !== '') {
+    fullName = str(body.fullName, 'fullName', { min: 2, max: 120 });
+  } else {
+    fullName = isEmail ? loginName.split('@')[0] : loginName;
+  }
+
   const phone = str(body.phone, 'phone', { required: false, max: 20 }) || null;
 
-  const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-  if (existing) throw new ApiError(409, 'Email này đã được đăng ký', 'EMAIL_EXISTS');
+  // Trùng: kiểm cả username lẫn email (kể cả email nội bộ @local)
+  const emailForDb = isEmail ? loginName : `${loginName}@local`;
+  const existing = await env.DB.prepare(
+    'SELECT id FROM users WHERE lower(username) = ? OR lower(email) = ?'
+  ).bind(loginName, emailForDb).first();
+  if (existing) {
+    throw new ApiError(409,
+      isEmail ? 'Email này đã được đăng ký' : 'Tên đăng nhập này đã có người dùng',
+      'USERNAME_EXISTS');
+  }
 
+  // Cột email là NOT NULL UNIQUE trong schema, không thể để trống.
+  // Với đăng ký chỉ có username, sinh email nội bộ từ username:
+  //   <username>@local  -- không gửi mail, không hiển thị cho khách.
+  // Cột username vẫn là nguồn xác thực chính.
   const { hash, salt } = await hashPassword(password);
   const id = uuid();
   const now = Date.now();
   await env.DB.prepare(
-    `INSERT INTO users (id, email, password_hash, password_salt, full_name, phone, role, status, balance, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,'user','active',0,?,?)`
+    `INSERT INTO users (id, email, username, password_hash, password_salt, full_name, phone, role, status, balance, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,'user','active',0,?,?)`
   )
-    .bind(id, email, hash, salt, fullName, phone, now, now)
+    .bind(id, emailForDb, isEmail ? null : loginName, hash, salt, fullName, phone, now, now)
     .run();
 
   const ttl = Number(env.SESSION_TTL_DAYS || 30);
   const session = await createSession(env, id, request, ttl);
-  await audit(env, id, 'user.register', id, { email });
+  await audit(env, id, 'user.register', id, { loginName, isEmail });
 
   return new Response(
     JSON.stringify({
       ok: true,
-      user: { id, email, fullName, phone, role: 'user', balance: 0 },
+      user: {
+        id,
+        username: isEmail ? null : loginName,
+        // Không trả email nội bộ (@local) ra ngoài
+        email: isEmail ? email : null,
+        fullName, phone, role: 'user', balance: 0,
+      },
     }),
     {
       status: 201,
@@ -52,7 +103,7 @@ export async function register(env, request) {
 
 export async function login(env, request) {
   const ip = clientIp(request);
-  await rateLimit(env, `login:${ip}`, 30, 900);
+  await rateLimit(env, `login:${ip}`, 100, 900);
 
   const body = await readJson(request);
   const password = str(body.password, 'password', { min: 1, max: 128, trim: false });
@@ -127,10 +178,15 @@ export async function me(env, request) {
   )
     .bind(user.id)
     .first();
+
+  // Email nội bộ dạng <username>@local KHÔNG được trả ra ngoài
+  const isLocalEmail = typeof user.email === 'string' && user.email.endsWith('@local');
+
   return ok({
     user: {
       id: user.id,
-      email: user.email,
+      username: user.username || (isLocalEmail ? user.email.slice(0, -6) : null),
+      email: isLocalEmail ? null : user.email,
       fullName: user.fullName,
       phone: user.phone,
       role: user.role,

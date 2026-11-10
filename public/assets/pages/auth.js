@@ -76,28 +76,28 @@ export function renderRegister(query) {
     <div class="auth-head">
       <div class="auth-icon">✨</div>
       <div class="auth-title">Tạo tài khoản</div>
-      <div class="auth-sub">Bắt đầu mua sắm chỉ trong 30 giây</div>
+      <div class="auth-sub">Chỉ cần tài khoản và mật khẩu</div>
     </div>
     <form id="reg-form" novalidate>
       <div class="field">
-        <label class="label" for="rg-name">Họ và tên <span class="req">*</span></label>
-        <input class="input" id="rg-name" type="text" autocomplete="name" placeholder="Nguyễn Văn An" required>
-      </div>
-      <div class="field">
-        <label class="label" for="rg-email">Email <span class="req">*</span></label>
-        <input class="input" id="rg-email" type="email" autocomplete="email" placeholder="you@example.com" required>
-      </div>
-      <div class="field">
-        <label class="label" for="rg-phone">Số điện thoại</label>
-        <input class="input" id="rg-phone" type="tel" autocomplete="tel" placeholder="0912345678">
+        <label class="label" for="rg-user">Tài khoản <span class="req">*</span></label>
+        <input class="input" id="rg-user" type="text" autocomplete="username"
+          placeholder="Ví dụ: nam123" required autocapitalize="none" spellcheck="false">
+        <div class="form-hint">Chữ, số, dấu chấm. Từ 3 ký tự.</div>
       </div>
       <div class="field">
         <label class="label" for="rg-pwd">Mật khẩu <span class="req">*</span></label>
-        <input class="input" id="rg-pwd" type="password" autocomplete="new-password" placeholder="Tối thiểu 8 ký tự, có chữ và số" required>
-        <div class="form-hint">Mật khẩu phải có ít nhất 8 ký tự, bao gồm cả chữ và số</div>
+        <input class="input" id="rg-pwd" type="password" autocomplete="new-password"
+          placeholder="Ít nhất 6 ký tự" required>
+        <div class="form-hint">Từ 6 ký tự. Không cần chữ hoa hay ký tự đặc biệt.</div>
+      </div>
+      <div class="field">
+        <label class="label" for="rg-pwd2">Nhập lại mật khẩu <span class="req">*</span></label>
+        <input class="input" id="rg-pwd2" type="password" autocomplete="new-password"
+          placeholder="Nhập lại cho chắc" required>
       </div>
       <div id="reg-error" class="form-error mb-2" style="display:none"></div>
-      <button class="btn btn-primary btn-block btn-lg" id="reg-submit" type="submit">Đăng ký</button>
+      <button class="btn btn-primary btn-block btn-lg" id="reg-submit" type="submit">Tạo tài khoản</button>
     </form>
     <div class="auth-foot">
       Đã có tài khoản? <a href="#/login">Đăng nhập</a>
@@ -114,35 +114,33 @@ export function mountRegister(root, query) {
     e.preventDefault();
     errEl.style.display = 'none';
 
-    const fullName = root.querySelector('#rg-name').value.trim();
-    const email = root.querySelector('#rg-email').value.trim();
-    const phone = root.querySelector('#rg-phone').value.trim();
+    const username = root.querySelector('#rg-user').value.trim().toLowerCase();
     const password = root.querySelector('#rg-pwd').value;
+    const password2 = root.querySelector('#rg-pwd2').value;
 
-    if (fullName.length < 2) return showErr('⚠️ Vui lòng nhập họ tên');
-    if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) return showErr('⚠️ Email không hợp lệ');
-    if (password.length < 8) return showErr('⚠️ Mật khẩu phải có ít nhất 8 ký tự');
-    if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
-      return showErr('⚠️ Mật khẩu phải bao gồm cả chữ và số');
+    if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
+      return showErr('⚠️ Tài khoản 3-32 ký tự, chỉ dùng chữ, số, dấu chấm, gạch dưới');
     }
+    if (password.length < 6) return showErr('⚠️ Mật khẩu phải có ít nhất 6 ký tự');
+    if (password !== password2) return showErr('⚠️ Hai mật khẩu không giống nhau');
 
     btn.disabled = true;
-    btn.textContent = 'Đang tạo tài khoản...';
+    btn.textContent = 'Đang tạo...';
     try {
       const data = await api('/api/auth/register', {
         method: 'POST',
-        body: { fullName, email, phone: phone || null, password },
+        body: { username, password },
       });
       state.user = data.user;
       notify();
-      toast('Đăng ký thành công! Chào mừng bạn 🎉', 'success');
+      toast('Tạo tài khoản thành công! Chào mừng bạn 🎉', 'success');
       navigate(query.redirect || '/');
       window.dispatchEvent(new CustomEvent('app:refresh-header'));
     } catch (err) {
       showErr('⚠️ ' + err.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Đăng ký';
+      btn.textContent = 'Tạo tài khoản';
     }
   };
 

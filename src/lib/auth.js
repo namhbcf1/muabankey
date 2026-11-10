@@ -60,7 +60,8 @@ export async function getSessionUser(env, request) {
   if (!token || token.length !== 64) return null;
   const tokenHash = await sha256(token);
   const row = await env.DB.prepare(
-    `SELECT s.token_hash, s.expires_at, u.id, u.email, u.full_name, u.phone, u.role, u.status, u.balance
+    `SELECT s.token_hash, s.expires_at, u.id, u.email, u.username,
+            u.full_name, u.phone, u.role, u.status, u.balance
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? LIMIT 1`
   )
@@ -72,9 +73,14 @@ export async function getSessionUser(env, request) {
     return null;
   }
   if (row.status !== 'active') return null;
+
+  // Email nội bộ <username>@local không phải email thật -> trả null
+  const isLocal = typeof row.email === 'string' && row.email.endsWith('@local');
+
   return {
     id: row.id,
-    email: row.email,
+    username: row.username || (isLocal ? row.email.slice(0, -6) : null),
+    email: isLocal ? null : row.email,
     fullName: row.full_name,
     phone: row.phone,
     role: row.role,

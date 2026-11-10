@@ -21,11 +21,39 @@ export function email(v, field = 'email') {
   return s;
 }
 
-export function password(v) {
-  const s = str(v, 'password', { min: 8, max: 128, trim: false });
-  if (!/[A-Za-z]/.test(s) || !/[0-9]/.test(s)) {
-    throw new ApiError(400, 'Mật khẩu phải có cả chữ và số', 'VALIDATION');
+/**
+ * Tên đăng nhập: chữ, số, gạch dưới, gạch ngang, dấu chấm. 3-32 ký tự.
+ * Dùng khi khách đăng ký chỉ với tài khoản + mật khẩu (không cần email).
+ */
+export function username(v, field = 'username') {
+  const s = str(v, field, { min: 3, max: 32 }).toLowerCase();
+  if (!/^[a-z0-9._-]+$/.test(s)) {
+    throw new ApiError(400,
+      'Tên đăng nhập chỉ được dùng chữ, số, dấu chấm, gạch dưới, gạch ngang',
+      'VALIDATION');
   }
+  if (/^[._-]|[._-]$/.test(s)) {
+    throw new ApiError(400, 'Tên đăng nhập không được bắt đầu/kết thúc bằng dấu',
+      'VALIDATION');
+  }
+  return s;
+}
+
+/**
+ * Chấp nhận cả email và username.
+ * - Có '@' -> validate như email
+ * - Không có '@' -> validate như username
+ */
+export function identifier(v, field = 'identifier') {
+  const raw = str(v, field, { min: 3, max: 254 }).trim();
+  if (raw.includes('@')) return email(raw, field);
+  return username(raw, field);
+}
+
+export function password(v) {
+  // Chỉ yêu cầu 6 ký tự, không bắt buộc chữ + số.
+  // Chủ shop yêu cầu đăng ký đơn giản: tài khoản + mật khẩu là xong.
+  const s = str(v, 'password', { min: 6, max: 128, trim: false });
   return s;
 }
 
