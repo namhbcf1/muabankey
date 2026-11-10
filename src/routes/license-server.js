@@ -210,6 +210,14 @@ export async function apiCheck(env, request) {
 
   const lic = await getLicense(env, key);
   const now = nowSec();
+
+  // ===== NHÁNH RIÊNG CHO TRIAL =====
+  // Trial KHÔNG dùng bindFirstTime: hạn đã được tính sẵn lúc cấp,
+  // và cần trả thêm quota + nhịp recheck cho client.
+  if (lic && lic.plan === 'trial') {
+    return trialCheck(env, request, lic, key, hwid, ip, now);
+  }
+
   const v = judge(lic, hwid, now);
 
   if (!v.ok) {
@@ -237,6 +245,112 @@ export async function apiCheck(env, request) {
   await logEvent(env, key, hwid, 'check', null, ip);
 
   return json(publicLic(lic));
+}
+
+/**
+ * Kiểm tra trial: bắt đầu đồng hồ ở lần check ĐẦU TIÊN, trả quota + recheck.
+ */
+async function trialCheck(env, request, lic, key, hwid, ip, now) {
+  const { trialCfg, getQuota, publicUse, normKind, KIND_1H, KIND_3D } =
+    await import('../lib/trial-quota.js');
+
+  // Tìm grant tương ứng
+  const use = await env.DB.prepare(
+    'SELECT * FROM trial_uses WHERE lic_key = ? LIMIT 1'
+  ).bind(key).first();
+
+  if (!use) {
+    // License trial tồn tại nhưng không có grant -> dữ liệu cũ (v1)
+    // Cho chạy nếu license còn hạn, nhưng không có quota.
+    const v = judge(lic, hwid, now);
+    if (!v.ok) {
+      return json({
+        ok: false, code: v.code, msg: MESSAGES[v.code] || v.code,
+        now, expires_at: v.expires_at || 0,
+      }, 403);
+    }
+    return json(publicLic(lic, { legacy_trial: true }));
+  }
+
+  // Đã bị thu hồi / dừng
+  if (use.ended_at) {
+    await logEvent(env, key, hwid, 'deny', `trial ${use.end_reason || 'ended'}`, ip);
+    return json({
+      ok: false, code: 'trial_expired',
+      msg: use.end_reason === 'reset'
+        ? 'Lượt dùng thử đã được đặt lại'
+        : 'Lượt dùng thử đã kết thúc',
+      now, expires_at: use.expires_at || 0,
+    }, 403);
+  }
+
+  // HWID không khớp -> chặn copy lic.bin
+  if (use.hwid && use.hwid !== hwid) {
+    await logEvent(env, key, hwid, 'deny', 'trial hwid mismatch', ip);
+    return json({
+      ok: false, code: 'hwid_mismatch',
+      msg: 'Mã dùng thử đã gắn với máy khác',
+      now,
+    }, 403);
+  }
+
+  // ===== BẮT ĐẦU ĐỒNG HỒ Ở LẦN CHECK ĐẦU TIÊN =====
+  if (!use.started_at) {
+    const cfg = await trialCfg(env);
+    const kind = normKind(use.kind) || KIND_3D;
+    const secs = kind === KIND_1H ? cfg.t1h.sec : cfg.t3d.sec;
+    const startedAt = now;
+    const expiresAt = now + secs;
+
+    await env.DB.prepare(
+      'UPDATE trial_uses SET started_at = ?, expires_at = ? WHERE id = ? AND started_at IS NULL'
+    ).bind(startedAt, expiresAt, use.id).run();
+    await env.DB.prepare(
+      'UPDATE licenses SET activated_at = ?, expires_at = ? WHERE key = ?'
+    ).bind(startedAt, expiresAt, key).run();
+
+    const fresh = await env.DB.prepare('SELECT * FROM trial_uses WHERE id = ?')
+      .bind(use.id).first();
+
+    await logEvent(env, key, hwid, 'trial_activate', `${kind} ${secs}s`, ip);
+
+    return json({
+      ...publicUse(fresh, cfg, kind),
+      trial_kind_state: 'activated',
+      now,
+    });
+  }
+
+  // Đã kích hoạt -> kiểm hạn
+  if (use.expires_at && use.expires_at <= now) {
+    await env.DB.prepare(
+      "UPDATE trial_uses SET ended_at = ?, end_reason = 'expired' WHERE id = ? AND ended_at IS NULL"
+    ).bind(now, use.id).run();
+    await logEvent(env, key, hwid, 'deny', 'trial expired', ip);
+    return json({
+      ok: false, code: 'trial_expired',
+      msg: 'Lượt dùng thử đã hết hạn',
+      now, expires_at: use.expires_at,
+    }, 403);
+  }
+
+  // Còn hạn -> trả trạng thái + quota
+  const cfg = await trialCfg(env);
+  const kind = normKind(use.kind) || KIND_3D;
+  const quota = use.user_id
+    ? await getQuota(env, use.user_id, kind, kind === KIND_1H ? cfg.t1h.quota : cfg.t3d.quota)
+    : null;
+
+  await env.DB.prepare(
+    'UPDATE licenses SET last_seen = ?, last_ip = ? WHERE key = ?'
+  ).bind(now, ip, key).run();
+
+  return json({
+    ...publicUse(use, cfg, kind),
+    trial_kind_state: 'active',
+    now,
+    ...(quota ? { used: quota.used, quota: quota.quota, left: quota.left } : {}),
+  });
 }
 
 export async function apiRebind(env, request) {

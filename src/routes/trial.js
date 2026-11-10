@@ -1,35 +1,27 @@
 /**
- * Trial 3 ngày miễn phí theo HWID.
+ * Trial 1 GIỜ và 3 NGÀY, mỗi loại 10 lượt/tài khoản.
  *
- * THIẾT KẾ:
- *  - Trial là một license THẬT trong bảng `licenses` với plan='trial'
- *    → /api/check chạy nguyên logic cũ, client không cần sửa gì.
- *  - Bảng `trial_grants` là MỎ NEO chống reset: khoá theo `weak_hwid`
- *    (bỏ volume serial — thứ đổi được bằng 1 lệnh), nên:
- *       • xoá lic.bin         → server trả lại đúng trial cũ
- *       • đổi volume serial   → vẫn nhận ra, trả trial cũ
- *       • trial đã hết hạn    → từ chối, KHÔNG cấp mới
- *  - Server TỰ TÍNH hwid từ raw parts client gửi, không tin hwid client.
- *    (Trước đây POST /api/activate nhận hwid trần → curl 10 giây farm
- *    được trial vô hạn bằng HWID ngẫu nhiên.)
- *  - grace_hours = 0: trial phải có mạng. Nếu cho grace 24h thì rút mạng
- *    là 3 ngày thành 4 ngày, và mọi mã lỗi lạ đều rơi vào nhánh grace.
+ * BẢO MẬT:
+ *   - Bắt buộc đăng nhập (không cho curl farm)
+ *   - Server tự băm HWID từ raw parts — không tin hwid client gửi
+ *   - Trừ lượt NGUYÊN TỬ (UPDATE WHERE used < quota)
+ *   - 1 máy chỉ được N tài khoản trial (chặn farm account)
+ *   - idem_key chống retry trừ 2 lượt
+ *   - Giới hạn IP / subnet / toàn hệ thống
+ *
+ * THỜI GIAN:
+ *   - 1 giờ = 3600 giây, 3 ngày = 259200 giây (tuyệt đối, không ngày lịch)
+ *   - Bắt đầu đếm từ /api/check thành công LẦN ĐẦU (không phải lúc cấp)
+ *   - Hold 7 ngày: cấp rồi không kích hoạt thì vô hiệu
+ *   - Trả `now` để client neo giờ server vào monotonic clock
  */
 import { json } from '../lib/http.js';
-
-const TRIAL_PREFIX = 'TR-';
-const DEFAULT_DAYS = 3;
-const DEFAULT_MAX_PER_IP = 3;
-const DEFAULT_MAX_PER_NET = 12;
-const DEFAULT_MAX_PER_DAY = 200;
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-
-function ipOf(request) {
-  return request.headers.get('cf-connecting-ip') || 'unknown';
-}
+import {
+  trialCfg, kindCfg, normKind, nowSec, trialKey, sha256hex,
+  looksVirtual, deriveIds, getQuota, consumeUse, refundUse,
+  activeUse, deviceAccountCount, countRecent, publicUse,
+  KIND_1H, KIND_3D,
+} from '../lib/trial-quota.js';
 
 async function readBody(request) {
   const text = await request.text();
@@ -42,37 +34,8 @@ async function readBody(request) {
   }
 }
 
-async function sha256hex(text) {
-  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/** Đọc cấu hình trial từ settings, fallback mặc định. */
-async function trialCfg(env) {
-  const { results } = await env.DB.prepare(
-    `SELECT key, value FROM settings WHERE key LIKE 'trial_%'`
-  ).all();
-  const m = {};
-  for (const r of results || []) m[r.key] = r.value;
-  const num = (k, d) => {
-    const n = Number(m[k]);
-    return Number.isFinite(n) ? n : d;
-  };
-  return {
-    enabled: m.trial_enabled !== '0',
-    days: num('trial_days', DEFAULT_DAYS),
-    maxPerIp: num('trial_max_per_ip', DEFAULT_MAX_PER_IP),
-    maxPerNet: num('trial_max_per_net', DEFAULT_MAX_PER_NET),
-    maxPerDay: num('trial_max_per_day', DEFAULT_MAX_PER_DAY),
-  };
-}
-
-async function logAttempt(env, weak, hwid, ip, action, detail) {
-  try {
-    await env.DB.prepare(
-      'INSERT INTO trial_attempts (weak, hwid, ip, action, detail, at) VALUES (?,?,?,?,?,?)'
-    ).bind(weak || null, hwid || null, ip, action, detail || null, nowSec()).run();
-  } catch { /* không chặn luồng chính */ }
+function ipOf(request) {
+  return request.headers.get('cf-connecting-ip') || 'unknown';
 }
 
 async function logEvent(env, key, hwid, kind, detail, ip) {
@@ -83,72 +46,18 @@ async function logEvent(env, key, hwid, kind, detail, ip) {
   } catch { /* ignore */ }
 }
 
-/** Nhận diện máy ảo từ BIOS vendor / CPU brand. */
-function looksVirtual(bios, cpu) {
-  const s = `${bios} ${cpu}`.toLowerCase();
-  const marks = ['vmware', 'virtualbox', 'vbox', 'qemu', 'kvm', 'xen',
-    'hyper-v', 'parallels', 'bochs', 'innotek', 'virtual machine'];
-  return marks.some((m) => s.includes(m));
-}
-
 /**
- * Tính HWID + weak HWID từ raw parts.
- * weak = bỏ volume serial (đổi được bằng phần mềm).
+ * GET /api/trial/status — xem còn bao nhiêu lượt.
+ * Cần đăng nhập.
  */
-async function deriveIds(parts) {
-  const [guid, bios, cpu, vol] = parts.map((x) => String(x || '').trim().slice(0, 200));
-  const full = [guid, bios, cpu, vol].join('|');
-  const weak = [guid, bios, cpu].join('|');
-  return {
-    hwid: (await sha256hex('v1|' + full)).slice(0, 32),
-    weak: (await sha256hex('w1|' + weak)).slice(0, 32),
-    bios, cpu,
-  };
-}
-
-function trialKeyFor(weak) {
-  return TRIAL_PREFIX + String(weak).slice(0, 16).toUpperCase();
-}
-
-function publicTrial(lic, now, kind) {
-  return {
-    ok: true,
-    key: lic.key,
-    plan: 'trial',
-    trial: true,
-    trial_kind: kind,
-    expires_at: lic.expires_at,
-    activated_at: lic.activated_at,
-    days_left: Math.max(0, Math.ceil((lic.expires_at - now) / 86400)),
-    grace_hours: 0,
-  };
-}
-
-/** Đếm trial đã cấp trong 30 ngày theo IP và theo /24. */
-async function countRecent(env, ip, net, since, { perIp = true } = {}) {
-  const row = perIp
-    ? await env.DB.prepare(
-        "SELECT COUNT(*) AS n FROM trial_attempts WHERE action='start' AND ip = ? AND at > ?"
-      ).bind(ip, since).first()
-    : await env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM trial_attempts
-         WHERE action='start' AND ip LIKE ? AND at > ?`
-      ).bind(net + '.%', since).first();
-  return row?.n || 0;
-}
-
-/**
- * POST /api/trial/start
- * Body: { guid, bios, cpu, vol, app, ver }
- *   → server tự băm ra hwid. Client KHÔNG gửi hwid trực tiếp.
- *   (Vẫn nhận `hwid` nếu client cũ, nhưng khi đó coi như weak = hwid.)
- */
-export async function apiTrialStart(env, request) {
-  const ip = ipOf(request);
-  const ua = (request.headers.get('user-agent') || '').slice(0, 200);
-  const b = await readBody(request);
-  if (!b) {
-    return json({ ok: false, code: 'bad_request', msg: 'JSON không hợp lệ' }, 400);
+export async function apiTrialStatus(env, request) {
+  const { getSessionUser } = await import('../lib/auth.js');
+  const user = await getSessionUser(env, request);
+  if (!user) {
+    return json({
+      ok: false, code: 'login_required',
+      msg: 'Đăng nhập để dùng thử',
+    }, 401);
   }
 
   const cfg = await trialCfg(env);
@@ -156,112 +65,193 @@ export async function apiTrialStart(env, request) {
     return json({ ok: false, code: 'trial_disabled', msg: 'Dùng thử đang tạm đóng' }, 403);
   }
 
-  // ---- 1. Tính ID ----
+  const [q1h, q3d, a1h, a3d] = await Promise.all([
+    getQuota(env, user.id, KIND_1H, cfg.t1h.quota),
+    getQuota(env, user.id, KIND_3D, cfg.t3d.quota),
+    activeUse(env, user.id, KIND_1H),
+    activeUse(env, user.id, KIND_3D),
+  ]);
+
+  return json({
+    ok: true,
+    now: nowSec(),
+    username: user.username || user.email,
+    kinds: {
+      [KIND_1H]: {
+        enabled: cfg.t1h.enabled,
+        used: q1h.used, quota: q1h.quota, left: q1h.left,
+        active: a1h ? { ...publicUse(a1h, cfg, KIND_1H), hwid: a1h.hwid } : null,
+        recheck_sec: cfg.recheck1h,
+      },
+      [KIND_3D]: {
+        enabled: cfg.t3d.enabled,
+        used: q3d.used, quota: q3d.quota, left: q3d.left,
+        active: a3d ? { ...publicUse(a3d, cfg, KIND_3D), hwid: a3d.hwid } : null,
+        recheck_sec: cfg.recheck3d,
+      },
+    },
+  });
+}
+
+/**
+ * POST /api/trial/start { guid, bios, cpu, vol, kind, idem_key }
+ *
+ * kind: '1h' | '3d' (mặc định '3d')
+ * Bắt buộc đăng nhập.
+ */
+export async function apiTrialStart(env, request) {
+  const ip = ipOf(request);
+  const ua = (request.headers.get('user-agent') || '').slice(0, 200);
+  const body = await readBody(request);
+  if (!body) {
+    return json({ ok: false, code: 'bad_request', msg: 'JSON không hợp lệ' }, 400);
+  }
+
+  // ---- 1. Bắt buộc đăng nhập ----
+  const { getSessionUser } = await import('../lib/auth.js');
+  const user = await getSessionUser(env, request);
+  if (!user) {
+    return json({
+      ok: false, code: 'login_required',
+      msg: 'Cần đăng nhập để dùng thử. Tạo tài khoản miễn phí trên web.',
+    }, 401);
+  }
+
+  const cfg = await trialCfg(env);
+  if (!cfg.enabled) {
+    return json({ ok: false, code: 'trial_disabled', msg: 'Dùng thử đang tạm đóng' }, 403);
+  }
+
+  // ---- 2. Xác định loại trial ----
+  const kind = normKind(body.kind) || KIND_3D;
+  const kc = kindCfg(cfg, kind);
+  if (!kc || !kc.enabled) {
+    return json({
+      ok: false, code: 'trial_kind_invalid',
+      msg: `Loại dùng thử "${kind}" không khả dụng`,
+    }, 400);
+  }
+
+  // ---- 3. Rate limit riêng cho trial ----
+  try {
+    const { rateLimit } = await import('../lib/ratelimit.js');
+    await rateLimit(env, `trial:${ip}`, 20, 3600);
+    await rateLimit(env, `trial:u:${user.id}`, 30, 3600);
+  } catch (e) {
+    if (e && e.code === 'RATE_LIMITED') {
+      return json({
+        ok: false, code: 'rate_limit',
+        msg: 'Bạn thao tác quá nhanh, thử lại sau ít phút',
+      }, 429);
+    }
+    throw e;
+  }
+
+  // ---- 4. Idempotency: retry mạng không trừ 2 lượt ----
+  const idemKey = String(body.idem_key || '').trim().slice(0, 64) || null;
+  if (idemKey) {
+    const dup = await env.DB.prepare(
+      'SELECT * FROM trial_uses WHERE idem_key = ? LIMIT 1'
+    ).bind(idemKey).first();
+    if (dup) {
+      if (dup.expires_at && dup.expires_at < nowSec()) {
+        return json({ ok: false, code: 'trial_expired', msg: 'Lượt dùng thử này đã hết hạn' }, 403);
+      }
+      return json({ ...publicUse(dup, cfg, kind), trial_kind_state: 'idem' });
+    }
+  }
+
+  // ---- 5. Tính HWID từ raw parts (server TỰ băm, không tin client) ----
   let ids;
-  if (b.guid !== undefined || b.bios !== undefined || b.cpu !== undefined) {
-    ids = await deriveIds([b.guid, b.bios, b.cpu, b.vol]);
-  } else {
-    // Client cũ chỉ gửi hwid → dùng làm cả hwid và weak (kém an toàn hơn)
-    const raw = String(b.hwid || '').trim().toLowerCase();
+  if (body.guid !== undefined || body.bios !== undefined || body.cpu !== undefined) {
+    ids = await deriveIds([body.guid, body.bios, body.cpu, body.vol]);
+  } else if (body.hwid) {
+    // Client cũ chỉ gửi hwid
+    const raw = String(body.hwid).trim().toLowerCase();
     if (!/^[0-9a-z]{16,128}$/.test(raw)) {
       return json({ ok: false, code: 'bad_request', msg: 'Thiếu thông tin máy' }, 400);
     }
     ids = { hwid: raw, weak: raw, bios: '', cpu: '' };
+  } else {
+    return json({ ok: false, code: 'bad_request', msg: 'Thiếu thông tin máy' }, 400);
   }
 
-  // ---- 2. Chặn máy ảo ----
+  // ---- 6. Chặn máy ảo ----
   if (looksVirtual(ids.bios, ids.cpu)) {
-    await logAttempt(env, ids.weak, ids.hwid, ip, 'denied_device', 'virtual machine');
+    await logEvent(env, '-', ids.hwid, 'trial_deny', 'virtual machine', ip);
     return json({
       ok: false, code: 'trial_denied_device',
       msg: 'Không hỗ trợ dùng thử trên máy ảo',
     }, 403);
   }
 
-  // ---- 3. Thiết bị bị chặn thủ công ----
+  // ---- 7. Thiết bị bị ban ----
   const banned = await env.DB.prepare(
-    'SELECT reason FROM banned_devices WHERE weak_hwid = ?'
-  ).bind(ids.weak).first();
+    'SELECT reason FROM trial_bans WHERE scope = ? AND value = ?'
+  ).bind('weak', ids.weak).first();
   if (banned) {
-    await logAttempt(env, ids.weak, ids.hwid, ip, 'denied_device', 'banned');
     return json({
       ok: false, code: 'trial_denied_device',
       msg: 'Thiết bị này bị chặn dùng thử',
     }, 403);
   }
 
-  const now = nowSec();
-  const key = trialKeyFor(ids.weak);
-
-  // ---- 4. Đã có trial cho máy này? ----
-  const grant = await env.DB.prepare(
-    'SELECT * FROM trial_grants WHERE weak_hwid = ?'
-  ).bind(ids.weak).first();
-
-  if (grant) {
-    const lic = await env.DB.prepare('SELECT * FROM licenses WHERE key = ?')
-      .bind(grant.lic_key).first();
-
-    if (!lic || lic.revoked) {
-      await logAttempt(env, ids.weak, ids.hwid, ip, 'denied_expired', 'revoked');
-      return json({
-        ok: false, code: 'trial_expired',
-        msg: `Máy này đã dùng hết ${cfg.days} ngày dùng thử`,
-      }, 403);
-    }
-    if (lic.expires_at && lic.expires_at < now) {
-      await logAttempt(env, ids.weak, ids.hwid, ip, 'denied_expired', 'time up');
-      return json({
-        ok: false, code: 'trial_expired',
-        msg: `Máy này đã dùng hết ${cfg.days} ngày dùng thử`,
-        expires_at: lic.expires_at,
-      }, 403);
-    }
-    // Cùng máy nhưng HWID khác (đổi volume serial) → vẫn cho tiếp
-    if (lic.hwid !== ids.hwid) {
-      try {
-        await env.DB.prepare(
-          'UPDATE licenses SET hwid = ?, last_seen = ?, last_ip = ? WHERE key = ?'
-        ).bind(ids.hwid, now, ip, lic.key).run();
-        await env.DB.prepare(
-          'UPDATE trial_grants SET hwid = ?, suspect = 1, last_at = ? WHERE weak_hwid = ?'
-        ).bind(ids.hwid, now, ids.weak).run();
-        await logAttempt(env, ids.weak, ids.hwid, ip, 'resume', 'hwid changed');
-      } catch { /* ignore */ }
-    } else {
+  // ---- 8. Đang có trial cùng loại còn hạn -> RESUME, không trừ lượt ----
+  const active = await activeUse(env, user.id, kind);
+  if (active) {
+    // Nếu HWID khác (đổi máy/đổi volume serial) -> cập nhật, vẫn không trừ lượt
+    let hwidChanged = false;
+    if (active.hwid !== ids.hwid) {
       await env.DB.prepare(
-        'UPDATE trial_grants SET resume_count = resume_count + 1, last_at = ? WHERE weak_hwid = ?'
-      ).bind(now, ids.weak).run();
+        'UPDATE trial_uses SET hwid = ? WHERE id = ?'
+      ).bind(ids.hwid, active.id).run();
+      // License cũng phải đổi HWID, nếu không /api/check sẽ báo hwid_mismatch
       await env.DB.prepare(
-        'UPDATE licenses SET last_seen = ?, last_ip = ? WHERE key = ?'
-      ).bind(now, ip, lic.key).run();
-      await logAttempt(env, ids.weak, ids.hwid, ip, 'resume', 'same device');
+        'UPDATE licenses SET hwid = ? WHERE key = ?'
+      ).bind(ids.hwid, active.lic_key).run();
+      hwidChanged = true;
     }
-
-    const fresh = await env.DB.prepare('SELECT * FROM licenses WHERE key = ?')
-      .bind(grant.lic_key).first();
-    return json(publicTrial(fresh, now, 'resume'));
+    const q = await getQuota(env, user.id, kind, kc.quota);
+    return json({
+      ...publicUse(active, cfg, kind),
+      // Client cần hwid thật để gọi /api/check
+      hwid: ids.hwid,
+      hwid_updated: hwidChanged,
+      trial_kind_state: 'resume',
+      used: q.used, quota: q.quota, left: q.left,
+      now: nowSec(),
+    });
   }
 
-  // ---- 5. Máy mới: kiểm hạn mức ----
-  const since30d = now - 30 * 86400;
+  // ---- 9. Chống farm tài khoản trên 1 máy ----
+  const maxAcc = kind === KIND_1H ? cfg.deviceAccounts1h : cfg.deviceAccounts3d;
+  const accCount = await deviceAccountCount(env, ids.weak, kind, user.id);
+  if (accCount >= maxAcc) {
+    await logEvent(env, '-', ids.hwid, 'trial_deny', `device has ${accCount} accounts`, ip);
+    return json({
+      ok: false, code: 'trial_device_limit',
+      msg: 'Máy này đã dùng thử cho nhiều tài khoản khác. '
+        + 'Mỗi máy chỉ được dùng thử cho một số tài khoản nhất định.',
+    }, 403);
+  }
+
+  // ---- 10. Hạn mức IP / subnet / ngày ----
+  const since30d = nowSec() - 30 * 86400;
   const net = String(ip).split('.').slice(0, 3).join('.');
 
   if (ip !== 'unknown') {
-    const nIp = await countRecent(env, ip, net, since30d, { perIp: true });
+    const nIp = await countRecent(env, ip, net, nowSec() - 86400, { perIp: true });
     if (nIp >= cfg.maxPerIp) {
-      await logAttempt(env, ids.weak, ids.hwid, ip, 'denied_ip', `ip count ${nIp}`);
       return json({
-        ok: false, code: 'trial_limit',
-        msg: 'Kết nối này đã dùng hết lượt dùng thử',
+        ok: false, code: 'trial_ip_limit',
+        msg: 'Kết nối này đã dùng hết lượt dùng thử hôm nay',
       }, 429);
     }
     if (net.split('.').length === 3) {
       const nNet = await countRecent(env, ip, net, since30d, { perIp: false });
       if (nNet >= cfg.maxPerNet) {
-        await logAttempt(env, ids.weak, ids.hwid, ip, 'denied_ip', `net count ${nNet}`);
         return json({
-          ok: false, code: 'trial_limit',
+          ok: false, code: 'trial_ip_limit',
           msg: 'Mạng này đã dùng hết lượt dùng thử',
         }, 429);
       }
@@ -269,65 +259,99 @@ export async function apiTrialStart(env, request) {
   }
 
   const nDay = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM trial_attempts WHERE action='start' AND at > ?"
-  ).bind(now - 86400).first();
+    'SELECT COUNT(*) AS n FROM trial_uses WHERE created_at > ?'
+  ).bind(nowSec() - 86400).first();
   if ((nDay?.n || 0) >= cfg.maxPerDay) {
-    await logAttempt(env, ids.weak, ids.hwid, ip, 'denied_global', `day ${nDay?.n}`);
     return json({
-      ok: false, code: 'trial_limit',
+      ok: false, code: 'trial_global_limit',
       msg: 'Hệ thống đã đạt giới hạn dùng thử hôm nay, vui lòng thử lại mai',
     }, 429);
   }
 
-  // ---- 6. Tạo trial ----
-  const exp = now + cfg.days * 86400;
+  // ---- 11. Trừ lượt NGUYÊN TỬ ----
+  const quota = await consumeUse(env, user.id, kind, kc.quota);
+  if (!quota.ok) {
+    if (quota.reason === 'banned') {
+      return json({
+        ok: false, code: 'trial_banned',
+        msg: 'Tài khoản này bị chặn dùng thử',
+      }, 403);
+    }
+    return json({
+      ok: false, code: 'trial_quota_exhausted',
+      msg: `Đã dùng hết ${quota.quota} lượt dùng thử ${kind === KIND_1H ? '1 giờ' : '3 ngày'}`,
+      used: quota.used, quota: quota.quota, left: 0,
+      other_kind_left: undefined,
+    }, 403);
+  }
+
+  // ---- 12. Cấp license trial ----
+  const key = trialKey();
+  const useId = crypto.randomUUID();
+  const now = nowSec();
+  const holdUntil = now + cfg.holdSec;
+
   try {
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO licenses
            (key, hwid, plan, note, created_at, activated_at, expires_at,
             last_seen, last_ip, revoked, max_rebind, rebinds)
-         VALUES (?,?, 'trial', ?,?,?,?,?,?,0,0,0)`
-      ).bind(key, ids.hwid, `Dung thu ${cfg.days} ngay`, now, now, exp, now, ip),
+         VALUES (?,?, 'trial', ?,?, NULL, ?, NULL, ?, 0, 0, 0)`
+      ).bind(key, ids.hwid, `Trial ${kind} - ${user.username || user.id}`,
+        now, holdUntil, ip),
       env.DB.prepare(
-        `INSERT INTO trial_grants
-           (weak_hwid, lic_key, hwid, ip_first, ua_first, first_at, expires_at, last_at)
-         VALUES (?,?,?,?,?,?,?,?)`
-      ).bind(ids.weak, key, ids.hwid, ip, ua, now, exp, now),
+        `INSERT INTO trial_uses
+           (id, user_id, kind, lic_key, hwid, device_weak, ip, ua,
+            started_at, expires_at, created_at, idem_key)
+         VALUES (?,?,?,?,?,?,?,?, NULL, ?, ?, ?)`
+      ).bind(useId, user.id, kind, key, ids.hwid, ids.weak,
+        ip, ua, holdUntil, now, idemKey),
     ]);
   } catch (e) {
-    // Đua nhau: request khác vừa tạo → đọc lại
-    const again = await env.DB.prepare('SELECT * FROM licenses WHERE key = ?')
-      .bind(key).first();
-    if (again) return json(publicTrial(again, now, 'resume'));
-    console.error('trial insert:', e && e.message);
+    // Cấp lỗi -> HOÀN LƯỢT để khách không mất oan
+    await refundUse(env, user.id, kind);
+    console.error('trial issue:', e && e.message);
     return json({ ok: false, code: 'server_error', msg: 'Không tạo được dùng thử' }, 500);
   }
 
-  await logAttempt(env, ids.weak, ids.hwid, ip, 'start', `${cfg.days}d`);
-  await logEvent(env, key, ids.hwid, 'trial_start', `${cfg.days}d`, ip);
+  await logEvent(env, key, ids.hwid, 'trial_start', `${kind} #${quota.used}/${quota.quota}`, ip);
 
-  const lic = await env.DB.prepare('SELECT * FROM licenses WHERE key = ?').bind(key).first();
-  return json(publicTrial(lic, now, 'new'));
+  const row = await env.DB.prepare('SELECT * FROM trial_uses WHERE id = ?').bind(useId).first();
+  return json({
+    ...publicUse(row, cfg, kind),
+    // Client cần hwid thật để gọi /api/check — KHÔNG phải raw parts
+    hwid: ids.hwid,
+    trial_kind_state: 'new',
+    used: quota.used,
+    quota: quota.quota,
+    left: quota.left,
+    hold_until: holdUntil,
+    now: nowSec(),
+  });
 }
 
-/** GET /api/trial/status?weak=... — kiểm tra máy đã dùng trial chưa. */
-export async function apiTrialStatus(env, request) {
-  const url = new URL(request.url);
-  const weak = String(url.searchParams.get('weak') || '').trim().toLowerCase();
-  if (!/^[0-9a-z]{16,128}$/.test(weak)) {
-    return json({ ok: false, code: 'bad_request' }, 400);
-  }
-  const g = await env.DB.prepare(
-    'SELECT lic_key, first_at, expires_at, converted_key FROM trial_grants WHERE weak_hwid = ?'
-  ).bind(weak).first();
-  if (!g) return json({ ok: true, used: false });
+/**
+ * POST /api/trial/stop — khách tự dừng trial (giải phóng, KHÔNG hoàn lượt).
+ * Dùng khi khách muốn đổi sang gói khác ngay.
+ */
+export async function apiTrialStop(env, request) {
+  const { getSessionUser } = await import('../lib/auth.js');
+  const user = await getSessionUser(env, request);
+  if (!user) return json({ ok: false, code: 'login_required' }, 401);
+
+  const body = await readBody(request).catch(() => ({}));
+  const kind = normKind(body?.kind) || KIND_3D;
+
+  const active = await activeUse(env, user.id, kind);
+  if (!active) return json({ ok: true, stopped: false, reason: 'NO_ACTIVE_TRIAL' });
+
   const now = nowSec();
-  return json({
-    ok: true,
-    used: true,
-    expired: !!(g.expires_at && g.expires_at < now),
-    expires_at: g.expires_at,
-    days_left: g.expires_at ? Math.max(0, Math.ceil((g.expires_at - now) / 86400)) : 0,
-  });
+  await env.DB.prepare(
+    "UPDATE trial_uses SET expires_at = ?, ended_at = ?, end_reason = 'stopped' WHERE id = ?"
+  ).bind(now, now, active.id).run();
+  await env.DB.prepare('UPDATE licenses SET expires_at = ? WHERE key = ?')
+    .bind(now, active.lic_key).run();
+
+  return json({ ok: true, stopped: true, key: active.lic_key });
 }

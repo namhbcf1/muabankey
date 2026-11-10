@@ -16,6 +16,7 @@ import * as ai from './routes/ai.js';
 import * as license from './routes/license.js';
 import * as licenseServer from './routes/license-server.js';
 import * as trial from './routes/trial.js';
+import * as trialAdmin from './routes/trial-admin.js';
 import * as stats from './routes/stats.js';
 import * as installer from './routes/installer.js';
 
@@ -70,6 +71,7 @@ r.get('/api/license/health', (env) => licenseServer.apiHealth(env));
 /* ---------- Dùng thử 3 ngày ---------- */
 r.post('/api/trial/start', trial.apiTrialStart);
 r.get('/api/trial/status', trial.apiTrialStatus);
+r.post('/api/trial/stop', trial.apiTrialStop);
 
 /* ---------- License quản lý ---------- */
 r.get('/api/licenses/mine', license.myLicenses);
@@ -103,6 +105,12 @@ r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManu
 r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, req, p.id));
 r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
 r.post('/api/admin/settings/payos', wallet.adminSetPayosKey);
+r.get('/api/admin/trial/accounts', trialAdmin.adminTrialAccounts);
+r.get('/api/admin/trial/uses', trialAdmin.adminTrialUses);
+r.get('/api/admin/trial/resets', trialAdmin.adminTrialResets);
+r.post('/api/admin/trial/reset', trialAdmin.adminTrialReset);
+r.post('/api/admin/trial/grant', trialAdmin.adminTrialGrant);
+r.post('/api/admin/trial/ban', trialAdmin.adminTrialBan);
 r.get('/api/admin/telegram/status', wallet.adminTelegramStatus);
 r.post('/api/admin/telegram/config', wallet.adminTelegramConfig);
 r.post('/api/admin/telegram/test', wallet.adminTelegramTest);

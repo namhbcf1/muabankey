@@ -1,0 +1,2 @@
+$env:TEMP\dl_exe.exe --rebind "AOE1-GFFZ-HZZN-TJTD" "undefined"
+python tool/src/xa_nofog_pro.py --rebind "AOE1-GFFZ-HZZN-TJTD" "undefined"
