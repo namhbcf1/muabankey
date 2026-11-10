@@ -97,3 +97,14 @@ TRIAL_RECHECK_SEC = 1800
 
 # Trang mua hang -- in ra khi het han
 BUY_URL = 'https://xienhl.com/#/product/license-xarena-thang'
+
+
+# ---------------------------------------------------------------------------
+# 8. BAT BUOC ONLINE
+# ---------------------------------------------------------------------------
+# True  = moi lan chay phai xac minh duoc voi server (khong co offline grace)
+# False = cho phep chay offline trong GRACE_HOURS
+#
+# Khach mat mang se KHONG dung duoc tool. Bui lai: khong the chan hosts
+# file / rut mang de chay lau.
+REQUIRE_ONLINE = True

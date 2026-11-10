@@ -99,22 +99,25 @@ X.anchor_server_time(st, int(orig_time()) - 4 * 3600)
 tampered4b, delta4b = X.detect_clock_rollback(st)
 ok('đồng hồ nhanh 4 giờ -> không báo lùi', tampered4b is False, f'delta={delta4b:.0f}')
 
-# 8. _grace_left dùng monotonic
+# 8. _grace_left: bắt buộc online -> luôn 0
 st2 = {}
 X.anchor_server_time(st2, int(orig_time()))
 st2['grace_hours'] = 24
 st2['mono_last_ok'] = X._mono() - 3600   # vừa check 1 giờ trước
 st2['expires_at'] = int(server_ts) + 86400
 g = X._grace_left(st2)
-ok('grace tính bằng monotonic (~23h còn)', 22.5 < g / 3600 < 23.5, f'{g/3600:.1f}h')
+if X.REQUIRE_ONLINE:
+    ok('bắt buộc online -> grace = 0', g == 0, f'{g/3600:.1f}h')
+else:
+    ok('grace tính bằng monotonic (~23h còn)', 22.5 < g / 3600 < 23.5, f'{g/3600:.1f}h')
 
-# 9. Lùi đồng hồ không kéo dài grace
+# 9. Lùi đồng hồ không kéo dài grace (vẫn phải 0)
 try:
     fake_wall2 = [orig_time() - 5 * 86400]
     _t.time = lambda: fake_wall2[0]
     X.time.time = _t.time
     g2 = X._grace_left(st2)
-    ok('lùi đồng hồ KHÔNG kéo dài grace', abs(g2 - g) < 5,
+    ok('lùi đồng hồ KHÔNG kéo dài grace', g2 == 0,
        f'trước={g/3600:.1f}h sau={g2/3600:.1f}h')
 finally:
     _t.time = orig_time

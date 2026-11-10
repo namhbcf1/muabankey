@@ -24,7 +24,8 @@ const MESSAGES = {
   trial_only: 'Đây là mã dùng thử',
 };
 
-const GRACE_HOURS = 24;
+// Bắt buộc online: không có offline grace cho bất kỳ key nào.
+const GRACE_HOURS = 0;
 const RATE_LIMIT = 30;
 const RATE_WINDOW = 3600;
 

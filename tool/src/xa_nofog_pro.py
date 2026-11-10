@@ -9,6 +9,9 @@
     xa_nofog_pro.exe --full         # them 7 cong legacy (F I J K L O T2)
     xa_nofog_pro.exe --watch        # va lai moi 0.5s -- CHI de debug
     xa_nofog_pro.exe --key XXXX     # kich hoat bang key, roi thoat
+    xa_nofog_pro.exe --trial        # bat dung thu 3 ngay (tu dong neu chua co key)
+    xa_nofog_pro.exe --buy          # mo trang mua key
+    xa_nofog_pro.exe --rebind K T   # doi may bang token
     xa_nofog_pro.exe --status       # xem trang thai license
     xa_nofog_pro.exe --deactivate   # xoa key khoi may nay
     xa_nofog_pro.exe --help         # huong dan
@@ -40,7 +43,9 @@ PHAN 1 -- LICENSE
 - Kiem tra qua server Cloudflare (D1): server gan key voi MOT may. Copy
   chuoi key sang may khac se bi tu choi (hwid_mismatch).
 - Phat hien chinh lui dong ho he thong (nhieu moc: file + registry).
-- Mat mang: dung grace 24 gio ke tu lan check thanh cong cuoi.
+- BAT BUOC ONLINE: moi lan chay phai xac minh duoc voi server.
+  Khong co offline grace. Mat mang = khong chay duoc.
+  (Tat bang REQUIRE_ONLINE=False trong xa_config.py neu can.)
 
 ================================================================================
 PHAN 2 -- NO FOG
@@ -139,6 +144,8 @@ TRIAL_RECHECK_SEC = int(_c('TRIAL_RECHECK_SEC', 1800))
 BUY_URL = str(_c('BUY_URL', 'https://xienhl.com/#/product/license-xarena-thang'))
 EXIT_TRIAL_END = int(_c('EXIT_TRIAL_END', 6))
 CLIENT_VERSION = '1.2.0'
+# Bat buoc online: khong cho chay offline (grace = 0)
+REQUIRE_ONLINE = str(_c('REQUIRE_ONLINE', '1')) not in ('0', 'False', 'false', '')
 
 # =============================================================================
 # PHAN 1 -- LICENSE
@@ -473,6 +480,10 @@ def _grace_left(st):
     DO BANG MONOTONIC, khong phai dong ho he thong: lui dong ho khong keo
     dai duoc grace.
     """
+    # Bắt buộc online: không có offline grace cho BẤT KỲ key nào.
+    # Lý do: chặn hosts file / rút mạng là cách chạy lậu phổ biến nhất.
+    if REQUIRE_ONLINE:
+        return 0
     # Ban dung thu KHONG co offline grace: rut mang la khong chay duoc.
     if is_trial(st):
         return 0
@@ -755,30 +766,62 @@ _trial_next_check = {'at': 0.0}
 
 
 def trial_guard(verbose=True):
-    """Goi trong vong lap thuong tru: het han giua phien thi dung han.
+    """Goi dinh ky trong vong lap thuong tru.
 
-    Chi kiem toi da 1 lan / TRIAL_RECHECK_SEC. Ban tra phi luon True.
+    TEN GIU NGUYEN cho tuong thich, nhung gio phuc vu CA HAI:
+      - Trial: het han giua phien -> dung han
+      - Key tra phi: bat buoc online -> mat mang la dung han
+        (vi REQUIRE_ONLY khi bat thi grace = 0)
+
+    Chi kiem toi da 1 lan / TRIAL_RECHECK_SEC de khong spam server.
     """
     st = load_state()
-    if not is_trial(st):
+    if not st.get('key'):
         return True
 
     now = server_now()          # gio server, khong phai dong ho may
     exp = st.get('expires_at') or 0
     if exp and now > exp:
         if verbose:
-            _offer_buy()
+            if is_trial(st):
+                _offer_buy()
+            else:
+                print('')
+                print('  ============================================================')
+                print('   MA BAN QUYEN DA HET HAN')
+                print('  ============================================================')
+                print('   Mua key moi: %s' % BUY_URL)
+                print('  ============================================================')
+                print('')
         return False
 
-    if now < _trial_next_check['at']:
+    # Chua toi luot kiem -> cho chay tiep
+    mono_now = _mono()
+    if mono_now < _trial_next_check['at']:
         return True
-    _trial_next_check['at'] = now + TRIAL_RECHECK_SEC
+    _trial_next_check['at'] = mono_now + TRIAL_RECHECK_SEC
 
+    # Bat buoc online: moi lan kiem phai lien lac duoc server
     ok, msg = ensure_licensed(verbose=False)
     if not ok:
         if verbose:
-            print('  Khong xac minh duoc dung thu: %s' % msg)
-            _offer_buy()
+            if 'bat buoc online' in msg or 'khong ket noi duoc' in msg:
+                print('')
+                print('  ============================================================')
+                print('   MAT KET NOI TOI SERVER')
+                print('  ============================================================')
+                print('   Tool can mang de xac minh ban quyen moi lan chay.')
+                print('   Kiem tra internet roi chay lai, hoac:')
+                print('   mo https://xienhl.com de kiem tra trang thai.')
+                print('  ============================================================')
+                print('')
+            elif 'clock_tampered' in msg:
+                print('  [!] Dong ho may bi chinh lui -> dung.')
+            elif is_trial(st):
+                print('  Khong xac minh duoc dung thu: %s' % msg)
+                _offer_buy()
+            else:
+                print('  Khong xac minh duoc ban quyen: %s' % msg)
         return False
     return True
 
@@ -799,10 +842,11 @@ def ensure_licensed(verbose=True):
     if not clock_ok:
         if verbose:
             print('  [!] %s' % clock_msg)
-        # Chi chan khi la trial hoac da cau hinh nghiem ngat.
-        # Key tra phi: van cho chay nhung ghi nhan (tranh chan oan khach
-        # doi mui gio / dong ho may chet pin CMOS).
-        if is_trial(st):
+        # Bat buoc online: server quyet dinh han, client khong can dong ho.
+        # Dong ho bi chinh lui = dau hieu gian lan -> chan tat ca.
+        # (Neu tat REQUIRE_ONLINE: chi chan trial, tranh chan oan khach
+        #  doi mui gio hoac pin CMOS chet.)
+        if REQUIRE_ONLINE or is_trial(st):
             return False, 'clock_tampered'
 
     ok, msg = check_online(st, verbose=False)
@@ -835,6 +879,8 @@ def ensure_licensed(verbose=True):
         if exp and exp > 0 and server_now() > exp:
             return False, 'ma da het han'
         return True, 'ok (offline)'
+    if REQUIRE_ONLINE:
+        return False, 'khong ket noi duoc server (bat buoc online)'
     return False, 'khong ket noi duoc server va da het grace'
 
 
@@ -1615,6 +1661,40 @@ def require_license(opts):
         elif 'het han' in msg:
             print('Ma ban quyen da het han.')
             _offer_buy()
+        elif 'clock_tampered' in msg:
+            print('')
+            print('  ============================================================')
+            print('   DONG HO MAY BI CHINH LUI')
+            print('  ------------------------------------------------------------')
+            print('   Tool bat buoc xac minh voi server moi lan chay. Dong ho')
+            print('   he thong cua ban dang cham hon nhieu so voi gio that.')
+            print('')
+            print('   Cach xu ly:')
+            print('     1. Mo Settings > Time & Language > Date & time')
+            print('     2. Bat "Set time automatically"')
+            print('     3. Bam "Sync now"')
+            print('     4. Chay lai tool')
+            print('  ============================================================')
+            print('')
+            return False
+        elif 'bat buoc online' in msg or 'khong ket noi duoc' in msg:
+            print('')
+            print('  ============================================================')
+            print('   KHONG KET NOI DUOC SERVER')
+            print('  ------------------------------------------------------------')
+            print('   Tool can mang moi lan chay de xac minh ban quyen.')
+            print('')
+            print('   Kiem tra:')
+            print('     1. May co dang ket noi internet khong?')
+            print('     2. Thu mo trinh duyet vao https://xienhl.com')
+            print('     3. Neu dung VPN/proxy, thu tat tam thoi')
+            print('     4. Neu bi chan hosts file, xoa dong chua xienhl.com')
+            print('        trong C:\\Windows\\System32\\drivers\\etc\\hosts')
+            print('')
+            print('   Van khong duoc? Nhan ho tro: %s' % BUY_URL)
+            print('  ============================================================')
+            print('')
+            return False
         else:
             print('Khong dung duoc: %s' % msg)
 
@@ -1734,9 +1814,21 @@ def run():
     elif watch_mode:
         print('XArena No Fog -- watch 0.5s (%d cong)' % len(sites))
     elif resident_mode:
-        title('XA NoFog - dang cho game')
-        print('DANG CHAY. Cho game bat...')
+        _st0 = load_state()
+        if is_trial(_st0):
+            left = _days_left(_st0) or 0
+            title('XA NoFog - DUNG THU con %.0f ngay' % left)
+            print('DANG CHAY (dung thu con %.1f ngay). Cho game bat...' % left)
+        else:
+            left = _days_left(_st0)
+            if left is not None and left > 0:
+                title('XA NoFog - con %.0f ngay' % left)
+                print('DANG CHAY (con %.1f ngay). Cho game bat...' % left)
+            else:
+                title('XA NoFog - dang cho game')
+                print('DANG CHAY. Cho game bat...')
         print('(de cua so nay mo. Ctrl-C de dung)')
+        print('(can mang: tool xac minh ban quyen moi %d phut)' % (TRIAL_RECHECK_SEC // 60))
 
     cur_pid = 0
     h = None
@@ -1745,6 +1837,14 @@ def run():
     patched_pid = 0
     try:
         while True:
+            # Kiem license dinh ky (moi TRIAL_RECHECK_SEC):
+            #   - Bat buoc online: mat mang = dung han
+            #   - Trial/paid het han giua phien = dung han
+            if resident_mode and not trial_guard():
+                if h:
+                    kernel32.CloseHandle(h)
+                return EXIT_TRIAL_END
+
             procs = find_game()
             if not procs:
                 if h:
