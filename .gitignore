@@ -38,3 +38,7 @@ Thumbs.db
 # Kho key - KHONG commit
 keys/
 
+
+# Audit tam
+_audit/
+
