@@ -24,12 +24,14 @@ https://muabankey.bangachieu2.workers.dev
 
 ## 2. Tài khoản mặc định
 
-| Vai trò | Email | Mật khẩu |
+| Vai trò | Đăng nhập | Mật khẩu |
 |---|---|---|
-| Admin | `admin@muabankey.vn` | `Admin@123456` |
-| Demo | `demo@muabankey.vn` | `Demo@123456` |
+| Admin | `namhbcf` hoặc `admin@muabankey.vn` | `namhbcf123` |
+| Demo | `demo` hoặc `demo@muabankey.vn` | `Demo@123456` |
 
-⚠️ **Đổi mật khẩu admin ngay sau khi bàn giao** (trang Tài khoản → Đổi mật khẩu).
+Đăng nhập được bằng **username hoặc email** — hệ thống tự nhận diện.
+
+⚠️ **Đổi mật khẩu ngay sau khi bàn giao** (trang Tài khoản → Đổi mật khẩu).
 
 ---
 
@@ -128,6 +130,14 @@ Giữ nguyên giao thức cũ, client không cần sửa gì ngoài `API_BASE`:
 
 ## 6. Nạp tiền VietQR
 
+Thông tin ngân hàng đã cấu hình:
+
+| | |
+|---|---|
+| Ngân hàng | MBBank |
+| Số tài khoản | `8990124112002` |
+| Chủ tài khoản | NGUYEN THANH NAM |
+
 1. Khách vào `/#/wallet`, nhập số tiền
 2. Hệ thống tạo mã `NAP<5 ký tự>` + QR vietqr.io
 3. Khách chuyển khoản đúng nội dung
@@ -139,7 +149,7 @@ https://muabankey.bangachieu2.workers.dev/api/webhooks/sepay
 ```
 với header `Authorization: Apikey <WEBHOOK_SECRET>`.
 
-Cập nhật thông tin ngân hàng tại `/#/admin?tab=settings`.
+Cập nhật thông tin ngân hàng tại `/#/admin?tab=settings` nếu cần đổi.
 
 ---
 
@@ -230,12 +240,23 @@ muabankey/
 
 ## 11. Việc cần làm trước khi chạy thật
 
-- [ ] Đổi mật khẩu `admin@muabankey.vn`
-- [ ] Cập nhật số tài khoản ngân hàng thật ở `/#/admin?tab=settings`
+- [x] Cấu hình thông tin ngân hàng MBBank `8990124112002`
+- [x] Đổi tài khoản admin sang `namhbcf`
+- [x] Khởi tạo git repo
 - [ ] Đăng ký SePay/Casso → trỏ webhook về `/api/webhooks/sepay`
 - [ ] Cập nhật link Telegram/Zalo ở footer (`public/assets/components.js`)
 - [ ] (Tùy chọn) Gắn tên miền riêng: Cloudflare Dashboard → Workers → muabankey → Custom Domain
 - [ ] (Tùy chọn) Bật Cloudflare WAF + Bot Fight Mode cho tên miền
+
+## 12. Git
+
+```powershell
+git log --oneline          # xem lịch sử
+git status                 # trạng thái
+git add -A; git commit -m "..."   # commit thay đổi
+```
+
+Secrets đã được `.gitignore` chặn: `ADMIN_CREDENTIALS.txt`, `.webhook-secret.txt`, `.env`, `*.pem`.
 
 ---
 
