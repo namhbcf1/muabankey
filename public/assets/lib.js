@@ -231,6 +231,30 @@ export function bindImageFallbacks(root = document) {
   });
 }
 
+/* ---------- Dải cuộn ngang: báo hiệu còn nội dung ---------- */
+/**
+ * Theo dõi mọi .cat-scroll để bật/tắt class mép trái/phải.
+ *
+ * Danh mục trên mobile cuộn ngang nhưng ẩn scrollbar; không có tín hiệu nào
+ * cho biết còn chip phía sau. Hàm này gắn class để CSS hiện dải mờ ở mép.
+ */
+export function bindScrollHints(root = document) {
+  root.querySelectorAll('.cat-scroll').forEach((el) => {
+    if (el.dataset.scrollHint === '1') return;
+    el.dataset.scrollHint = '1';
+    const update = () => {
+      const maxScroll = el.scrollWidth - el.clientWidth;
+      const atStart = el.scrollLeft <= 2;
+      const atEnd = maxScroll <= 2 || el.scrollLeft >= maxScroll - 2;
+      el.classList.toggle('at-start', !atStart && !atEnd);
+      el.classList.toggle('at-end', atEnd);
+    };
+    el.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update, { passive: true });
+    update();
+  });
+}
+
 /* ---------- Skeleton helpers ---------- */
 export function skeletonCards(n = 8) {
   return `<div class="grid-products">${Array.from({ length: n }, () => `

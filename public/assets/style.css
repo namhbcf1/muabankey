@@ -272,13 +272,28 @@ input,select,textarea{font-family:inherit;font-size:inherit}
 .sec-link:hover{color:var(--text);gap:9px}
 
 /* ---------- Category chips ---------- */
+/*
+ * Trên mobile, danh mục cuộn ngang nhưng scrollbar bị ẩn nên người dùng không
+ * biết còn chip phía sau (ảnh chụp chỉ thấy "Công" bị cắt cụt). Dải mờ dần ở
+ * mép phải báo hiệu còn nội dung, và biến mất khi đã cuộn hết.
+ */
 .cat-scroll{
   display:flex;gap:8px;overflow-x:auto;padding:2px 0 12px;
   scrollbar-width:none;-ms-overflow-style:none;
+  -webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(100% - 28px),transparent 100%);
+  mask-image:linear-gradient(to right,#000 0,#000 calc(100% - 28px),transparent 100%);
 }
 .cat-scroll::-webkit-scrollbar{display:none}
+.cat-scroll.at-end{
+  -webkit-mask-image:none;mask-image:none;
+}
+.cat-scroll.at-start{
+  -webkit-mask-image:linear-gradient(to right,transparent 0,#000 28px,#000 calc(100% - 28px),transparent 100%);
+  mask-image:linear-gradient(to right,transparent 0,#000 28px,#000 calc(100% - 28px),transparent 100%);
+}
 @media(min-width:900px){
-  .cat-scroll{flex-wrap:wrap;overflow-x:visible;padding-bottom:2px}
+  .cat-scroll{flex-wrap:wrap;overflow-x:visible;padding-bottom:2px;
+    -webkit-mask-image:none;mask-image:none}
 }
 .cat-chip{
   display:flex;align-items:center;gap:7px;padding:7px 13px;border-radius:999px;

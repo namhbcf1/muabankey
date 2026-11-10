@@ -1,5 +1,5 @@
 /** MuaBanKey SPA — bộ định tuyến & khởi tạo. */
-import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks } from './lib.js';
+import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks, bindScrollHints } from './lib.js';
 import { state, loadUser, loadCategories, refreshBalance } from './state.js';
 import { icon } from './icons.js';
 import {
@@ -131,6 +131,7 @@ async function router() {
    * đảm bảo mọi <img data-img-fallback> đều có xử lý lỗi.
    */
   bindImageFallbacks(app);
+  bindScrollHints(app);
 
   // Cuộn tới anchor nếu có (#/support#warranty)
   if (route.anchor) {    const el = document.getElementById(route.anchor);
