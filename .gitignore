@@ -1,11 +1,18 @@
-node_modules/
+﻿node_modules/
 .wrangler/
 *.log
 shots/
 backup-*.sql
 db/backup-*.sql
 
-# SECRETS - tuyet doi khong commit
+# Tool build output (khong commit EXE)
+tool/dist/
+tool/.build/
+tool/src/__pycache__/
+*.pyc
+*.spec
+
+# SECRETS
 .webhook-secret.txt
 WEBHOOK_SECRET.txt
 ADMIN_CREDENTIALS.txt
@@ -15,7 +22,7 @@ ADMIN_CREDENTIALS.txt
 *.pem
 *.key
 
-# OS / editor
+# OS
 .DS_Store
 Thumbs.db
 .vscode/

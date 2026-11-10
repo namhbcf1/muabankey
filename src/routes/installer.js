@@ -14,8 +14,8 @@ import { readLicense, normKey } from './license.js';
 
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
 const EXE_NAME = 'xa_nofog_pro.exe';
-const EXE_SHA256 = '1D9737069C01AD6BF043A694AC6656268CB9ECA0AD80CA7FC9E7FE436F229FE4';
-const EXE_SIZE = 12178841;
+const EXE_SHA256 = '508DA29C5634CFF86ED0A15AECD71327BB4AB3A4C202647DBFC0B33A2A65C0BF';
+const EXE_SIZE = 13172433;
 
 function siteBase(request) {
   const u = new URL(request.url);
@@ -117,7 +117,7 @@ export async function issueInstallToken(env, request, key) {
 function buildCmd({ key, base, exeSha, exeSize, installDir, token }) {
   const q = token ? `?t=${token}` : '';
   return `@echo off
-setlocal
+setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 title XArena No Fog - Cai dat tu dong
 color 0B
@@ -173,7 +173,7 @@ echo  [OK] %TARGET%
 echo.
 
 rem ---- 3. Tai EXE ----
-echo  [*] Dang tai bo xu ly (12 MB)...
+echo  [*] Dang tai bo xu ly ^(12 MB^)...
 set "GOT="
 set "FROMCACHE="
 
@@ -191,32 +191,26 @@ if defined GOT (
 if not defined GOT (
   echo       Thu cach 1: curl...
   curl.exe -L --fail --retry 3 --retry-delay 2 -o "%EXE%.new" "%EXEURL%" 2>nul
-  if exist "%EXE%.new" (
-    for %%A in ("%EXE%.new") do if %%~zA EQU %EXESIZE% set "GOT=1"
-  )
+  call :checksize
 )
 
 if not defined GOT (
   echo       Thu cach 2: PowerShell...
   del /f /q "%EXE%.new" >nul 2>&1
   powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;[Net.WebClient]::new().DownloadFile('%EXEURL%','%EXE%.new')}catch{}" 2>nul
-  if exist "%EXE%.new" (
-    for %%A in ("%EXE%.new") do if %%~zA EQU %EXESIZE% set "GOT=1"
-  )
+  call :checksize
 )
 
 if not defined GOT (
   echo       Thu cach 3: certutil...
   del /f /q "%EXE%.new" >nul 2>&1
   certutil -urlcache -split -f "%EXEURL%" "%EXE%.new" >nul 2>&1
-  if exist "%EXE%.new" (
-    for %%A in ("%EXE%.new") do if %%~zA EQU %EXESIZE% set "GOT=1"
-  )
+  call :checksize
 )
 
 if not defined GOT (
   echo.
-  echo  [X] Khong tai duoc bo xu ly (hoac file tai ve bi thieu).
+  echo  [X] Khong tai duoc bo xu ly ^(hoac file tai ve bi thieu^).
   echo      Kiem tra ket noi mang roi chay lai file nay.
   del /f /q "%EXE%.new" >nul 2>&1
   pause
@@ -227,24 +221,9 @@ rem Kiem tra toan ven - BAT BUOC, sai la dung han
 if not defined FROMCACHE (
   echo  [*] Kiem tra toan ven file...
   set "ACTUALSHA="
-  for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%EXE%.new" SHA256 2^>nul') do (
-    if not defined ACTUALSHA set "ACTUALSHA=%%H"
-  )
-  if defined ACTUALSHA set "ACTUALSHA=%ACTUALSHA: =%"
-  if not defined ACTUALSHA (
-    echo  [!] Khong doc duoc chu ky file. Bo qua kiem tra.
-  ) else (
-    if /i not "%ACTUALSHA%"=="%EXESHA%" (
-      echo.
-      echo  [X] FILE TAI VE KHONG DUNG CHU KY.
-      echo      Co the do mang chap chon hoac bi can thiep.
-      echo      Da huy cai dat. Vui long chay lai file nay.
-      del /f /q "%EXE%.new" >nul 2>&1
-      pause
-      exit /b 9
-    )
-    echo  [OK] Chu ky file khop.
-  )
+  for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%EXE%.new" SHA256 2^>nul') do call :sethash "%%H"
+  if defined ACTUALSHA set "ACTUALSHA=!ACTUALSHA: =!"
+  call :verifyhash
 )
 
 move /y "%EXE%.new" "%EXE%" >nul 2>&1
@@ -359,6 +338,41 @@ echo          Doi may thi bam "Doi may" tren website.
 echo.
 pause
 exit /b 0
+
+rem ============================================================
+rem  SUBROUTINE
+rem ============================================================
+
+:checksize
+rem Dat GOT=1 neu file .new ton tai va dung kich thuoc
+if not exist "%EXE%.new" exit /b 0
+set "SZ="
+for %%A in ("%EXE%.new") do set "SZ=%%~zA"
+if "%SZ%"=="%EXESIZE%" set "GOT=1"
+exit /b 0
+
+:sethash
+rem Luu hash dau tien doc duoc (bo qua dong header/footer cua certutil)
+if defined ACTUALSHA exit /b 0
+set "ACTUALSHA=%~1"
+exit /b 0
+
+:verifyhash
+if not defined ACTUALSHA (
+  echo  [!] Khong doc duoc chu ky file. Bo qua kiem tra.
+  exit /b 0
+)
+if /i "%ACTUALSHA%"=="%EXESHA%" (
+  echo  [OK] Chu ky file khop.
+  exit /b 0
+)
+echo.
+echo  [X] FILE TAI VE KHONG DUNG CHU KY.
+echo      Co the do mang chap chon hoac bi can thiep.
+echo      Da huy cai dat. Vui long chay lai file nay.
+del /f /q "%EXE%.new" >nul 2>&1
+pause
+exit /b 9
 `;
 }
 
@@ -548,7 +562,10 @@ export async function serveInstaller(env, request, rawKey) {
     key: lic.key, base: siteBase(request),
     exeSha: EXE_SHA256, exeSize: EXE_SIZE, installDir: INSTALL_DIR, token,
   });
-  return new Response(body, {
+  // QUAN TRỌNG: cmd.exe yêu cầu CRLF. File LF thuần gây lỗi
+  // ". was unexpected at this time." ở các khối if/for nhiều dòng.
+  const crlf = body.replace(/\r?\n/g, '\r\n');
+  return new Response(crlf, {
     status: 200,
     headers: {
       'Content-Type': 'application/octet-stream; charset=utf-8',
