@@ -12,6 +12,7 @@
     xa_nofog_pro.exe --trial        # bat dung thu 3 ngay (tu dong neu chua co key)
     xa_nofog_pro.exe --buy          # mo trang mua key
     xa_nofog_pro.exe --rebind K T   # doi may bang token
+    xa_nofog_pro.exe --key K --token T  # kich hoat sau khi admin reset
     xa_nofog_pro.exe --status       # xem trang thai license
     xa_nofog_pro.exe --deactivate   # xoa key khoi may nay
     xa_nofog_pro.exe --help         # huong dan
@@ -495,14 +496,36 @@ def rebind_key(key, token, verbose=True):
     return True, 'Doi may thanh cong (con %s luot doi may).' % left
 
 
-def activate(key, verbose=True):
-    """Kich hoat qua server. Server gan HWID + bat dau tinh han TU BAY GIO."""
+def activate(key, verbose=True, token=None):
+    """Kich hoat qua server. Server gan HWID + bat dau tinh han TU BAY GIO.
+
+    token: tuy chon. Cần khi admin đã reset HWID cho key này — lúc đó
+    server trả 403 rebind_token_required nếu không có token.
+    Đường installer (--key) sau khi admin reset cũng cần token.
+    """
     hwid = compute_hwid()
     if verbose:
         print('  HWID: %s' % mask_key(hwid))
-    r = _post('/api/activate', {'key': key, 'hwid': hwid, 'app': APP_NAME})
+
+    payload = {'key': key, 'hwid': hwid, 'app': APP_NAME}
+    if token:
+        payload['token'] = token
+
+    r = _post('/api/activate', payload)
     if not r.get('ok'):
-        return False, r.get('msg') or r.get('code') or 'kich hoat that bai'
+        code = str(r.get('code') or '')
+        msg = r.get('msg') or code or 'kich hoat that bai'
+        if code == 'rebind_token_required':
+            return False, ('Mã này đã được admin reset để đổi máy. '
+                           'Vào xienhl.com/#/licenses bấm "Đổi máy" để lấy mã, '
+                           'rồi chạy: xa_nofog_pro.exe --rebind <KEY> <TOKEN>')
+        if code == 'invalid_token':
+            return False, 'Mã đổi máy không đúng. Lấy mã mới trên web.'
+        if code == 'token_used':
+            return False, 'Mã đổi máy đã dùng rồi. Lấy mã mới trên web.'
+        if code == 'token_expired':
+            return False, 'Mã đổi máy đã hết hạn (30 phút). Lấy mã mới trên web.'
+        return False, msg
     st = load_state()
     anchor_server_time(st, r.get('now'))
     st.update({
@@ -1554,7 +1577,7 @@ def parse_args(argv):
     o = {'restore': False, 'full': False, 'watch': False, 'once': False,
          'dump': False, 'list': False, 'help': False, 'status': False,
          'deactivate': False, 'key': None, 'trial': False, 'buy': False,
-         'rebind': None}
+         'rebind': None, 'token': None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -1586,6 +1609,11 @@ def parse_args(argv):
             if i >= len(argv):
                 return None, '--key can gia tri'
             o['key'] = argv[i].strip()
+        elif a == '--token':
+            i += 1
+            if i >= len(argv):
+                return None, '--token can gia tri'
+            o['token'] = argv[i].strip()
         elif a == '--rebind':
             if i + 2 >= len(argv):
                 return None, '--rebind can <key> <token>'
@@ -1796,7 +1824,7 @@ def require_license(opts):
       4. khong bat duoc  -> hoi key
     """
     if opts.get('key'):
-        ok, m = activate(opts['key'])
+        ok, m = activate(opts['key'], token=opts.get('token'))
         print('  ' + m)
         if not ok:
             return False

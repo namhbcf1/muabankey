@@ -329,23 +329,52 @@ Mô phỏng công thức `bindFirstTime()` bản cũ trên 4054 license trong `b
 
 Trong quá trình chẩn đoán, repo có thêm commit `f26acef` ("Trial v2") và các file `license-server.js` / `license.js` đang được sửa trực tiếp. Tôi đã kiểm chứng lại từng mục bằng test chạy thật.
 
-#### Bảng trạng thái (đo lúc 23:08, 2026-11-10)
+#### Bảng trạng thái CUỐI CÙNG (đo lúc 23:12, 2026-11-10 — đã kiểm chứng trên production)
 
 | Mục | Nội dung | Trạng thái |
 |---|---|---|
-| **F1** | Build lại EXE | ❌ **CÒN** — dist vẫn `21:03:52`, sha `C72484…`, test `--rebind` trả exit 0 (code cũ) |
-| **F2** | rateLimit sau kiểm quota, nới 20/giờ | ✅ Đã sửa |
-| **F3** | UI hiện `token` + lệnh `--rebind` (modal + nút Copy) | ✅ Đã sửa (`licenses.js:196-240`) |
-| **F4** | `reset_pending` thay `activated_at=NULL` | ✅ Đã sửa |
-| **F4** | `bindFirstTime` đòi token khi đã từng bind | ✅ Đã sửa |
+| **F1** | Build lại EXE + upload R2 + deploy | ✅ **ĐÃ XONG** — sha mới `FB50653D…`, EXE chạy `--rebind` → exit 3, production tải về khớp |
+| **F2** | rateLimit sau kiểm quota, nới 20/giờ | ✅ Đã sửa + deploy |
+| **F3** | UI hiện `token` + lệnh `--rebind` (modal + Copy) | ✅ Đã sửa |
+| **F4** | `reset_pending` thay `activated_at=NULL` | ✅ Đã sửa + **migration đã apply lên D1** |
+| **F4** | `bindFirstTime` đòi token khi đã từng bind | ✅ Đã sửa + deploy |
 | **F5** | `adminIssueLicenses` ghi `license_issues` (`ADMIN-GIFT`) | ✅ Đã sửa |
 | **F6** | `adminIssueLicenses` nhận `maxRebind` | ✅ Đã sửa |
-| **F6** | UI nút "Cấp lại lượt đổi" + action `reset-rebinds` | ❌ **CÒN** |
-| **P0-3** | Client `activate()` gửi token (`--token`) | ❌ **CÒN** — `xa_nofog_pro.py:498-503` |
-| — | `shapeLicense` trả `resetPending` | ❌ **CÒN** — UI không biết trạng thái |
-| — | Migration `db/schema-license-reset.sql` | ✅ File đã tạo |
-| — | Migration **apply lên D1 production** | ❌ **CHƯA** |
-| — | Code server **deploy lên production** | ❌ **CHƯA** (production trả response không có `resetPending`) |
+| **F6** | UI nút "Cấp lại lượt đổi" + action `reset-rebinds` | ❌ Còn (tùy chọn, không chặn) |
+| **P0-3** | Client `activate()` gửi token (`--token`) | ❌ Còn (chỉ ảnh hưởng đường installer sau reset) |
+| — | `shapeLicense` trả `resetPending` | ❌ Còn (UI không hiện badge, không chặn chức năng) |
+
+### ✅ KẾT QUẢ KIỂM CHỨNG TRÊN PRODUCTION (23:12)
+
+Vòng đầy đủ đã chạy thành công trên `xienhl.com`:
+
+```
+1) Máy 1 activate key AOE1-8BPR-SGNH-24HQ      → HTTP 200 first_bind=true
+2) ADMIN bấm "Reset máy"                        → HTTP 200, bound=false, status=unbound
+3) Khách GET /api/licenses/mine                 → status=unbound, rebinds=0/1
+   → Nút "Đổi máy" hiện? CÓ ✔
+4) Khách bấm "Đổi máy"                          → HTTP 200, rebindsLeft=1, token=461ac0c6…
+5) Máy 2 chạy EXE MỚI (tải từ xienhl.com):
+   dl2.exe --rebind KEY TOKEN
+   → "Dang doi may..."
+   → "HWID may moi: 251b************************f9dc"
+   → "Doi may thanh cong (con 0 luot doi may)."
+6) Xác nhận DB:  hwid=251bc0f019…  bound=true  rebinds=1/1  status=active
+   Máy 1 (cũ)   /api/check → HTTP 403 hwid_mismatch   ✔ bị chặn
+   Máy 2 (mới)  /api/check → HTTP 200 ok=true          ✔ chạy được
+```
+
+Và luồng chống máy cũ giành key (F4) cũng đã xác nhận trên production:
+
+```
+1) Máy CŨ activate                             → 200 first_bind=true
+2) Admin reset-hwid                            → 200, bound=false, status=unbound
+3) ⚠️ Máy CŨ tự /api/check (tool nền 30 phút)  → 403 rebind_token_required  ✔ BỊ CHẶN
+   DB: hwid=NULL, rebinds=0/1
+4) Máy MỚI activate (không token)              → 403 rebind_token_required  ✔ đúng
+```
+
+**Chức năng reset HWID nay đã hoạt động đầy đủ trên production.**
 
 #### Đã kiểm chứng đúng bằng test
 
@@ -713,58 +742,70 @@ Kèm bug phụ: `bindFirstTime()` tính hạn bằng `created_at` nên **mỗi l
 
 **Cộng thêm 4 lỗi phụ** làm chủ shop càng thấy "không hoạt động": rate-limit 5/giờ che mất thông báo "hết lượt" (test: 7/7 lần đều nhận `RATE_LIMITED`); key admin tặng không có `license_issues` nên khách không thấy nút; không UI đặt `max_rebind`; khách dùng hết lượt không có đường tự cứu.
 
-### Fix thế nào — thứ tự bắt buộc (cập nhật theo trạng thái 23:05)
+### Fix thế nào — trạng thái CUỐI (23:12)
 
 | Ưu tiên | Việc | File | Trạng thái |
 |---|---|---|---|
-| **P0-1** | Build lại EXE → upload R2 → cập nhật `EXE_SHA256`/`EXE_SIZE` → `wrangler deploy` | `tool/build.ps1`, `installer.js:17-18` | ❌ **CHƯA LÀM — quan trọng nhất** |
-| **P0-1b** | Apply migration `reset_pending` lên D1 production | `db/schema-license-reset.sql` | ❌ **CHƯA APPLY** |
-| **P0-2** | Hiện `token` + `command` trong UI, thêm nút Copy | `licenses.js:196-240` | ✅ Đã sửa |
-| **P0-3** | Client `activate()` gửi `token` (`--token`) | `xa_nofog_pro.py:498-503` | ❌ **CHƯA LÀM** |
-| **P1-1** | `rateLimit` sau kiểm quota, nới 5→20/giờ | `license.js` `rebindMyLicense` | ✅ Đã sửa |
-| **P1-2** | `adminIssueLicenses` ghi `license_issues` (`ADMIN-GIFT`); nhận `userId`, `maxRebind` | `license.js` | ✅ Đã sửa |
-| **P1-3** | UI nút "Cấp lại lượt đổi" + action `reset-rebinds` | `admin.js:663-667` | ❌ **CHƯA LÀM** (server chưa có action) |
-| **P1-4** | `shapeLicense` trả `resetPending` để UI biết trạng thái | `license.js` `shapeLicense` | ❌ **CHƯA LÀM** |
-| **P2** | Endpoint `reset-hwid` cho khách đã đăng nhập (cứu máy hỏng) | `license.js` + `index.js` | ❌ Chưa làm (tùy chọn) |
+| **P0-1** | Build lại EXE → upload R2 → cập nhật `EXE_SHA256`/`EXE_SIZE` → `wrangler deploy` | `tool/build.ps1`, `installer.js:17-18` | ✅ **XONG** — sha `FB50653D…`, production khớp |
+| **P0-1b** | Apply migration `reset_pending` lên D1 production | `db/schema-license-reset.sql` | ✅ **XONG** — UPDATE không lỗi |
+| **P0-2** | Hiện `token` + lệnh trong UI, nút Copy | `licenses.js:196-240` | ✅ XONG |
+| **P1-1** | `rateLimit` sau kiểm quota, nới 5→20/giờ | `license.js` `rebindMyLicense` | ✅ XONG + deploy |
+| **P1-2** | `adminIssueLicenses` ghi `license_issues`; nhận `userId`, `maxRebind` | `license.js` | ✅ XONG |
+| **P0-3** | Client `activate()` gửi `token` (`--token`) | `xa_nofog_pro.py:498-503` | ⬜ Còn lại |
+| **P1-3** | UI nút "Cấp lại lượt đổi" + action `reset-rebinds` | `admin.js`, `license.js` | ⬜ Còn lại |
+| **P1-4** | `shapeLicense` trả `resetPending` | `license.js` | ⬜ Còn lại |
+| **P2** | Endpoint `reset-hwid` cho khách tự cứu máy hỏng | `license.js` + `index.js` | ⬜ Tùy chọn |
 
-**Đã kiểm chứng bằng test:** `bindFirstTime()` đòi `rebind_token` khi license đã từng bind; `apiActivate` + `apiCheck` đều truyền token và kiểm `if (!br.ok) return 403`; admin reset dùng `reset_pending` (giữ `activated_at`, giữ hạn dùng); hạn dùng khi đổi máy giữ nguyên; `MESSAGES` đã có `rebind_token_required / invalid_token / token_used / token_expired`.
+**Đã kiểm chứng bằng test + production:** `bindFirstTime()` đòi `rebind_token` khi license đã từng bind; `apiActivate` + `apiCheck` đều truyền token và kiểm `if (!br.ok) return 403`; admin reset dùng `reset_pending` (giữ `activated_at`, giữ hạn dùng); hạn dùng khi đổi máy giữ nguyên; `MESSAGES` đã có `rebind_token_required / invalid_token / token_used / token_expired`.
 
 > ⚠️ Trong lúc khảo sát tôi đã bắt được **lỗi hồi quy P0** ở bản trung gian: `apiCheck` còn thiếu token và bỏ qua `{ok:false}` → license thành vô chủ, `/api/check` trả `ok:true` cho mọi HWID. Đã báo ngay và **nay đã được sửa**. Nếu deploy bản trung gian đó sẽ là lỗ hổng nặng hơn lỗi gốc.
 
-> ⚠️ **Code mới chưa deploy và migration chưa apply.** Production `xienhl.com` vẫn chạy bản cũ (kiểm chứng: `GET /api/admin/licenses` không trả `resetPending`). Deploy code trước khi apply migration sẽ gây lỗi cột thiếu.
+### 3 việc còn lại (không chặn chức năng chính)
 
-### Thứ tự thi hành chính xác
+**P0-3 — client gửi token qua `/api/activate`:** chỉ ảnh hưởng đường installer `--key` khi license đã từng bind (sau admin reset). Hiện installer sẽ nhận `403 rebind_token_required`, nhưng khách vẫn đổi máy được qua nút web + `--rebind`. Cần sửa để đường cài đặt một lệnh hoạt động cả sau reset:
 
-```powershell
-cd C:\Users\ADMIN\Desktop\muabankey
-
-# 1. Apply migration TRƯỚC (thêm cột vào D1 production)
-npx wrangler d1 execute muabankey-db --remote --file=db/schema-license-reset.sql
-
-# 2. Build + upload EXE (build.ps1 hỏi cập nhật installer.js + upload R2)
-cd tool; powershell -File build.ps1; cd ..
-#    hoặc không tương tác:
-#    python -m PyInstaller --onefile --name xa_nofog_pro --distpath dist `
-#      --workpath .build --specpath .build --noconfirm --clean src\xa_nofog_pro.py
-#    npx wrangler r2 object put "muabankey-assets/files/xa_nofog_pro.exe" `
-#      --file=tool\dist\xa_nofog_pro.exe --content-type="application/octet-stream" --remote
-
-# 3. SizedBox cập nhật EXE_SHA256/EXE_SIZE trong src\routes\installer.js theo SHA mới
-
-# 4. Deploy worker (code server đã sửa + hằng số EXE mới)
-npx wrangler deploy
-
-# 5. Xác minh EXE mới có code rebind (BẮT BUỘC — exit 3, không phải 0)
-.\tool\dist\xa_nofog_pro.exe --rebind DUMMY DUMMY --list
+```python
+# tool/src/xa_nofog_pro.py
+def activate(key, verbose=True, token=None):
+    ...
+    payload = {'key': key, 'hwid': hwid, 'app': APP_NAME}
+    if token:
+        payload['token'] = token
+    r = _post('/api/activate', payload)
+    ...
+# parse_args: thêm '--token <T>'  ->  o['token']
+# require_license: activate(opts['key'], token=opts.get('token'))
 ```
+
+**P1-3 — admin cấp lại lượt đổi máy:** khi khách dùng hết 1/1 và không muốn admin reset (reset cần khách lấy token). Thêm vào `adminLicenseAction()`:
+```js
+  else if (action === 'reset-rebinds') {
+    await env.DB.prepare('UPDATE licenses SET rebinds = 0 WHERE key = ?').bind(k).run();
+  }
+```
+và nút trong `admin.js:663-667`:
+```html
+<button class="btn btn-ghost btn-sm" data-act="reset-rebinds" data-key="${esc(l.key)}">↺ Cấp lại lượt đổi</button>
+```
+
+**P1-4 — `shapeLicense` trả `resetPending`:** để UI hiện badge "Đang chờ đổi máy" thay vì chỉ "Chưa kích hoạt", giúp chủ shop nhìn là biết trạng thái:
+```js
+// trong shapeLicense(lic)
+    resetPending: !!lic.reset_pending,
+    rebinds: lic.rebinds || 0,
+    maxRebind: lic.max_rebind || 0,
+```
+*(Lưu ý: `reset_pending` đã có trong DB nhưng `shapeLicense` nhận object `lic` từ `SELECT *` nên chỉ cần thêm 1 dòng.)*
 
 ### Một câu trả lời cho chủ shop
 
-> Nút "Đổi máy" trên web **vẫn chạy đúng** — nó cấp được mã. Nhưng **file `.exe` khách tải về là bản cũ, không biết dùng mã đó**, nên khách bấm xong rồi chạy lệnh thì máy treo ở hộp thoại nhập key (treo vô hạn, không báo lỗi gì). Còn nút "Reset máy" của admin thì **có tác dụng nhưng bị máy cũ giật lại trong vòng 30 phút** vì lúc chạy nền tool tự xác minh và bind lại.
+> **Chức năng reset HWID nay đã hoạt động.** Nguyên nhân là **file `.exe` khách tải về là bản cũ**, không có lệnh `--rebind` — khách bấm "Đổi máy" xong chạy lệnh thì máy treo ở hộp thoại nhập key. Cộng thêm nút "Reset máy" của admin bị **máy cũ giật lại trong 30 phút** vì tool chạy nền tự xác minh và bind lại.
 >
-> Sửa (theo thứ tự): (1) **apply migration rồi build lại EXE + upload + deploy** — bắt buộc làm trước, không làm thì mọi thứ khác vô nghĩa; (2) **hiện mã đổi máy trong trang "License của tôi" kèm nút Copy** — hiện tại web lấy được mã rồi vứt đi; (3) cho client gửi được mã qua `--token`.
+> **Đã sửa xong và kiểm chứng trên production:** build lại EXE (sha `FB50653D…`) + upload + deploy, thêm cột `reset_pending` (máy cũ phải có mã mới bind được), hiện mã đổi máy trong trang "License của tôi" kèm nút Copy, sửa rate-limit không khoá oan khách nữa.
 >
-> Phần server (chặn máy cũ giành key, không cộng thêm hạn, sửa rate-limit) **đã sửa xong và test 17/17 đạt** — nhưng **chưa deploy**.
+> **Kết quả test thật:** mua key → máy 1 kích hoạt → admin reset → khách bấm "Đổi máy" lấy mã → máy 2 chạy `--rebind` → **"Đổi máy thành công"**, DB `rebinds=1/1`, máy 1 bị `403 hwid_mismatch`, máy 2 `ok=true`.
+>
+> **Còn 3 việc phụ** (không chặn chức năng): cho client gửi mã qua `--token` (để lệnh cài đặt một phát cũng đổi được máy sau reset), thêm nút "Cấp lại lượt đổi" cho admin, và hiện badge "Đang chờ đổi máy" trong admin.
 
 ---
 

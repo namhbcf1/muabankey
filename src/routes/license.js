@@ -202,6 +202,10 @@ export function shapeLicense(lic) {
     note: lic.note,
     status,
     bound: !!lic.hwid,
+    // resetPending: admin vừa reset, đang chờ khách đổi máy bằng token.
+    // Admin UI dùng cờ này để hiện badge "Đang chờ đổi máy".
+    resetPending: !!lic.reset_pending,
+    resetAt: lic.reset_at || null,
     hwidMasked: lic.hwid ? lic.hwid.slice(0, 10) + '…' : null,
     forever: lic.expires_at === 0,
     createdAt: lic.created_at,
@@ -357,7 +361,11 @@ export async function adminLicenseAction(env, request, key, action) {
   if (action === 'revoke') await setRevoked(env, k, true);
   else if (action === 'unrevoke') await setRevoked(env, k, false);
   else if (action === 'reset-hwid') await resetHwid(env, k);
-  else if (action === 'extend') await extendLicense(env, k, 30);
+  else if (action === 'reset-rebinds') {
+    // Cấp lại lượt đổi máy mà KHÔNG cần reset HWID.
+    // Dùng khi khách đã hết 1/1 lượt nhưng vẫn giữ máy hiện tại.
+    await env.DB.prepare('UPDATE licenses SET rebinds = 0 WHERE key = ?').bind(k).run();
+  } else if (action === 'extend') await extendLicense(env, k, 30);
   else throw new AE(400, 'Hành động không hợp lệ', 'VALIDATION');
 
   await env.DB.prepare(

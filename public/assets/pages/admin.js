@@ -662,9 +662,11 @@ async function renderLicenses(host) {
                     <td>
                       <div class="flex gap-1" style="flex-wrap:wrap">
                         <button class="btn btn-ghost btn-sm" data-act="reset-hwid" data-key="${esc(l.key)}">Reset máy</button>
+                        ${l.rebinds >= l.maxRebind ? `<button class="btn btn-ghost btn-sm" data-act="reset-rebinds" data-key="${esc(l.key)}">Cấp lại lượt đổi</button>` : ''}
                         <button class="btn btn-ghost btn-sm" data-act="extend" data-key="${esc(l.key)}">+30d</button>
                         <button class="btn ${l.status === 'revoked' ? 'btn-ghost' : 'btn-danger'} btn-sm" data-act="${l.status === 'revoked' ? 'unrevoke' : 'revoke'}" data-key="${esc(l.key)}">${l.status === 'revoked' ? 'Mở' : 'Thu hồi'}</button>
                       </div>
+                      ${l.resetPending ? `<div style="font-size:10.5px;color:#fbbf24;margin-top:5px">⏳ Đang chờ khách đổi máy</div>` : ''}
                     </td>
                   </tr>`;
                 }).join('')}
