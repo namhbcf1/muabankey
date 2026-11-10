@@ -56,6 +56,7 @@ r.post('/api/wallet/topup', wallet.createTopup);
 r.get('/api/wallet/topup/:id', (env, req, p) => wallet.getTopup(env, req, p.id));
 r.post('/api/webhooks/sepay', wallet.sepayWebhook);
 r.post('/api/webhooks/payos', wallet.payosWebhook);
+r.post('/api/telegram/webhook', wallet.telegramWebhook);
 r.get('/api/webhooks/health', (env) => wallet.webhookHealth(env));
 
 /* ---------- License client API (cho tool XArena) ---------- */
@@ -100,6 +101,9 @@ r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManu
 r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, req, p.id));
 r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
 r.post('/api/admin/settings/payos', wallet.adminSetPayosKey);
+r.get('/api/admin/telegram/status', wallet.adminTelegramStatus);
+r.post('/api/admin/telegram/config', wallet.adminTelegramConfig);
+r.post('/api/admin/telegram/test', wallet.adminTelegramTest);
 r.get('/api/admin/topups', wallet.adminListTopups);
 r.post('/api/admin/topups/:id/approve', (env, req, p) => wallet.adminApproveTopup(env, req, p.id));
 r.post('/api/admin/topups/:id/reject', (env, req, p) => wallet.adminRejectTopup(env, req, p.id));
@@ -165,6 +169,47 @@ export default {
         await env.DB.prepare('DELETE FROM install_tokens WHERE expires_at < ?').bind(nowS).run();
         await env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now).run();
         await env.DB.prepare('DELETE FROM lic_attempts WHERE at < ?').bind(nowS - 7 * 86400).run();
+
+        // 5. Thông báo Telegram (chỉ chạy khi đã cấu hình, không chặn cron nếu lỗi)
+        if (env.TG_BOT_TOKEN && env.TG_CHAT_ID) {
+          try {
+            const { notifyLowStock, notifyExpiring } = await import('./lib/telegram-actions.js');
+
+            // 5a. Sắp hết hàng — cảnh báo 1 lần/6 giờ
+            const lastLowKey = 'tg:last_low_stock';
+            const lastLow = await env.CACHE.get(lastLowKey);
+            if (!lastLow) {
+              const { results: low } = await env.DB.prepare(
+                `SELECT name, stock_count FROM products
+                 WHERE delivery_type='key' AND stock_count > 0 AND stock_count < 5
+                 ORDER BY stock_count ASC LIMIT 10`
+              ).all();
+              if (low && low.length) {
+                await notifyLowStock(env, low);
+                await env.CACHE.put(lastLowKey, String(now), { expirationTtl: 21600 });
+              }
+            }
+
+            // 5b. License sắp hết hạn — 1 lần/ngày
+            const today = new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10);
+            const expKey = `tg:expiring:${today}`;
+            const sentToday = await env.CACHE.get(expKey);
+            if (!sentToday) {
+              const { results: exp } = await env.DB.prepare(
+                `SELECT key, expires_at FROM licenses
+                 WHERE revoked = 0 AND expires_at > 0
+                   AND expires_at BETWEEN ? AND ?
+                 ORDER BY expires_at ASC LIMIT 10`
+              ).bind(nowS, nowS + 7 * 86400).all();
+              if (exp && exp.length) {
+                await notifyExpiring(env, exp);
+                await env.CACHE.put(expKey, '1', { expirationTtl: 90000 });
+              }
+            }
+          } catch (e) {
+            console.error('TG cron:', e && e.message);
+          }
+        }
       } catch (e) {
         console.error('Cron error:', e && e.message ? e.message : e);
       }

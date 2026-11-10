@@ -285,6 +285,17 @@ export async function payosWebhook(env, request) {
     ).bind(uuid(), topup.user_id, credited, balP.balance, ref,
       `Nạp một phần ${credited.toLocaleString('vi-VN')}đ / ${topup.amount.toLocaleString('vi-VN')}đ (${topup.code})`, now).run();
     await audit(env, null, 'topup.partial', topup.id, { expected: topup.amount, received: amountIn, via: 'payos' });
+    // Thông báo Telegram (không chặn luồng nếu lỗi)
+  try {
+    const { notifyTopup } = await import('../lib/telegram.js');
+    const u = await env.DB.prepare('SELECT email, full_name, balance FROM users WHERE id = ?')
+      .bind(topup.user_id).first();
+    await notifyTopup(env, {
+      topup, email: u?.email, customer: u?.full_name,
+      received: amountIn, via: 'payos', ref, balanceBefore: u?.balance, matched: true,
+    });
+  } catch (e) { console.error('tg notify:', e && e.message); }
+
     return ok({
       matched: true, reason: 'PARTIAL', expected: topup.amount,
       received: amountIn, credited, balance: balP.balance,
@@ -315,6 +326,17 @@ export async function payosWebhook(env, request) {
     amount: credited, ref, excess, via: 'payos', orderCode: data.orderCode,
   });
 
+  // Thông báo Telegram (không chặn luồng nếu lỗi)
+  try {
+    const { notifyTopup } = await import('../lib/telegram.js');
+    const u = await env.DB.prepare('SELECT email, full_name, balance FROM users WHERE id = ?')
+      .bind(topup.user_id).first();
+    await notifyTopup(env, {
+      topup, email: u?.email, customer: u?.full_name,
+      received: amountIn, via: 'payos', ref, balanceBefore: u?.balance, matched: true,
+    });
+  } catch (e) { console.error('tg notify:', e && e.message); }
+
   return ok({
     matched: true, credited, balance: bal.balance,
     ...(excess > 0 ? { reason: 'OVERPAID', excess, note: 'Phần dư đã ghi nhận để đối soát' } : {}),
@@ -324,6 +346,8 @@ export async function payosWebhook(env, request) {
 /** GET /api/webhooks/health — kiểm tra cấu hình webhook (không lộ secret). */
 export async function webhookHealth(env) {
   const payosKey = await payosChecksumKey(env);
+  const { tgConfig } = await import('../lib/telegram.js');
+  const tg = await tgConfig(env).catch(() => ({ configured: false, source: 'none' }));
   return ok({
     sepay: {
       configured: !!env.WEBHOOK_SECRET,
@@ -334,6 +358,12 @@ export async function webhookHealth(env) {
       configured: !!payosKey,
       source: env.PAYOS_CHECKSUM_KEY ? 'secret' : (payosKey ? 'settings' : 'none'),
       url: '/api/webhooks/payos',
+    },
+    telegram: {
+      configured: !!tg.configured,
+      source: tg.source || 'none',
+      webhookSecretSet: !!env.TG_WEBHOOK_SECRET,
+      url: '/api/telegram/webhook',
     },
   });
 }
@@ -364,6 +394,333 @@ export async function adminSetPayosKey(env, request) {
 
   await audit(env, admin.id, 'payos.key_set', null, { len: key.length });
   return ok({ saved: true, source: 'settings' });
+}
+
+/* ============================================================
+   TELEGRAM: duyệt nạp tiền bằng nút bấm
+   ============================================================ */
+
+/**
+ * POST /api/telegram/webhook
+ * Nhận callback từ Telegram khi admin bấm nút.
+ *
+ * Xử lý mọi loại nút: nạp tiền, đơn hàng, license, điều hướng.
+ * Bảo mật: header `X-Telegram-Bot-Api-Secret-Token` + kiểm tra chat_id admin.
+ */
+export async function telegramWebhook(env, request) {
+  const secret = env.TG_WEBHOOK_SECRET || '';
+  const got = request.headers.get('x-telegram-bot-api-secret-token') || '';
+
+  const { timingSafeEqual } = await import('../lib/crypto.js');
+  if (!secret || !timingSafeEqual(got, secret)) {
+    throw new ApiError(401, 'Sai secret token', 'UNAUTHORIZED');
+  }
+
+  const body = await readJson(request).catch(() => null);
+  if (!body) return ok({ ignored: 'no_body' });
+
+  const { tgAnswerCallback, tgCall } = await import('../lib/telegram.js');
+  const { handleCallback } = await import('../lib/telegram-actions.js');
+
+  // ---- Callback từ nút bấm ----
+  const cq = body.callback_query;
+  if (cq) {
+    // Chỉ admin được bấm
+    const allowed = String(env.TG_CHAT_ID || '').trim();
+    const fromId = String(cq.from?.id || '');
+    const msgChat = String(cq.message?.chat?.id || '');
+    if (allowed && fromId !== allowed && msgChat !== allowed) {
+      await tgAnswerCallback(env, cq.id, 'Bạn không có quyền', true);
+      return ok({ denied: 'not_admin' });
+    }
+
+    const r = await handleCallback(env, cq, {
+      DB: env.DB,
+      uuid,
+      audit,
+      siteUrl: new URL(request.url).origin,
+      deliverOrder: async (o) => {
+        // Gọi thẳng DB thay vì qua route (route cần Request + session admin).
+        // Điều kiện giống adminDeliverManual: chỉ giao đơn đã thanh toán.
+        try {
+          if (!['paid', 'delivered'].includes(o.status)) {
+            return { ok: false, error: `Đơn đang "${o.status}", chỉ giao đơn đã thanh toán` };
+          }
+          const claim = await env.DB.prepare(
+            "UPDATE orders SET status='delivered', delivered_at = ? WHERE id = ? AND status != 'delivered'"
+          ).bind(Date.now(), o.id).run();
+          if (!claim.meta || claim.meta.changes !== 1) {
+            return { ok: false, error: 'Đơn đã được giao trước đó' };
+          }
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: e.message };
+        }
+      },
+      refundOrder: async (o) => {
+        // Hoàn tiền: cộng lại ví + thu hồi license/key, giống adminRefund.
+        try {
+          if (!['paid', 'delivered'].includes(o.status)) {
+            return { ok: false, error: `Đơn đang "${o.status}", không hoàn được` };
+          }
+
+          const claim = await env.DB.prepare(
+            "UPDATE orders SET status='refunding' WHERE id = ? AND status IN ('paid','delivered')"
+          ).bind(o.id).run();
+          if (!claim.meta || claim.meta.changes !== 1) {
+            return { ok: false, error: 'Đơn đã được xử lý bởi người khác' };
+          }
+
+          const now = Date.now();
+          const amount = o.total;
+
+          // Cộng tiền lại vào ví
+          await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+            .bind(amount, now, o.user_id).run();
+          const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
+            .bind(o.user_id).first();
+
+          await env.DB.prepare(
+            `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+             VALUES (?,?,'refund',?,?,'success',?,?,?)`
+          ).bind(uuid(), o.user_id, amount, bal.balance, o.code,
+            `Hoàn tiền đơn ${o.code} (qua Telegram)`, now).run();
+
+          // Thu hồi license đã giao cho đơn này
+          try {
+            const lics = await env.DB.prepare(
+              `SELECT license_key FROM license_issues WHERE order_id = ?`
+            ).bind(o.id).all();
+            for (const li of lics.results || []) {
+              await env.DB.prepare('UPDATE licenses SET revoked = 1 WHERE key = ?')
+                .bind(li.license_key).run();
+            }
+          } catch { /* bảng có thể không có order_id */ }
+
+          // Thu hồi key đã giao
+          try {
+            await env.DB.prepare(
+              "UPDATE product_keys SET status='available', order_id=NULL, delivered_at=NULL WHERE order_id = ?"
+            ).bind(o.id).run();
+          } catch { /* ignore */ }
+
+          await env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?")
+            .bind(o.id).run();
+
+          return { ok: true, refunded: amount };
+        } catch (e) {
+          return { ok: false, error: e.message };
+        }
+      },
+    });
+
+    return ok(r);
+  }
+
+  // ---- Lệnh text: /start hoặc /id để lấy chat_id ----
+  const msg = body.message;
+  if (msg) {
+    const text = String(msg.text || '');
+    if (text.startsWith('/start') || text.startsWith('/id')) {
+      await tgCall(env, 'sendMessage', {
+        chat_id: msg.chat.id,
+        text: `Chat ID của bạn: \`${msg.chat.id}\`\n\nDán số này vào Cài đặt → Telegram Chat ID.`,
+        parse_mode: 'MarkdownV2',
+      });
+      return ok({ sentChatId: true });
+    }
+
+    // /help — danh sách lệnh
+    if (text.startsWith('/help')) {
+      await tgCall(env, 'sendMessage', {
+        chat_id: msg.chat.id,
+        text: [
+          '🤖 *MuaBanKey Bot*',
+          '',
+          'Bot tự động gửi thông báo khi:',
+          '• Có tiền vào → nút Duyệt / Từ chối',
+          '• Đơn cần giao tay → nút Giao / Hoàn tiền',
+          '• Sắp hết hàng → nút Nhập key',
+          '• License sắp hết hạn → nút +30 ngày / Thu hồi',
+          '• Báo cáo doanh thu mỗi ngày',
+          '',
+          '/id — lấy chat ID',
+          '/help — trợ giúp',
+        ].join('\n'),
+        parse_mode: 'MarkdownV2',
+      });
+      return ok({ sentHelp: true });
+    }
+  }
+
+  return ok({ ignored: true });
+}
+
+export async function adminTelegramTest(env, request) {
+  const admin = await requireAdmin(env, request);
+  const { tgTest } = await import('../lib/telegram.js');
+  const r = await tgTest(env);
+  await audit(env, admin.id, 'telegram.test', null, { ok: r.ok, error: r.error || null });
+  if (!r.ok) {
+    throw new ApiError(400,
+      r.error === 'not_configured'
+        ? 'Chưa cấu hình bot token hoặc chat ID'
+        : `Telegram trả lỗi: ${r.error}`,
+      'TELEGRAM_ERROR');
+  }
+  return ok({ sent: true, config: r.config });
+}
+
+export async function adminTelegramStatus(env, request) {
+  await requireAdmin(env, request);
+  const { tgConfig } = await import('../lib/telegram.js');
+  const cfg = await tgConfig(env);
+  return ok({
+    configured: cfg.configured,
+    source: cfg.source,
+    webhookSecretSet: !!env.TG_WEBHOOK_SECRET,
+    botTokenHint: cfg.token ? cfg.token.slice(0, 8) + '…' : null,
+    chatId: cfg.chatId ? String(cfg.chatId).slice(0, 4) + '…' : null,
+  });
+}
+
+/** POST /api/admin/telegram/config — lưu bot token + chat id vào settings. */
+export async function adminTelegramConfig(env, request) {
+  const admin = await requireAdmin(env, request);
+  const body = await readJson(request);
+  const token = String(body.botToken || '').trim();
+  const chatId = String(body.chatId || '').trim();
+
+  const now = Date.now();
+  const stmts = [];
+
+  if (token === '' && chatId === '') {
+    await env.DB.prepare(
+      "DELETE FROM settings WHERE key IN ('telegram_bot_token','telegram_chat_id')"
+    ).run();
+    await audit(env, admin.id, 'telegram.config_cleared', null, {});
+    return ok({ cleared: true });
+  }
+
+  if (token) {
+    if (!/^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(token)) {
+      throw new ApiError(400, 'Bot token không đúng định dạng (số:chuỗi)', 'VALIDATION');
+    }
+    stmts.push(env.DB.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('telegram_bot_token', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(token, now));
+  }
+  if (chatId) {
+    if (!/^-?\d{5,20}$/.test(chatId)) {
+      throw new ApiError(400, 'Chat ID phải là số (có thể âm với nhóm)', 'VALIDATION');
+    }
+    stmts.push(env.DB.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('telegram_chat_id', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(chatId, now));
+  }
+
+  if (stmts.length) await env.DB.batch(stmts);
+  await audit(env, admin.id, 'telegram.config_set', null, {
+    hasToken: !!token, hasChatId: !!chatId,
+  });
+  return ok({ saved: true, hasToken: !!token, hasChatId: !!chatId });
+}
+
+/**
+ * POST /api/webhooks/sepay
+  const secret = env.WEBHOOK_SECRET;
+  if (!secret) throw new ApiError(503, 'Webhook chưa được cấu hình', 'NOT_CONFIGURED');
+
+  const auth = request.headers.get('authorization') || '';
+  const provided = auth.replace(/^(Apikey|Bearer)\s+/i, '').trim();
+  const { timingSafeEqual } = await import('../lib/crypto.js');
+  if (!timingSafeEqual(provided, secret)) {
+    throw new ApiError(401, 'Sai khoá xác thực webhook', 'UNAUTHORIZED');
+  }
+
+  const body = await readJson(request);
+  const content = String(body.content || body.description || body.transferContent || '');
+  const amountIn = Number(body.transferAmount ?? body.amount ?? 0);
+  const ref = String(body.referenceCode || body.transactionId || body.id || '');
+
+  if (!content || !amountIn) throw new ApiError(400, 'Thiếu nội dung hoặc số tiền', 'VALIDATION');
+
+  // Tìm mã NAP trong nội dung chuyển khoản
+  const m = content.toUpperCase().match(/NAP([A-Z0-9]{5})/);
+  if (!m) return ok({ matched: false, reason: 'NO_MEMO' });
+
+  const code = m[1];
+  const topup = await env.DB.prepare('SELECT * FROM topups WHERE code = ? LIMIT 1').bind(code).first();
+  if (!topup) return ok({ matched: false, reason: 'TOPUP_NOT_FOUND' });
+  if (topup.status === 'paid') return ok({ matched: true, duplicated: true, reason: 'ALREADY_PAID' });
+
+  const now = Date.now();
+
+  // ===== CHUYỂN THIẾU TIỀN: VẪN CỘNG PHẦN ĐÃ NHẬN =====
+  // Trước đây đánh dấu 'expired' và bỏ qua -> khách mất tiền, shop giữ.
+  if (amountIn < topup.amount) {
+    const credited = Math.floor(amountIn);
+    await env.DB.prepare("UPDATE topups SET status='partial', txn_ref = ? WHERE id = ?")
+      .bind(ref, topup.id).run();
+    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+      .bind(credited, now, topup.user_id).run();
+    const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
+    await env.DB.prepare(
+      `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+       VALUES (?,?,'topup',?,?,'success',?,?,?)`
+    ).bind(uuid(), topup.user_id, credited, balP.balance, ref || code,
+      `Nạp một phần ${credited.toLocaleString('vi-VN')}đ / ${topup.amount.toLocaleString('vi-VN')}đ (${code})`, now).run();
+    await audit(env, null, 'topup.partial', topup.id, { expected: topup.amount, received: amountIn });
+    // Thông báo Telegram (không chặn luồng nếu lỗi)
+  try {
+    const { notifyTopup } = await import('../lib/telegram.js');
+    const u = await env.DB.prepare('SELECT email, full_name, balance FROM users WHERE id = ?')
+      .bind(topup.user_id).first();
+    await notifyTopup(env, {
+      topup, email: u?.email, customer: u?.full_name,
+      received: amountIn, via: 'sepay', ref, balanceBefore: u?.balance, matched: true,
+    });
+  } catch (e) { console.error('tg notify:', e && e.message); }
+
+    return ok({
+      matched: true, reason: 'PARTIAL', expected: topup.amount,
+      received: amountIn, credited, balance: balP.balance,
+    });
+  }
+
+  // Chuyển thừa: cộng đúng số đã đặt, phần dư ghi nhận để đối soát
+  const credited = topup.amount;
+  const excess = Math.floor(amountIn) - topup.amount;
+
+  await env.DB.prepare("UPDATE topups SET status='paid', txn_ref = ?, paid_at = ? WHERE id = ?")
+    .bind(ref, now, topup.id).run();
+  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+    .bind(credited, now, topup.user_id).run();
+
+  const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
+  await env.DB.prepare(
+    `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+     VALUES (?,?,'topup',?,?,'success',?,?,?)`
+  ).bind(uuid(), topup.user_id, credited, bal.balance, ref || code, `Nạp tiền qua chuyển khoản (${code})`, now).run();
+
+  await audit(env, null, 'topup.paid', topup.id, { amount: credited, ref, excess: excess || 0 });
+  // Thông báo Telegram (không chặn luồng nếu lỗi)
+  try {
+    const { notifyTopup } = await import('../lib/telegram.js');
+    const u = await env.DB.prepare('SELECT email, full_name, balance FROM users WHERE id = ?')
+      .bind(topup.user_id).first();
+    await notifyTopup(env, {
+      topup, email: u?.email, customer: u?.full_name,
+      received: amountIn, via: 'sepay', ref, balanceBefore: u?.balance, matched: true,
+    });
+  } catch (e) { console.error('tg notify:', e && e.message); }
+
+  return ok({
+    matched: true, credited, balance: bal.balance,
+    ...(excess > 0 ? { reason: 'OVERPAID', excess, note: 'Phần dư đã ghi nhận để đối soát' } : {}),
+  });
 }
 
 /**
@@ -574,6 +931,14 @@ export async function adminRejectTopup(env, request, topupId) {
 }
 
 /** Admin: điều chỉnh số dư thủ công. */
+
+/* ============================================================
+   ADMIN: QUẢN LÝ NẠP TIỀN
+   Cần thiết vì webhook ngân hàng có thể chưa nối / bị lỗi /
+   khách chuyển sai nội dung. Không có UI này thì admin phải
+   sửa DB tay -> dễ sai sổ cái.
+   ============================================================ */
+
 export async function adminAdjustBalance(env, request) {
   const admin = await requireAdmin(env, request);
   const body = await readJson(request);

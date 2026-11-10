@@ -941,6 +941,51 @@ async function renderSettings(host) {
           <button class="btn btn-primary btn-sm" id="wh-save-payos">Lưu checksum key</button>
           <button class="btn btn-ghost btn-sm" id="wh-clear-payos" style="margin-left:6px">Xoá</button>
         </div>
+
+        <div style="padding:16px;border-radius:12px;background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.24);margin-top:14px">
+          <div class="flex items-center gap-1" style="margin-bottom:8px">
+            <span style="font-size:13.5px;font-weight:800">📱 Telegram</span>
+            <span id="tg-badge"></span>
+          </div>
+          <p style="font-size:12.5px;color:var(--text-mute);line-height:1.7;margin-bottom:12px">
+            Có tiền vào là báo ngay về điện thoại, kèm nút <strong>Duyệt</strong> /
+            <strong>Từ chối</strong> — không cần mở web.
+          </p>
+
+          <div class="field" style="margin-bottom:10px">
+            <label class="label">Bot Token</label>
+            <input class="input" id="tg-token" type="password" placeholder="123456789:ABCdefGHI...">
+            <div class="form-hint">Tạo bot với <code class="mono">@BotFather</code> trên Telegram → copy token.</div>
+          </div>
+          <div class="field" style="margin-bottom:10px">
+            <label class="label">Chat ID</label>
+            <input class="input" id="tg-chat" placeholder="123456789">
+            <div class="form-hint">
+              Nhắn <code class="mono">/start</code> cho bot, hoặc thêm bot vào nhóm rồi nhắn
+              <code class="mono">/id</code> — bot sẽ trả chat ID.
+            </div>
+          </div>
+
+          <div class="flex gap-1" style="flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" id="tg-save">Lưu</button>
+            <button class="btn btn-ghost btn-sm" id="tg-test">📤 Gửi tin thử</button>
+            <button class="btn btn-ghost btn-sm" id="tg-clear">Xoá</button>
+          </div>
+
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)">
+            <div style="font-size:12px;color:var(--text-mute);line-height:1.8;margin-bottom:8px">
+              <strong>Bắt buộc</strong> — dán URL này vào Telegram để nút bấm hoạt động:
+            </div>
+            <code class="mono" id="tg-webhook-url" style="display:block;background:rgba(0,0,0,.4);padding:8px 10px;border-radius:6px;font-size:11.5px;word-break:break-all;cursor:pointer"
+              title="Bấm để copy">${esc(location.origin)}/api/telegram/webhook</code>
+            <div style="font-size:11.5px;color:var(--text-mute);line-height:1.7;margin-top:8px">
+              Cần đặt secret trước:
+              <code class="mono">wrangler secret put TG_WEBHOOK_SECRET</code><br>
+              Rồi gọi:<br>
+              <code class="mono" style="font-size:11px;word-break:break-all">curl "https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook?url=https://xienhl.com/api/telegram/webhook&amp;secret_token=&lt;SECRET&gt;"</code>
+            </div>
+          </div>
+        </div>
       </div>
     </div>`;
 
@@ -1020,6 +1065,74 @@ async function renderSettings(host) {
         await api('/api/admin/settings/payos', { method: 'POST', body: { checksumKey: '' } });
         toast('Đã xoá', 'success');
         await loadWh();
+      } catch (err) { toast(err.message, 'error'); }
+    };
+  }
+
+  /* ---------- Telegram ---------- */
+  const loadTg = async () => {
+    const badge = host.querySelector('#tg-badge');
+    if (!badge) return;
+    try {
+      const s = await api('/api/admin/telegram/status');
+      badge.innerHTML = s.configured
+        ? `<span class="pill pill-green">✅ Đã nối</span>${s.source !== 'none' ? ` <span style="color:var(--text-mute);font-size:11.5px">(${esc(s.source)})</span>` : ''}`
+        : '<span class="pill pill-yellow">⚠️ Chưa nối</span>';
+      if (s.botTokenHint) host.querySelector('#tg-token').placeholder = s.botTokenHint;
+      if (s.chatId) host.querySelector('#tg-chat').placeholder = s.chatId;
+    } catch {
+      badge.innerHTML = '<span class="pill pill-red">Lỗi</span>';
+    }
+  };
+  await loadTg();
+
+  const tgUrl = host.querySelector('#tg-webhook-url');
+  if (tgUrl) {
+    tgUrl.onclick = async () => {
+      const okc = await copyText(tgUrl.textContent.trim());
+      toast(okc ? 'Đã copy URL webhook Telegram' : 'Không copy được', okc ? 'success' : 'error');
+    };
+  }
+
+  const tgSave = host.querySelector('#tg-save');
+  if (tgSave) {
+    tgSave.onclick = async () => {
+      const botToken = host.querySelector('#tg-token').value.trim();
+      const chatId = host.querySelector('#tg-chat').value.trim();
+      if (!botToken && !chatId) { toast('Nhập ít nhất một trường', 'error'); return; }
+      tgSave.disabled = true;
+      try {
+        await api('/api/admin/telegram/config', { method: 'POST', body: { botToken, chatId } });
+        toast('Đã lưu cấu hình Telegram', 'success');
+        host.querySelector('#tg-token').value = '';
+        host.querySelector('#tg-chat').value = '';
+        await loadTg();
+      } catch (err) { toast(err.message, 'error'); }
+      finally { tgSave.disabled = false; }
+    };
+  }
+
+  const tgTest = host.querySelector('#tg-test');
+  if (tgTest) {
+    tgTest.onclick = async () => {
+      tgTest.disabled = true;
+      tgTest.textContent = 'Đang gửi...';
+      try {
+        await api('/api/admin/telegram/test', { method: 'POST', body: {} });
+        toast('Đã gửi! Kiểm tra Telegram trên điện thoại.', 'success', 6000);
+      } catch (err) { toast(err.message, 'error', 7000); }
+      finally { tgTest.disabled = false; tgTest.textContent = '📤 Gửi tin thử'; }
+    };
+  }
+
+  const tgClear = host.querySelector('#tg-clear');
+  if (tgClear) {
+    tgClear.onclick = async () => {
+      if (!await confirmDialog('Xoá cấu hình Telegram?', 'Sẽ không còn thông báo nào được gửi.', 'Xoá')) return;
+      try {
+        await api('/api/admin/telegram/config', { method: 'POST', body: { botToken: '', chatId: '' } });
+        toast('Đã xoá', 'success');
+        await loadTg();
       } catch (err) { toast(err.message, 'error'); }
     };
   }
