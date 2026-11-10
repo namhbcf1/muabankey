@@ -161,51 +161,63 @@ export async function apiTrialStart(env, request) {
     }
   }
 
-  // ---- 5. Tính HWID từ raw parts (server TỰ băm, không tin client) ----
+  // ---- 5. Tính HWID từ raw parts ----
+  // Web KHÔNG đọc được phần cứng máy khách, nên cho phép bỏ trống:
+  //   - Có raw parts -> tính HWID ngay (client tool gửi)
+  //   - Không có      -> cấp key trước, HWID gắn ở /api/check lần đầu
+  //     (bảo vệ bằng: license chưa bind thì chỉ bind được 1 lần,
+  //      sau đó đổi máy phải có token)
   let ids;
-  if (body.guid !== undefined || body.bios !== undefined || body.cpu !== undefined) {
+  const hasParts = (body.guid !== undefined || body.bios !== undefined
+    || body.cpu !== undefined || body.vol !== undefined);
+  const hasHwid = !!body.hwid;
+
+  if (hasParts) {
     ids = await deriveIds([body.guid, body.bios, body.cpu, body.vol]);
-  } else if (body.hwid) {
-    // Client cũ chỉ gửi hwid
+  } else if (hasHwid) {
     const raw = String(body.hwid).trim().toLowerCase();
     if (!/^[0-9a-z]{16,128}$/.test(raw)) {
-      return json({ ok: false, code: 'bad_request', msg: 'Thiếu thông tin máy' }, 400);
+      return json({ ok: false, code: 'bad_request', msg: 'HWID không hợp lệ' }, 400);
     }
     ids = { hwid: raw, weak: raw, bios: '', cpu: '' };
   } else {
-    return json({ ok: false, code: 'bad_request', msg: 'Thiếu thông tin máy' }, 400);
+    // WEB PATH: cấp key trước, HWID = NULL -> bind ở /api/check lần đầu
+    ids = { hwid: null, weak: null, bios: '', cpu: '' };
   }
 
-  // ---- 6. Chặn máy ảo ----
-  if (looksVirtual(ids.bios, ids.cpu)) {
-    await logEvent(env, '-', ids.hwid, 'trial_deny', 'virtual machine', ip);
-    return json({
-      ok: false, code: 'trial_denied_device',
-      msg: 'Không hỗ trợ dùng thử trên máy ảo',
-    }, 403);
+  // ---- 6. Chặn máy ảo (chỉ khi biết thông tin máy) ----
+  if (ids.bios || ids.cpu) {
+    if (looksVirtual(ids.bios, ids.cpu)) {
+      await logEvent(env, '-', ids.hwid, 'trial_deny', 'virtual machine', ip);
+      return json({
+        ok: false, code: 'trial_denied_device',
+        msg: 'Không hỗ trợ dùng thử trên máy ảo',
+      }, 403);
+    }
   }
 
-  // ---- 7. Thiết bị bị ban ----
-  const banned = await env.DB.prepare(
-    'SELECT reason FROM trial_bans WHERE scope = ? AND value = ?'
-  ).bind('weak', ids.weak).first();
-  if (banned) {
-    return json({
-      ok: false, code: 'trial_denied_device',
-      msg: 'Thiết bị này bị chặn dùng thử',
-    }, 403);
+  // ---- 7. Thiết bị bị ban (chỉ khi có weak) ----
+  if (ids.weak) {
+    const banned = await env.DB.prepare(
+      'SELECT reason FROM trial_bans WHERE scope = ? AND value = ?'
+    ).bind('weak', ids.weak).first();
+    if (banned) {
+      return json({
+        ok: false, code: 'trial_denied_device',
+        msg: 'Thiết bị này bị chặn dùng thử',
+      }, 403);
+    }
   }
 
   // ---- 8. Đang có trial cùng loại còn hạn -> RESUME, không trừ lượt ----
   const active = await activeUse(env, user.id, kind);
   if (active) {
-    // Nếu HWID khác (đổi máy/đổi volume serial) -> cập nhật, vẫn không trừ lượt
+    // Nếu gửi HWID và khác -> cập nhật (đổi máy/đổi volume serial), không trừ lượt
     let hwidChanged = false;
-    if (active.hwid !== ids.hwid) {
+    if (ids.hwid && active.hwid !== ids.hwid) {
       await env.DB.prepare(
         'UPDATE trial_uses SET hwid = ? WHERE id = ?'
       ).bind(ids.hwid, active.id).run();
-      // License cũng phải đổi HWID, nếu không /api/check sẽ báo hwid_mismatch
       await env.DB.prepare(
         'UPDATE licenses SET hwid = ? WHERE key = ?'
       ).bind(ids.hwid, active.lic_key).run();
@@ -214,8 +226,7 @@ export async function apiTrialStart(env, request) {
     const q = await getQuota(env, user.id, kind, kc.quota);
     return json({
       ...publicUse(active, cfg, kind),
-      // Client cần hwid thật để gọi /api/check
-      hwid: ids.hwid,
+      hwid: ids.hwid || active.hwid || null,
       hwid_updated: hwidChanged,
       trial_kind_state: 'resume',
       used: q.used, quota: q.quota, left: q.left,
@@ -223,16 +234,18 @@ export async function apiTrialStart(env, request) {
     });
   }
 
-  // ---- 9. Chống farm tài khoản trên 1 máy ----
-  const maxAcc = kind === KIND_1H ? cfg.deviceAccounts1h : cfg.deviceAccounts3d;
-  const accCount = await deviceAccountCount(env, ids.weak, kind, user.id);
-  if (accCount >= maxAcc) {
-    await logEvent(env, '-', ids.hwid, 'trial_deny', `device has ${accCount} accounts`, ip);
-    return json({
-      ok: false, code: 'trial_device_limit',
-      msg: 'Máy này đã dùng thử cho nhiều tài khoản khác. '
-        + 'Mỗi máy chỉ được dùng thử cho một số tài khoản nhất định.',
-    }, 403);
+  // ---- 9. Chống farm tài khoản trên 1 máy (chỉ khi có weak) ----
+  if (ids.weak) {
+    const maxAcc = kind === KIND_1H ? cfg.deviceAccounts1h : cfg.deviceAccounts3d;
+    const accCount = await deviceAccountCount(env, ids.weak, kind, user.id);
+    if (accCount >= maxAcc) {
+      await logEvent(env, '-', ids.hwid, 'trial_deny', `device has ${accCount} accounts`, ip);
+      return json({
+        ok: false, code: 'trial_device_limit',
+        msg: 'Máy này đã dùng thử cho nhiều tài khoản khác. '
+          + 'Mỗi máy chỉ được dùng thử cho một số tài khoản nhất định.',
+      }, 403);
+    }
   }
 
   // ---- 10. Hạn mức IP / subnet / ngày ----

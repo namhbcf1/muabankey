@@ -222,7 +222,10 @@ export async function countRecent(env, ip, net, since, { perIp = true } = {}) {
 export function publicUse(row, cfg, kind) {
   const kc = kindCfg(cfg, kind);
   const now = nowSec();
-  const leftSec = Math.max(0, (row.expires_at || 0) - now);
+  const activated = !!(row.started_at && row.started_at > 0);
+  // Chưa kích hoạt: expires_at là "hold" (7 ngày để khách kịp cài tool),
+  // KHÔNG phải hạn dùng thật -> thời gian còn lại = 0 (client hiện "chạy tool để bắt đầu")
+  const leftSec = activated ? Math.max(0, (row.expires_at || 0) - now) : 0;
   return {
     ok: true,
     key: row.lic_key,
@@ -230,7 +233,8 @@ export function publicUse(row, cfg, kind) {
     trial: true,
     trial_kind: kind,
     expires_at: row.expires_at || 0,
-    activated_at: row.started_at || 0,
+    activated_at: activated ? row.started_at : 0,
+    activated,
     time_left_sec: leftSec,
     days_left: Math.ceil(leftSec / 86400),
     grace_hours: 0,

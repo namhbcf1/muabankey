@@ -1,5 +1,5 @@
 /** Trang chủ. */
-import { api, esc, fmtVnd, fmtNum, skeletonCards, navigate, toast, openModal } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, skeletonCards, navigate, toast, openModal, copyText } from '../lib.js';
 import { state, addToCart } from '../state.js';
 
 export function productCard(p) {
@@ -64,7 +64,7 @@ export function renderHome() {
     <div class="container hero-inner">
       <div class="hero-pill">
         <span class="pulse"></span>
-        Dùng thử 3 ngày miễn phí · Không cần thẻ
+        Dùng thử miễn phí · 1 giờ hoặc 3 ngày · Không cần thẻ
       </div>
       <h1>Bản quyền số <span class="grad">chính hãng</span><br>giao key trong 30 giây</h1>
       <p class="hero-sub">
@@ -85,39 +85,68 @@ export function renderHome() {
     </div>
   </section>
 
-  <!-- ===== KHỐI DÙNG THỬ 3 NGÀY ===== -->
+  <!-- ===== KHỐI DÙNG THỬ: 1 GIỜ + 3 NGÀY ===== -->
   <section class="section-sm" id="trial-section">
     <div class="container">
-      <div class="card" style="padding:34px 28px;background:linear-gradient(135deg,rgba(34,197,94,.12),rgba(34,211,238,.07));border-color:rgba(34,197,94,.3)">
-        <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:28px;align-items:center" class="trial-grid">
-          <div>
-            <div class="flex items-center gap-1 mb-1">
-              <span class="pill pill-green" style="font-size:12px">🎁 MIỄN PHÍ</span>
-              <span class="pill pill-blue" style="font-size:12px">Không cần thẻ</span>
-            </div>
-            <h2 style="font-size:clamp(1.4rem,2.8vw,1.9rem);font-weight:800;letter-spacing:-.035em;margin-bottom:10px;line-height:1.2">
-              Dùng thử <span style="color:#4ade80">3 ngày</span> miễn phí
-            </h2>
-            <p style="color:var(--text-dim);font-size:14.5px;line-height:1.65;margin-bottom:18px">
-              Tải tool, chạy lên là có ngay 3 ngày dùng thử đầy đủ tính năng.
-              Không cần đăng ký, không cần nhập thẻ. Hết 3 ngày mới cần mua key.
-            </p>
-            <ul class="feature-list" style="margin:0">
-              <li><span class="tick">✓</span><span>Đầy đủ tính năng, không giới hạn cổng nào</span></li>
-              <li><span class="tick">✓</span><span>Giao tự động, không cần chờ admin</span></li>
-              <li><span class="tick">✓</span><span>Mỗi máy 1 lần — không cần tài khoản</span></li>
-            </ul>
-          </div>
-          <div style="text-align:center">
-            <div style="font-size:56px;margin-bottom:12px">⚡</div>
-            <button class="btn btn-gold btn-lg btn-block" data-start-trial style="margin-bottom:10px">
-              Tải &amp; dùng thử ngay
-            </button>
-            <div style="font-size:12px;color:var(--text-mute);line-height:1.6">
-              Tải tool → chạy → có 3 ngày.<br>Không cần nhập gì cả.
-            </div>
-          </div>
+      <div class="sec-head" style="margin-bottom:18px">
+        <div>
+          <h2 class="sec-title">🎁 Dùng thử miễn phí</h2>
+          <p class="sec-desc">
+            Hai lựa chọn — mỗi loại <strong>10 lượt</strong> cho tài khoản của bạn
+          </p>
         </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px" class="trial-grid">
+        <!-- ===== GÓI 1 GIỜ ===== -->
+        <div class="card" style="padding:26px 24px;background:linear-gradient(135deg,rgba(251,191,36,.10),rgba(34,211,238,.05));border-color:rgba(251,191,36,.28)">
+          <div class="flex items-center gap-1 mb-1">
+            <span class="pill" style="font-size:11.5px;background:rgba(251,191,36,.18);color:#fbbf24">⚡ DÙNG THỬ NHANH</span>
+          </div>
+          <h3 style="font-size:1.45rem;font-weight:800;letter-spacing:-.03em;margin-bottom:6px">
+            Dùng thử <span style="color:#fbbf24">1 giờ</span>
+          </h3>
+          <div style="font-size:2rem;font-weight:800;color:#4ade80;margin-bottom:12px;letter-spacing:-.04em">
+            0đ
+          </div>
+          <ul class="feature-list" style="margin-bottom:18px;font-size:13px">
+            <li><span class="tick">✓</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
+            <li><span class="tick">✓</span><span>Đủ chơi 1-2 trận để thử</span></li>
+            <li><span class="tick">✓</span><span><strong>10 lượt</strong> / tài khoản</span></li>
+          </ul>
+          <div id="trial-1h-status" style="font-size:12.5px;color:var(--text-mute);margin-bottom:12px;min-height:20px"></div>
+          <button class="btn btn-gold btn-block" data-trial-kind="1h">
+            ⚡ Bắt đầu 1 giờ
+          </button>
+        </div>
+
+        <!-- ===== GÓI 3 NGÀY ===== -->
+        <div class="card" style="padding:26px 24px;background:linear-gradient(135deg,rgba(34,197,94,.12),rgba(34,211,238,.07));border-color:rgba(34,197,94,.3)">
+          <div class="flex items-center gap-1 mb-1">
+            <span class="pill pill-green" style="font-size:11.5px">🔥 PHỔ BIẾN NHẤT</span>
+          </div>
+          <h3 style="font-size:1.45rem;font-weight:800;letter-spacing:-.03em;margin-bottom:6px">
+            Dùng thử <span style="color:#4ade80">3 ngày</span>
+          </h3>
+          <div style="font-size:2rem;font-weight:800;color:#4ade80;margin-bottom:12px;letter-spacing:-.04em">
+            0đ
+          </div>
+          <ul class="feature-list" style="margin-bottom:18px;font-size:13px">
+            <li><span class="tick">✓</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
+            <li><span class="tick">✓</span><span>Chơi thoải mái nhiều ngày</span></li>
+            <li><span class="tick">✓</span><span><strong>10 lượt</strong> / tài khoản</span></li>
+          </ul>
+          <div id="trial-3d-status" style="font-size:12.5px;color:var(--text-mute);margin-bottom:12px;min-height:20px"></div>
+          <button class="btn btn-primary btn-block" data-trial-kind="3d">
+            🎁 Bắt đầu 3 ngày
+          </button>
+        </div>
+      </div>
+
+      <div class="alert alert-info" style="margin-top:16px">
+        <span class="ico">ℹ️</span>
+        <span>Cần <strong>tài khoản</strong> để dùng thử (miễn phí, chỉ tài khoản + mật khẩu).
+        Tool tự bật dùng thử khi chạy lần đầu — không nhập gì thêm.</span>
       </div>
     </div>
   </section>
@@ -195,81 +224,131 @@ function renderFooterPlaceholder() {
 }
 
 /**
- * Modal hướng dẫn dùng thử: tải tool + chạy là xong.
- * Tool tự xin trial khi chạy lần đầu, không cần làm gì trên web.
+ * Bắt đầu dùng thử: gọi API thật, rồi hướng dẫn tải tool.
+ *
+ * kind: '1h' | '3d'
+ * onDone: callback reload quota sau khi xong
  */
-function showTrialModal() {
-  const base = location.origin;
-  const dlUrl = base + '/download/xa_nofog_pro.exe';
+async function startTrialFlow(kind, onDone) {
+  const label = kind === '1h' ? '1 giờ' : '3 ngày';
 
-  openModal(`
-    <div class="modal-title">🎁 Dùng thử 3 ngày miễn phí</div>
-    <div class="modal-sub">
-      Không cần đăng ký, không cần thẻ. Tải tool, chạy lên là có 3 ngày.
-    </div>
+  // Chưa đăng nhập -> chuyển sang đăng nhập rồi quay lại
+  if (!state.user) {
+    openModal(`
+      <div class="modal-title">Cần tài khoản để dùng thử</div>
+      <div class="modal-sub">
+        Miễn phí, chỉ cần tài khoản + mật khẩu. Không cần email, không cần thẻ.
+      </div>
+      <div class="alert alert-info" style="margin-bottom:18px">
+        <span class="ico">💡</span>
+        <span>Mỗi tài khoản được <strong>10 lượt dùng thử ${label}</strong>.</span>
+      </div>
+      <div class="flex gap-1" style="justify-content:space-between;flex-wrap:wrap">
+        <button class="btn btn-ghost" data-close>Để sau</button>
+        <button class="btn btn-primary" data-reg>Đăng ký ngay</button>
+      </div>
+    `, {
+      onMount(overlay, close) {
+        overlay.querySelector('[data-close]').onclick = close;
+        overlay.querySelector('[data-reg]').onclick = () => {
+          close();
+          navigate('/register?redirect=/');
+        };
+      },
+    });
+    return;
+  }
 
-    <div style="counter-reset:step">
-      <div class="flex gap-1 mb-2" style="align-items:flex-start">
-        <div style="width:26px;height:26px;border-radius:8px;background:var(--grad-brand);color:#fff;
-          display:grid;place-items:center;font-weight:800;font-size:12px;flex-shrink:0">1</div>
-        <div style="flex:1">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:5px">Tải tool về máy</div>
-          <a class="btn btn-primary btn-sm" href="${dlUrl}" download style="margin-top:4px">
-            ⬇️ Tải XArena No Fog (12 MB)
-          </a>
-          <div style="font-size:11.5px;color:var(--text-mute);margin-top:7px;line-height:1.6">
-            Nếu Windows cảnh báo "Windows protected your PC" → bấm
-            <strong>More info</strong> → <strong>Run anyway</strong>.
-            File chưa ký số nên Windows luôn cảnh báo — đây là bình thường.
-          </div>
+  // Đã đăng nhập -> gọi API
+  try {
+    const data = await api('/api/trial/start', {
+      method: 'POST',
+      body: { kind, app: 'XArena No Fog', ver: '1.3.0' },
+    });
+
+    const key = data.key;
+    const left = data.left;
+    const quota = data.quota;
+
+    openModal(`
+      <div class="modal-title">✅ Đã bật dùng thử ${label}</div>
+      <div class="modal-sub">
+        Còn <strong>${left}/${quota}</strong> lượt dùng thử ${label}.
+      </div>
+
+      <div class="field">
+        <label class="label">Mã dùng thử của bạn</label>
+        <div class="mono" style="font-size:14px;letter-spacing:.06em;background:rgba(34,197,94,.08);
+          padding:12px;border-radius:9px;border:1px solid rgba(34,197,94,.3);text-align:center;font-weight:700">
+          ${esc(key)}
         </div>
       </div>
 
-      <div class="flex gap-1 mb-2" style="align-items:flex-start">
-        <div style="width:26px;height:26px;border-radius:8px;background:var(--grad-brand);color:#fff;
-          display:grid;place-items:center;font-weight:800;font-size:12px;flex-shrink:0">2</div>
-        <div style="flex:1">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:5px">Chạy tool</div>
-          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.65">
-            Double-click file vừa tải. Tool tự động xin dùng thử, không cần nhập gì.
-            Windows hỏi quyền → bấm <strong>Yes</strong>
-            (tool cần quyền để vá bộ nhớ game).
-          </div>
-        </div>
+      <div style="font-size:13px;color:var(--text-dim);line-height:1.9;margin-bottom:14px">
+        <strong>Bước tiếp theo:</strong><br>
+        1. Tải tool bên dưới<br>
+        2. Chạy tool — nó tự nhận mã này<br>
+        3. Mở game AoE là dùng được
       </div>
 
-      <div class="flex gap-1 mb-3" style="align-items:flex-start">
-        <div style="width:26px;height:26px;border-radius:8px;background:var(--grad-brand);color:#fff;
-          display:grid;place-items:center;font-weight:800;font-size:12px;flex-shrink:0">3</div>
-        <div style="flex:1">
-          <div style="font-size:13.5px;font-weight:800;margin-bottom:5px">Mở game AoE — xong</div>
-          <div style="font-size:12.5px;color:var(--text-mute);line-height:1.65">
-            Để cửa sổ tool mở, mở game là tự vá. Hết 3 ngày tool sẽ báo mua key.
-          </div>
-        </div>
+      <div class="flex gap-1" style="flex-wrap:wrap;margin-bottom:14px">
+        <a class="btn btn-primary btn-sm" href="${esc(location.origin)}/download/xa_nofog_pro.exe" download>
+          ⬇️ Tải tool (12 MB)
+        </a>
+        <button class="btn btn-ghost btn-sm" data-copykey>📋 Copy mã</button>
       </div>
-    </div>
 
-    <div class="alert alert-info" style="margin-bottom:18px">
-      <span class="ico">ℹ️</span>
-      <span>Mỗi máy được dùng thử <strong>1 lần</strong>. Cần mạng mỗi lần chạy
-      để xác minh bản quyền.</span>
-    </div>
+      <div class="alert alert-warn" style="margin-bottom:16px">
+        <span class="ico">⏳</span>
+        <span>Thời gian bắt đầu tính <strong>từ lần đầu chạy tool</strong>, không phải bây giờ.
+        Mã này gắn với máy đầu tiên kích hoạt.</span>
+      </div>
 
-    <div class="flex gap-1" style="justify-content:space-between;flex-wrap:wrap">
-      <button class="btn btn-ghost" data-close>Để sau</button>
-      <button class="btn btn-primary" data-golink>Xem bảng giá →</button>
-    </div>
-  `, {
-    onMount(overlay, close) {
-      overlay.querySelector('[data-close]').onclick = close;
-      overlay.querySelector('[data-golink]').onclick = () => {
-        close();
-        navigate('/products?category=license-xarena');
-      };
-    },
-  });
+      <div class="flex gap-1" style="justify-content:flex-end">
+        <button class="btn btn-ghost" data-close>Đóng</button>
+        <button class="btn btn-primary" data-golink>Xem bảng giá →</button>
+      </div>
+    `, {
+      onMount(overlay, close) {
+        overlay.querySelector('[data-close]').onclick = close;
+        overlay.querySelector('[data-golink]').onclick = () => {
+          close();
+          navigate('/products?category=license-xarena');
+        };
+        overlay.querySelector('[data-copykey]').onclick = async () => {
+          const okc = await copyText(key);
+          toast(okc ? 'Đã copy mã dùng thử' : 'Không copy được',
+            okc ? 'success' : 'error');
+        };
+      },
+    });
+
+    if (onDone) await onDone();
+  } catch (e) {
+    const msg = e.message || 'Không bật được dùng thử';
+    const isQuota = /hết.*lượt|quota/i.test(msg);
+    openModal(`
+      <div class="modal-title">${isQuota ? 'Đã hết lượt dùng thử' : 'Không bật được dùng thử'}</div>
+      <div class="modal-sub">${esc(msg)}</div>
+      ${isQuota ? `
+        <div class="alert alert-info" style="margin-bottom:16px">
+          <span class="ico">💡</span>
+          <span>Mua key để tiếp tục dùng không giới hạn.</span>
+        </div>` : ''}
+      <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
+        <button class="btn btn-ghost" data-close>Đóng</button>
+        ${isQuota ? '<button class="btn btn-primary" data-golink>Mua key →</button>' : ''}
+      </div>
+    `, {
+      onMount(overlay, close) {
+        overlay.querySelector('[data-close]').onclick = close;
+        const g = overlay.querySelector('[data-golink]');
+        if (g) g.onclick = () => { close(); navigate('/products?category=license-xarena'); };
+      },
+    });
+  }
 }
+
 
 export async function mountHome(root) {
   root.querySelectorAll('[data-goto]').forEach((b) => {
@@ -288,11 +367,54 @@ export async function mountHome(root) {
     };
   }
 
-  // ===== NÚT DÙNG THỬ =====
-  const trialBtn = root.querySelector('[data-start-trial]');
-  if (trialBtn) {
-    trialBtn.onclick = () => showTrialModal();
-  }
+  // ===== NÚT DÙNG THỬ: 1 giờ / 3 ngày =====
+  const loadTrialQuota = async () => {
+    const setText = (kind, txt) => {
+      const el = root.querySelector(`#trial-${kind}-status`);
+      if (el) el.innerHTML = txt;
+    };
+
+    if (!state.user) {
+      setText('1h', 'Cần đăng nhập để dùng thử');
+      setText('3d', 'Cần đăng nhập để dùng thử');
+      return;
+    }
+
+    try {
+      const s = await api('/api/trial/status');
+      for (const kind of ['1h', '3d']) {
+        const k = s.kinds?.[kind];
+        if (!k) { setText(kind, ''); continue; }
+        if (k.active) {
+          // expires_at lúc CHƯA kích hoạt là "hold" (7 ngày), không phải hạn thật.
+          // Chỉ hiện thời gian khi tool đã chạy lần đầu (activated_at > 0).
+          const activated = (k.active.activated_at || 0) > 0;
+          if (!activated) {
+            setText(kind, '<span style="color:#fbbf24">● Đã tạo — chạy tool để bắt đầu tính giờ</span>');
+          } else {
+            const left = Math.max(0, (k.active.time_left_sec || 0));
+            const txt = kind === '1h'
+              ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`
+              : `${Math.max(0, Math.ceil(left / 86400))} ngày`;
+            setText(kind, `<span style="color:#4ade80">● Đang dùng — còn ${txt}</span>`);
+          }
+        } else if (k.left > 0) {
+          setText(kind, `Còn <strong>${k.left}/${k.quota}</strong> lượt`);
+        } else {
+          setText(kind, `<span style="color:#f87171">Đã hết ${k.quota} lượt</span>`);
+        }
+      }
+    } catch (e) {
+      setText('1h', '');
+      setText('3d', '');
+    }
+  };
+
+  root.querySelectorAll('[data-trial-kind]').forEach((b) => {
+    b.onclick = () => startTrialFlow(b.dataset.trialKind, loadTrialQuota);
+  });
+
+  await loadTrialQuota();
 
   // ===== SỐ LIỆU THẬT =====
   // Trước đây là số bịa (12.480 đơn / 215 sản phẩm / 99% / 30 giây)
