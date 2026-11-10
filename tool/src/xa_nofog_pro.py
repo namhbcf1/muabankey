@@ -130,6 +130,16 @@ _mutex_handle = None
 CLOCK_SKEW_TOLERANCE = int(_c('CLOCK_SKEW_TOLERANCE', 2 * 3600))
 REG_KEY = str(_c('REG_KEY', r'Software\Microsoft\Windows\CurrentVersion\XASupport'))
 
+# --- DUNG THU ---------------------------------------------------------------
+TRIAL_ENABLED = str(_c('TRIAL_ENABLED', '1')) not in ('0', 'False', 'false', '')
+TRIAL_DAYS = int(_c('TRIAL_DAYS', 3))
+TRIAL_GRACE_HOURS = int(_c('TRIAL_GRACE_HOURS', 0))
+TRIAL_WARN_DAYS = float(_c('TRIAL_WARN_DAYS', 1))
+TRIAL_RECHECK_SEC = int(_c('TRIAL_RECHECK_SEC', 1800))
+BUY_URL = str(_c('BUY_URL', 'https://xienhl.com/#/product/license-xarena-thang'))
+EXIT_TRIAL_END = int(_c('EXIT_TRIAL_END', 6))
+CLIENT_VERSION = '1.2.0'
+
 # =============================================================================
 # PHAN 1 -- LICENSE
 # =============================================================================
@@ -289,9 +299,31 @@ def _bios_serial():
         return ''
 
 
+def _hwid_parts():
+    """Bon manh phan cung tho (chua bam).
+
+    Server can tung manh rieng (khong chi hash cuoi) de:
+      - tu tinh HWID (khong tin hwid client gui len)
+      - fuzzy match: doi 1 thanh phan van nhan ra cung may
+      - phat hien may ao tu BIOS/CPU vendor string
+    """
+    return [_machine_guid(), _bios_serial(), _cpu_brand(), _volume_serial()]
+
+
 def compute_hwid():
     """SHA-256 phan cung that. Khong dung ten may / MAC (doi qua de)."""
-    parts = [_machine_guid(), _bios_serial(), _cpu_brand(), _volume_serial()]
+    parts = _hwid_parts()
+    return hashlib.sha256('|'.join(parts).encode('utf-8')).hexdigest()[:32]
+
+
+def compute_weak_hwid():
+    """HWID 'cung' -- BO volume serial.
+
+    Volume serial doi duoc bang phan mem (va doi khi format o). Neu dung
+    compute_hwid() lam dau vet chong reset trial thi chi can doi serial la
+    xin duoc trial moi. Chuoi nay on dinh hon.
+    """
+    parts = _hwid_parts()[:3]      # MachineGuid + BIOS serial + CPU brand
     return hashlib.sha256('|'.join(parts).encode('utf-8')).hexdigest()[:32]
 
 
@@ -339,23 +371,35 @@ def save_state(st):
 
 
 # --------------------------------------------------------------- http -------
-def _post(path, payload):
+def _post(path, payload, timeout=None, retries=0):
+    """POST JSON toi server license.
+
+    retries>0 chi dung cho /api/trial/start: tao trial la thao tac GHI,
+    mang chap chon giua chung se lam client khong biet server da tao hay
+    chua. Endpoint do idempotent (tra lai trial cu) nen retry an toan.
+    """
     url = API_BASE.rstrip('/') + path
     body = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(
-        url, data=body, method='POST',
-        headers={'content-type': 'application/json',
-                 'user-agent': '%s/1.0' % APP_NAME})
-    try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
-            return json.loads(r.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
+    last = {'ok': False, 'code': 'network', 'msg': 'chua gui duoc'}
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(
+            url, data=body, method='POST',
+            headers={'content-type': 'application/json',
+                     'user-agent': '%s/%s' % (APP_NAME, CLIENT_VERSION)})
         try:
-            return json.loads(e.read().decode('utf-8'))
-        except Exception:
-            return {'ok': False, 'code': 'http_%d' % e.code}
-    except Exception as e:
-        return {'ok': False, 'code': 'network', 'msg': str(e)}
+            with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as r:
+                return json.loads(r.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            # HTTPError van co body JSON -> doc va tra ngay, KHONG retry
+            try:
+                return json.loads(e.read().decode('utf-8'))
+            except Exception:
+                return {'ok': False, 'code': 'http_%d' % e.code}
+        except Exception as e:
+            last = {'ok': False, 'code': 'network', 'msg': str(e)}
+            if attempt < retries:
+                time.sleep(0.8 * (attempt + 1))
+    return last
 
 
 # --------------------------------------------------------------- flow -------
@@ -373,11 +417,16 @@ def activate(key, verbose=True):
         'hwid': hwid,
         'expires_at': r.get('expires_at', 0),
         'activated_at': r.get('activated_at', 0),
-        'plan': r.get('plan'),
+        # Xoa dau vet trial TRUOC: neu server khong tra 'plan', st['plan']
+        # cu = 'trial' se song sot -> _grace_left() tra 0 vinh vien cho
+        # khach DA TRA TIEN.
+        'plan': r.get('plan') or 'aoe1',
         'grace_hours': r.get('grace_hours', 24),
         'last_ok': time.time(),
         'mode': 'server',
     })
+    for _k in ('is_trial', 'trial_weak', 'trial_started', 'trial_days'):
+        st.pop(_k, None)
     if not save_state(st):
         return False, 'khong ghi duoc file license'
     return True, 'kich hoat thanh cong'
@@ -409,11 +458,183 @@ def check_online(st=None, verbose=True):
     return True, 'ok'
 
 
+def is_trial(st=None):
+    """True neu state hien tai la ban dung thu."""
+    st = st if st is not None else load_state()
+    return (st.get('plan') == 'trial') or bool(st.get('is_trial'))
+
+
 def _grace_left(st):
     """So giay con duoc chay offline ke tu lan check thanh cong cuoi."""
+    # Ban dung thu KHONG co offline grace: neu cho phep, chi can rut mang
+    # la 3 ngay thanh 4-5 ngay, va moi ma loi khong xac dinh deu bi day
+    # vao nhanh grace (khong kiem tra duoc han that).
+    if is_trial(st):
+        return 0
     if not st.get('last_ok'):
         return 0
     return st.get('grace_hours', 24) * 3600 - (time.time() - st.get('last_ok', 0))
+
+
+# =============================================================================
+# PHAN 1b -- DUNG THU 3 NGAY
+# =============================================================================
+def _days_left(st=None):
+    """So ngay con lai (float) hoac None neu khong co han."""
+    st = st if st is not None else load_state()
+    exp = st.get('expires_at') or 0
+    if not exp:
+        return None
+    return (exp - time.time()) / 86400.0
+
+
+def _print_trial_banner(st):
+    left = _days_left(st) or 0.0
+    exp = st.get('expires_at') or 0
+    print('')
+    print('  ============================================================')
+    print('   DUNG THU MIEN PHI %d NGAY  --  con %.1f ngay' % (TRIAL_DAYS, left))
+    print('   Het han: %s' % time.strftime('%Y-%m-%d %H:%M', time.localtime(exp)))
+    print('   Mua key: %s' % BUY_URL)
+    print('  ============================================================')
+    print('')
+
+
+def _warn_trial(st):
+    """Nhac 1 dong khi sap het han. Khong bao gio chan."""
+    left = _days_left(st)
+    if left is None:
+        return
+    if left <= 0:
+        print('  [!] DUNG THU DA HET HAN. Mua key tai %s' % BUY_URL)
+    elif left <= TRIAL_WARN_DAYS:
+        print('  [!] Dung thu con %.1f ngay. Mua key tai %s' % (left, BUY_URL))
+
+
+def _offer_buy():
+    print('')
+    print('  ============================================================')
+    print('   DUNG THU %d NGAY DA KET THUC' % TRIAL_DAYS)
+    print('  ------------------------------------------------------------')
+    print('   Mua key tai : %s' % BUY_URL)
+    print('   Nhap key    : chay lai tool va nhap khi duoc hoi,')
+    print('                 hoac: xa_nofog_pro.exe --key AOE1-XXXX-XXXX-XXXX')
+    print('   Key gan voi may nay (HWID), doi may duoc 1 lan.')
+    print('  ============================================================')
+    print('')
+
+
+def open_buy_page():
+    """Mo trang mua hang. Tra True/False, khong bao gio raise.
+
+    Uu tien explorer.exe: EXE build bang --uac-admin nen tien trinh luon
+    elevated; explorer chuyen tiep yeu cau sang phien nguoi dung -> browser
+    mo KHONG co quyen admin.
+    """
+    try:
+        import subprocess
+        subprocess.Popen(['explorer.exe', BUY_URL], close_fds=True)
+        return True
+    except Exception:
+        pass
+    try:
+        import webbrowser
+        return bool(webbrowser.open(BUY_URL))
+    except Exception:
+        return False
+
+
+def start_trial(verbose=True):
+    """Xin trial tu server. Tra (ok, msg).
+
+    msg dac biet:
+      'expired'  -> may nay da tung dung thu va da het han
+      'used'     -> het luot dung thu (IP / thiet bi)
+      khac       -> loi mang / server
+
+    Gui RAW parts (guid/bios/cpu/vol) chu khong gui hwid: server tu bam,
+    nen khong the farm trial bang HWID tu bịa.
+    """
+    if not TRIAL_ENABLED:
+        return False, 'ban nay khong co dung thu'
+
+    parts = _hwid_parts()
+    if verbose:
+        print('  May chua kich hoat -> bat dung thu %d ngay.' % TRIAL_DAYS)
+        print('  (gui ma may HWID toi %s de tao ban dung thu)' % API_BASE)
+
+    r = _post('/api/trial/start', {
+        'guid': parts[0], 'bios': parts[1], 'cpu': parts[2], 'vol': parts[3],
+        'app': APP_NAME, 'ver': CLIENT_VERSION,
+    }, timeout=HTTP_TIMEOUT, retries=1)
+
+    if not r.get('ok'):
+        code = str(r.get('code') or '')
+        if code == 'trial_expired':
+            return False, 'expired'
+        if code in ('trial_denied_device',):
+            return False, 'device'
+        if code in ('trial_limit',):
+            return False, 'used'
+        if code == 'trial_disabled':
+            return False, 'disabled'
+        return False, r.get('msg') or code or 'khong bat duoc dung thu'
+
+    key = str(r.get('key') or '').strip().upper()
+    if not key:
+        return False, 'server khong tra ma dung thu'
+
+    st = load_state()
+    st.update({
+        'key': key,
+        'hwid': compute_hwid(),
+        'expires_at': r.get('expires_at', 0),
+        'activated_at': r.get('activated_at', 0),
+        'plan': 'trial',
+        'is_trial': 1,
+        'trial_started': int(time.time()),
+        'grace_hours': r.get('grace_hours', TRIAL_GRACE_HOURS),
+        'last_ok': time.time(),
+        'mode': 'server',
+    })
+    if not save_state(st):
+        return False, 'khong ghi duoc file license'
+
+    if verbose:
+        _print_trial_banner(st)
+    return True, 'ok'
+
+
+_trial_next_check = {'at': 0.0}
+
+
+def trial_guard(verbose=True):
+    """Goi trong vong lap thuong tru: het han giua phien thi dung han.
+
+    Chi kiem toi da 1 lan / TRIAL_RECHECK_SEC. Ban tra phi luon True.
+    """
+    st = load_state()
+    if not is_trial(st):
+        return True
+
+    now = time.time()
+    exp = st.get('expires_at') or 0
+    if exp and now > exp:
+        if verbose:
+            _offer_buy()
+        return False
+
+    if now < _trial_next_check['at']:
+        return True
+    _trial_next_check['at'] = now + TRIAL_RECHECK_SEC
+
+    ok, msg = ensure_licensed(verbose=False)
+    if not ok:
+        if verbose:
+            print('  Khong xac minh duoc dung thu: %s' % msg)
+            _offer_buy()
+        return False
+    return True
 
 
 def ensure_licensed(verbose=True):
@@ -433,8 +654,12 @@ def ensure_licensed(verbose=True):
     if msg.startswith('code:'):
         code = msg[5:].split('|')[0]
 
-    # Server tu choi dut khoat -> khong cho chay, du con grace
-    if code in ('revoked', 'expired', 'hwid_mismatch', 'not_found'):
+    # Server tu choi dut khoat -> khong cho chay, du con grace.
+    # Phai co rate_limit/bad_request: truoc day hai ma nay roi vao nhanh
+    # grace -> tu bam het rate limit la duoc chay mu them 24 gio.
+    if code in ('revoked', 'expired', 'hwid_mismatch', 'not_found',
+                'trial_expired', 'trial_only', 'trial_denied_device',
+                'rate_limit', 'bad_request'):
         return False, msg.split('|', 1)[-1]
 
     # Loi mang / server -> dung grace neu con han cuc bo
@@ -929,7 +1154,8 @@ def list_sites():
 def parse_args(argv):
     o = {'restore': False, 'full': False, 'watch': False, 'once': False,
          'dump': False, 'list': False, 'help': False, 'status': False,
-         'deactivate': False, 'key': None}
+         'deactivate': False, 'key': None, 'trial': False, 'buy': False,
+         'rebind': None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -950,6 +1176,10 @@ def parse_args(argv):
             o['status'] = True
         elif a == '--deactivate':
             o['deactivate'] = True
+        elif a == '--trial':
+            o['trial'] = True
+        elif a == '--buy':
+            o['buy'] = True
         elif a in ('-h', '--help'):
             o['help'] = True
         elif a == '--key':
@@ -957,6 +1187,11 @@ def parse_args(argv):
             if i >= len(argv):
                 return None, '--key can gia tri'
             o['key'] = argv[i].strip()
+        elif a == '--rebind':
+            if i + 2 >= len(argv):
+                return None, '--rebind can <key> <token>'
+            o['rebind'] = (argv[i + 1].strip(), argv[i + 2].strip())
+            i += 2
         else:
             return None, 'tham so khong hop le: %s' % a
         i += 1
@@ -1090,12 +1325,19 @@ def mask_key(key):
 def show_status():
     st = load_state()
     print('Che do    : %s' % LICENSE_MODE)
+
     if not st.get('key'):
         print('Trang thai: CHUA KICH HOAT')
+        if TRIAL_ENABLED:
+            print('Dung thu  : con %d ngay, tu bat khi chay tool' % TRIAL_DAYS)
+        print('Mua key   : %s' % BUY_URL)
         return
 
+    trial = is_trial(st)
     key = (st.get('key') or '').upper()
+    print('Loai      : %s' % ('DUNG THU %d NGAY' % TRIAL_DAYS if trial else 'BAN QUYEN'))
     print('Key       : %s' % mask_key(key))
+
     hwid = compute_hwid()
     stored = st.get('hwid') or ''
     print('HWID may  : %s' % mask_key(hwid))
@@ -1118,15 +1360,30 @@ def show_status():
         print('Con lai   : %s' % ('%.1f ngay' % left if left > 0
                                   else 'DA HET HAN'))
 
-    left_g = _grace_left(st)
-    if left_g > 0:
-        print('Offline   : con %.1f gio' % (left_g / 3600.0))
+    if trial:
+        print('Offline   : KHONG (dung thu can mang moi lan chay)')
+        dl = _days_left(st) or 0
+        if dl <= 0:
+            print('Mua key   : %s' % BUY_URL)
+        elif dl <= TRIAL_WARN_DAYS:
+            print('Nhac nho  : con %.1f ngay, mua key tai %s' % (dl, BUY_URL))
     else:
-        print('Offline   : het (can mang)')
+        left_g = _grace_left(st)
+        if left_g > 0:
+            print('Offline   : con %.1f gio' % (left_g / 3600.0))
+        else:
+            print('Offline   : het (can mang)')
 
 
 def require_license(opts):
-    """Kiem tra license qua server. Con han -> im lang, khong hoi key."""
+    """Kiem tra license qua server. Con han -> im lang, khong hoi key.
+
+    Thu tu:
+      1. --key           -> kich hoat key tra phi
+      2. da co state     -> kiem han (trial hay paid)
+      3. chua co state   -> TU DONG bat dung thu 3 ngay
+      4. khong bat duoc  -> hoi key
+    """
     if opts.get('key'):
         ok, m = activate(opts['key'])
         print('  ' + m)
@@ -1138,19 +1395,50 @@ def require_license(opts):
             return False
         return True
 
-    ok, msg = ensure_licensed(verbose=True)
-    if ok:
-        return True                       # con han: im lang
-
-    # Het han / sai may / bi thu hoi / chua kich hoat -> cho nhap key moi
     st = load_state()
-    if msg == 'chua kich hoat' or not st.get('key'):
-        print('Chua kich hoat.')
-    elif 'het han' in msg:
-        print('Ma ban quyen da het han.')
-    else:
-        print('Khong dung duoc: %s' % msg)
 
+    # --- 3. Chua co gi -> dung thu -------------------------------------
+    if not st.get('key'):
+        if TRIAL_ENABLED:
+            ok, m = start_trial()
+            if ok:
+                return True
+            if m == 'expired':
+                print('May nay da dung het %d ngay dung thu.' % TRIAL_DAYS)
+                _offer_buy()
+            elif m == 'device':
+                print('May nay khong duoc dung thu (may ao hoac bi chan).')
+                _offer_buy()
+            elif m == 'used':
+                print('May / ket noi nay da dung het luot dung thu.')
+                _offer_buy()
+            elif m == 'disabled':
+                print('Chua kich hoat. Dung thu dang tam dong.')
+            else:
+                print('  khong bat duoc dung thu: %s' % m, file=sys.stderr)
+                print('  (kiem tra mang roi chay lai, hoac nhap key)')
+        else:
+            print('Chua kich hoat.')
+    else:
+        # --- 2. Co state -> kiem han -----------------------------------
+        ok, msg = ensure_licensed(verbose=True)
+        if ok:
+            if is_trial(load_state()):
+                _warn_trial(load_state())
+            return True
+
+        if is_trial(st):
+            print('Ban dung thu da het han.')
+            _offer_buy()
+        elif msg == 'chua kich hoat':
+            print('Chua kich hoat.')
+        elif 'het han' in msg:
+            print('Ma ban quyen da het han.')
+            _offer_buy()
+        else:
+            print('Khong dung duoc: %s' % msg)
+
+    # --- 4. Hoi key cho moi truong hop tren ---------------------------
     k = ask_key_dialog()
     if not k:
         print('Da huy.', file=sys.stderr)
@@ -1175,6 +1463,35 @@ def run():
     if opts['help']:
         print(__doc__)
         return 0
+
+    # --buy: mo trang mua hang (khong can admin)
+    if opts['buy']:
+        print(BUY_URL)
+        return 0 if open_buy_page() else 1
+
+    # --trial: bat dung thu roi thoat
+    if opts['trial']:
+        st0 = load_state()
+        if st0.get('key') and not is_trial(st0):
+            print('May nay da co license %s. Khong can dung thu.'
+                  % mask_key(st0.get('key')))
+            show_status()
+            return 0
+        ok, m = start_trial()
+        if not ok:
+            if m == 'expired':
+                print('May nay da dung het %d ngay dung thu.' % TRIAL_DAYS)
+            elif m == 'device':
+                print('May nay khong duoc dung thu (may ao hoac bi chan).')
+            elif m == 'used':
+                print('May / ket noi nay da dung het luot dung thu.')
+            else:
+                print('Khong bat duoc dung thu: %s' % m, file=sys.stderr)
+            _offer_buy()
+            return EXIT_NO_LICENSE
+        print('Dung thu san sang. Chay lai khong tham so de va game.')
+        return 0
+
     if opts['list']:
         list_sites()
         return 0

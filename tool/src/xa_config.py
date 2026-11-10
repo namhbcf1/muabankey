@@ -73,3 +73,27 @@ HTTP_TIMEOUT = 10
 EXIT_NOT_ADMIN = 5
 EXIT_NO_LICENSE = 3
 EXIT_ALREADY_RUNNING = 4
+EXIT_TRIAL_END = 6
+
+
+# ---------------------------------------------------------------------------
+# 7. DUNG THU 3 NGAY -- tu dong, gan theo HWID
+# ---------------------------------------------------------------------------
+# Bat/tat tinh nang dung thu. Khach chua co key -> tu dong bat trial.
+TRIAL_ENABLED = True
+
+# So ngay dung thu (server cung co cau hinh rieng, day chi de hien thi)
+TRIAL_DAYS = 3
+
+# Trial KHONG co offline grace: phai co mang moi lan chay.
+# Neu cho grace, chi can rut mang la 3 ngay thanh 4-5 ngay.
+TRIAL_GRACE_HOURS = 0
+
+# Nhac nho khi con <= bao nhieu ngay
+TRIAL_WARN_DAYS = 1
+
+# Khi dang chay thuong tru, kiem lai server moi bao nhieu giay
+TRIAL_RECHECK_SEC = 1800
+
+# Trang mua hang -- in ra khi het han
+BUY_URL = 'https://xienhl.com/#/product/license-xarena-thang'

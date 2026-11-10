@@ -15,6 +15,7 @@ import * as admin from './routes/admin.js';
 import * as ai from './routes/ai.js';
 import * as license from './routes/license.js';
 import * as licenseServer from './routes/license-server.js';
+import * as trial from './routes/trial.js';
 import * as installer from './routes/installer.js';
 
 const r = new Router();
@@ -60,6 +61,10 @@ r.post('/api/activate', licenseServer.apiActivate);
 r.post('/api/check', licenseServer.apiCheck);
 r.post('/api/rebind', licenseServer.apiRebind);
 r.get('/api/license/health', (env) => licenseServer.apiHealth(env));
+
+/* ---------- Dùng thử 3 ngày ---------- */
+r.post('/api/trial/start', trial.apiTrialStart);
+r.get('/api/trial/status', trial.apiTrialStatus);
 
 /* ---------- License quản lý ---------- */
 r.get('/api/licenses/mine', license.myLicenses);

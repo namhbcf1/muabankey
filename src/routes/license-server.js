@@ -20,6 +20,8 @@ const MESSAGES = {
   hwid_mismatch: 'Mã đã dùng trên máy khác',
   reset: 'Mã đã bị reset, cần kích hoạt lại',
   rate_limit: 'Quá nhiều lần thử, thử lại sau',
+  trial_expired: 'Đã hết hạn dùng thử',
+  trial_only: 'Đây là mã dùng thử',
 };
 
 const GRACE_HOURS = 24;
@@ -80,13 +82,15 @@ function judge(lic, hwid, now) {
 }
 
 function publicLic(lic, extra = {}) {
+  const isTrial = lic && lic.plan === 'trial';
   return {
     ok: true,
     expires_at: lic.expires_at,
     activated_at: lic.activated_at,
     plan: lic.plan,
     forever: !lic.expires_at,
-    grace_hours: GRACE_HOURS,
+    // Trial KHONG co offline grace (rut mang = khong chay duoc, 3 ngay khong thanh 4)
+    grace_hours: isTrial ? 0 : GRACE_HOURS,
     ...extra,
   };
 }
@@ -150,6 +154,17 @@ export async function apiActivate(env, request) {
 
   const lic = await getLicense(env, key);
   const now = nowSec();
+
+  // Trial key KHÔNG kích hoạt được qua /api/activate (chỉ qua /api/trial/start).
+  // Nếu cho phép, 1 key trial share ra 100 máy đều activate được.
+  if (lic && lic.plan === 'trial') {
+    await logEvent(env, key, hwid, 'deny', 'trial key via activate', ip);
+    return json({
+      ok: false, code: 'trial_only',
+      msg: 'Đây là mã dùng thử, không kích hoạt được theo cách này',
+    }, 403);
+  }
+
   const v = judge(lic, hwid, now);
 
   if (!v.ok) {
