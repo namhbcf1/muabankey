@@ -137,13 +137,33 @@ REG_KEY = str(_c('REG_KEY', r'Software\Microsoft\Windows\CurrentVersion\XASuppor
 
 # --- DUNG THU ---------------------------------------------------------------
 TRIAL_ENABLED = str(_c('TRIAL_ENABLED', '1')) not in ('0', 'False', 'false', '')
-TRIAL_DAYS = int(_c('TRIAL_DAYS', 3))
+TRIAL_REQUIRE_ACCOUNT = str(_c('TRIAL_REQUIRE_ACCOUNT', '1')) not in ('0', 'False', 'false', '')
+
+# Goi 1 gio
+TRIAL_1H_MINUTES = int(_c('TRIAL_1H_MINUTES', 60))
+TRIAL_1H_LIMIT = int(_c('TRIAL_1H_LIMIT', 10))
+TRIAL_1H_RECHECK = int(_c('TRIAL_1H_RECHECK', 120))
+
+# Goi 3 ngay
+TRIAL_3D_DAYS = int(_c('TRIAL_3D_DAYS', 3))
+TRIAL_3D_LIMIT = int(_c('TRIAL_3D_LIMIT', 10))
+TRIAL_3D_RECHECK = int(_c('TRIAL_3D_RECHECK', 900))
+
+TRIAL_DEFAULT_KIND = str(_c('TRIAL_DEFAULT_KIND', '3d'))
+TRIAL_WARN_SEC_1H = int(_c('TRIAL_WARN_SEC_1H', 600))
+TRIAL_WARN_DAYS_3D = float(_c('TRIAL_WARN_DAYS_3D', 1))
+
+# Tuong thich nguoc (code cu con tham chieu)
+TRIAL_DAYS = TRIAL_3D_DAYS
+TRIAL_WARN_DAYS = TRIAL_WARN_DAYS_3D
+
 TRIAL_GRACE_HOURS = int(_c('TRIAL_GRACE_HOURS', 0))
-TRIAL_WARN_DAYS = float(_c('TRIAL_WARN_DAYS', 1))
-TRIAL_RECHECK_SEC = int(_c('TRIAL_RECHECK_SEC', 1800))
+TRIAL_RECHECK_SEC = int(_c('TRIAL_RECHECK_SEC', 300))
 BUY_URL = str(_c('BUY_URL', 'https://xienhl.com/#/product/license-xarena-thang'))
+LOGIN_URL = str(_c('LOGIN_URL', 'https://xienhl.com/#/login'))
 EXIT_TRIAL_END = int(_c('EXIT_TRIAL_END', 6))
-CLIENT_VERSION = '1.2.0'
+EXIT_TRIAL_QUOTA = int(_c('EXIT_TRIAL_QUOTA', 7))
+CLIENT_VERSION = '1.3.0'
 # Bat buoc online: khong cho chay offline (grace = 0)
 REQUIRE_ONLINE = str(_c('REQUIRE_ONLINE', '1')) not in ('0', 'False', 'false', '')
 

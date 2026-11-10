@@ -1,5 +1,5 @@
 /** Trang khách quản lý license XArena đã mua. */
-import { api, esc, fmtDate, timeAgo, toast, navigate, loadingBlock, copyText } from '../lib.js';
+import { api, esc, fmtDate, timeAgo, toast, navigate, loadingBlock, copyText, openModal } from '../lib.js';
 import { state } from '../state.js';
 
 const STATUS = {
@@ -185,14 +185,61 @@ export async function mountLicenses(root) {
   // Đổi máy
   host.querySelectorAll('[data-rebind]').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm(`Cấp quyền đổi máy cho key ${b.dataset.rebind}?\n\nSau đó chạy lệnh cài đặt trên máy mới.`)) return;
+      const key = b.dataset.rebind;
+      if (!confirm(`Đổi máy cho key ${key}?\n\nMã đổi máy chỉ dùng được 1 lần, hết hạn sau 30 phút.`)) return;
       b.disabled = true;
       try {
-        const r = await api(`/api/licenses/${encodeURIComponent(b.dataset.rebind)}/rebind`, { method: 'POST' });
-        toast(`Đã cấp quyền đổi máy (còn ${r.rebindsLeft} lần)`, 'success', 6000);
-        await mountLicenses(root);
+        const r = await api(`/api/licenses/${encodeURIComponent(key)}/rebind`, { method: 'POST' });
+
+        // TRƯỚC ĐÂY chỉ hiện toast "Đã cấp quyền" -> token sinh ra rồi mất.
+        // Khách không có cách nào dùng được token => đổi máy không bao giờ xong.
+        const token = r.token || '';
+        const cmd = `xa_nofog_pro.exe --rebind ${key} ${token}`;
+
+        openModal(`
+          <div class="modal-title">✅ Mã đổi máy đã tạo</div>
+          <div class="modal-sub">
+            Chạy lệnh dưới đây <strong>trên MÁY MỚI</strong> (máy bạn muốn chuyển sang).
+          </div>
+
+          <div class="field">
+            <label class="label">Lệnh đổi máy</label>
+            <div class="mono" id="rb-cmd" style="font-size:11.5px;line-height:1.7;word-break:break-all;
+              background:rgba(0,0,0,.42);padding:12px;border-radius:9px;border:1px solid rgba(255,255,255,.07)">
+              ${esc(cmd)}
+            </div>
+          </div>
+
+          <div class="alert alert-warn" style="margin-bottom:14px">
+            <span class="ico">⏳</span>
+            <span>Mã chỉ dùng được <strong>1 lần</strong>, hết hạn sau <strong>30 phút</strong>.
+            Không chia sẻ mã này cho ai.</span>
+          </div>
+
+          <div class="alert alert-info" style="margin-bottom:16px">
+            <span class="ico">💡</span>
+            <span>Chưa cài tool trên máy mới? Tải file cài rồi chạy lệnh trên ở thư mục cài đặt,
+            hoặc dùng <code class="mono">👤 Đổi máy</code> trong menu tool.</span>
+          </div>
+
+          <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
+            <button class="btn btn-ghost" data-close>Đóng</button>
+            <button class="btn btn-primary" data-copycmd>📋 Copy lệnh</button>
+          </div>
+        `, {
+          onMount(overlay, close) {
+            overlay.querySelector('[data-close]').onclick = close;
+            overlay.querySelector('[data-copycmd]').onclick = async () => {
+              const okc = await copyText(cmd);
+              toast(okc ? 'Đã copy lệnh đổi máy' : 'Không copy được',
+                okc ? 'success' : 'error');
+            };
+          },
+        });
+
+        toast(`Đã tạo mã đổi máy (còn ${r.rebindsLeft} lượt)`, 'success', 5000);
       } catch (e) {
-        toast(e.message, 'error', 6000);
+        toast(e.message, 'error', 7000);
         b.disabled = false;
       }
     };

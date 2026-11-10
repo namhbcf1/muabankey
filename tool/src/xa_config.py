@@ -77,26 +77,43 @@ EXIT_TRIAL_END = 6
 
 
 # ---------------------------------------------------------------------------
-# 7. DUNG THU 3 NGAY -- tu dong, gan theo HWID
+# 7. DUNG THU -- 2 loai: 1 GIO va 3 NGAY
 # ---------------------------------------------------------------------------
-# Bat/tat tinh nang dung thu. Khach chua co key -> tu dong bat trial.
+# Bat/tat tinh nang dung thu
 TRIAL_ENABLED = True
 
-# So ngay dung thu (server cung co cau hinh rieng, day chi de hien thi)
-TRIAL_DAYS = 3
+# BAT BUOC dang nhap: server tra 401 login_required neu chua dang nhap
+TRIAL_REQUIRE_ACCOUNT = True
 
-# Trial KHONG co offline grace: phai co mang moi lan chay.
-# Neu cho grace, chi can rut mang la 3 ngay thanh 4-5 ngay.
+# Goi 1 gio
+TRIAL_1H_MINUTES = 60          # do dai (phut)
+TRIAL_1H_LIMIT = 10            # so luot / tai khoan
+TRIAL_1H_RECHECK = 120         # kiem server moi 2 phut
+
+# Goi 3 ngay
+TRIAL_3D_DAYS = 3              # do dai (ngay)
+TRIAL_3D_LIMIT = 10            # so luot / tai khoan
+TRIAL_3D_RECHECK = 900         # kiem server moi 15 phut
+
+# Goi mac dinh khi khach chay khong tham so
+TRIAL_DEFAULT_KIND = '3d'
+
+# Canh bao khi con bao nhieu giay (1 gio) / ngay (3 ngay)
+TRIAL_WARN_SEC_1H = 600        # con 10 phut
+TRIAL_WARN_DAYS_3D = 1         # con 1 ngay
+
+# Trial KHONG co offline grace: phai co mang moi lan chay
 TRIAL_GRACE_HOURS = 0
 
-# Nhac nho khi con <= bao nhieu ngay
-TRIAL_WARN_DAYS = 1
-
 # Khi dang chay thuong tru, kiem lai server moi bao nhieu giay
-TRIAL_RECHECK_SEC = 1800
+# (server co the tra recheck rieng, day la mac dinh)
+TRIAL_RECHECK_SEC = 300
 
-# Trang mua hang -- in ra khi het han
+# Trang mua hang -- in ra khi het han / het luot
 BUY_URL = 'https://xienhl.com/#/product/license-xarena-thang'
+
+# Trang dang nhap -- in ra khi chua dang nhap
+LOGIN_URL = 'https://xienhl.com/#/login'
 
 
 # ---------------------------------------------------------------------------

@@ -94,10 +94,23 @@ export async function setRevoked(env, key, revoked) {
 }
 
 /** Reset máy: xoá HWID + mốc kích hoạt để key bind lại từ đầu. */
-export async function resetHwid(env, key) {
+export /**
+ * Admin reset HWID để khách đổi máy.
+ *
+ * QUAN TRỌNG: đánh dấu reset_pending = 1.
+ * Trước đây xoá activated_at -> hệ thống tưởng key chưa từng bind -> bind
+ * bất kỳ ai (máy cũ chạy nền thắng máy mới), và còn tặng thêm hạn dùng.
+ * Nay reset_pending=1 buộc phải có rebind token mới bind được.
+ *
+ * activated_at GIỮ NGUYÊN để không tính lại hạn.
+ */
+async function resetHwid(env, key) {
+  const k = normKey(key);
+  const now = Math.floor(Date.now() / 1000);
   await env.DB.prepare(
-    'UPDATE licenses SET hwid = NULL, activated_at = NULL, rebinds = 0 WHERE key = ?'
-  ).bind(normKey(key)).run();
+    `UPDATE licenses SET hwid = NULL, reset_pending = 1, reset_at = ?, rebinds = 0
+     WHERE key = ?`
+  ).bind(now, k).run();
 }
 
 /** Gia hạn thêm số ngày (bỏ qua key vĩnh viễn). */
@@ -253,9 +266,12 @@ export async function rebindMyLicense(env, request, key) {
   const { rateLimit, clientIp } = await import('../lib/ratelimit.js');
   const { randomHex } = await import('../lib/crypto.js');
   const user = await requireUser(env, request);
-  await rateLimit(env, `rebind:${user.id}:${clientIp(request)}`, 5, 3600);
 
   const k = normKey(key);
+
+  // ===== THỨ TỰ QUAN TRỌNG: kiểm quyền + quota TRƯỚC rate limit =====
+  // Trước đây rateLimit(5/giờ) đứng trước -> khách bấm vài lần là bị 429
+  // "thao tác quá nhanh" thay vì thấy lý do thật (hết lượt / không sở hữu).
   const owns = await env.DB.prepare(
     'SELECT 1 AS x FROM license_issues WHERE user_id = ? AND license_key = ? LIMIT 1'
   ).bind(user.id, k).first();
@@ -264,10 +280,20 @@ export async function rebindMyLicense(env, request, key) {
   const lic = await readLicense(env, k);
   if (!lic) throw new ApiError(404, 'License không tồn tại', 'NOT_FOUND');
   if (lic.revoked) throw new ApiError(403, 'License đã bị thu hồi', 'REVOKED');
-  if ((lic.rebinds || 0) >= (lic.max_rebind || 0)) {
+
+  // Admin reset -> luôn cho lấy token (đó chính là mục đích reset)
+  const isReset = !!lic.reset_pending;
+  const maxRebind = lic.max_rebind || 0;
+  const used = lic.rebinds || 0;
+
+  if (!isReset && used >= maxRebind) {
     throw new ApiError(403,
-      `Đã hết số lần đổi máy (${lic.max_rebind}). Liên hệ hỗ trợ nếu cần.`, 'REBIND_LIMIT');
+      `Đã hết ${maxRebind} lượt đổi máy. Liên hệ hỗ trợ nếu cần đổi thêm.`,
+      'REBIND_LIMIT');
   }
+
+  // Rate limit đặt SAU khi đã chắc chắn được phép -> nới lên 20/giờ
+  await rateLimit(env, `rebind:${user.id}:${clientIp(request)}`, 20, 3600);
 
   // Sinh token dùng 1 lần — client EXE gửi kèm khi gọi /api/rebind
   const token = randomHex(24);
@@ -354,6 +380,38 @@ export async function adminIssueLicenses(env, request) {
   const prefix = str(body.prefix ?? 'AOE1', 'prefix', { min: 1, max: 8 });
   const note = str(body.note, 'note', { required: false, max: 200 }) || `Tạo bởi ${admin.email}`;
 
-  const keys = await issueLicenses(env, { count, prefix, days, plan: prefix.toLowerCase(), note });
-  return ok({ keys, count: keys.length, days });
+  // userId: gán key cho khách cụ thể (key tặng / bù lỗi).
+  // Trước đây không ghi license_issues -> khách không thấy key trong
+  // "License của tôi", không có nút Đổi máy, không lấy được lệnh cài.
+  const userId = str(body.userId, 'userId', { required: false, max: 64 }) || null;
+  const maxRebind = int(body.maxRebind ?? 1, 'maxRebind', { min: 0, max: 99 });
+
+  const keys = await issueLicenses(env, {
+    count, prefix, days, plan: prefix.toLowerCase(), note, maxRebind,
+  });
+
+  // Ghi license_issues để khách thấy trong trang cá nhân
+  let assigned = 0;
+  if (userId && keys.length) {
+    const target = await env.DB.prepare('SELECT id FROM users WHERE id = ?')
+      .bind(userId).first();
+    if (!target) {
+      return ok({ keys, count: keys.length, days, warning: 'userId không tồn tại' }, 207);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const expAt = days === 0 ? 0 : now + (days + 1) * 86400;
+    for (const k of keys) {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO license_issues
+             (id, order_id, user_id, product_id, license_key, term_days, expires_at, created_at)
+           VALUES (?,?,?,?,?,?,?,?)`
+        ).bind(crypto.randomUUID(), 'ADMIN-GIFT', userId, 'p-lic-month',
+          k, days, expAt, now).run();
+        assigned++;
+      } catch { /* bảng có thể thiếu cột — bỏ qua */ }
+    }
+  }
+
+  return ok({ keys, count: keys.length, days, assigned, userId });
 }

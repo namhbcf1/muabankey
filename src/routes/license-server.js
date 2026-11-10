@@ -22,6 +22,10 @@ const MESSAGES = {
   rate_limit: 'Quá nhiều lần thử, thử lại sau',
   trial_expired: 'Đã hết hạn dùng thử',
   trial_only: 'Đây là mã dùng thử',
+  rebind_token_required: 'Cần mã đổi máy — lấy trên web tại mục License của tôi',
+  invalid_token: 'Mã đổi máy không đúng',
+  token_used: 'Mã đổi máy đã được dùng',
+  token_expired: 'Mã đổi máy đã hết hạn',
 };
 
 // Bắt buộc online: không có offline grace cho bất kỳ key nào.
@@ -118,9 +122,59 @@ function ipOf(request) {
 
 /**
  * Gắn máy cho license lần đầu + bắt đầu tính hạn từ BÂY GIỜ.
- * Tách riêng để cả activate và check dùng chung (không đọc lại body).
+ *
+ * VẤN ĐỀ ĐÃ SỬA: trước đây hàm này bind bất kỳ ai khi `hwid IS NULL`.
+ * Admin reset HWID -> cửa mở cho TẤT CẢ. Máy cũ (tool chạy nền, /api/check
+ * mỗi 30 phút) sẽ thắng máy mới -> khách đổi máy không bao giờ được.
+ *
+ * NAY: nếu license đã từng được bind (activated_at IS NOT NULL) thì
+ * "hwid = NULL" nghĩa là ĐANG CHỜ ĐỔI MÁY -> bắt buộc phải có
+ * rebind_token. Máy cũ không có token -> bị chặn.
  */
-async function bindFirstTime(env, lic, key, hwid, ip, now) {
+async function bindFirstTime(env, lic, key, hwid, ip, now, token) {
+  // reset_pending=1: admin vừa reset -> BẮT BUỘC có token.
+  // activated_at != null: key đã từng dùng -> cũng cần token (đổi máy).
+  const needToken = !!lic.activated_at || !!lic.reset_pending;
+
+  if (needToken) {
+    if (!token) {
+      await logEvent(env, key, hwid, 'deny', 'rebind needs token', ip);
+      return { ok: false, code: 'rebind_token_required' };
+    }
+    const tokenHash = await sha256hex(token);
+    const row = await env.DB.prepare(
+      'SELECT * FROM rebind_tokens WHERE token_hash = ? LIMIT 1'
+    ).bind(tokenHash).first();
+    if (!row) {
+      await logEvent(env, key, hwid, 'deny', 'invalid rebind token', ip);
+      return { ok: false, code: 'invalid_token' };
+    }
+    if (row.used) return { ok: false, code: 'token_used' };
+    if (row.expires_at < now) return { ok: false, code: 'token_expired' };
+    if (row.key !== key) return { ok: false, code: 'invalid_token' };
+
+    await env.DB.prepare('UPDATE rebind_tokens SET used = 1 WHERE token_hash = ?')
+      .bind(tokenHash).run();
+
+    // Đổi máy: GIỮ NGUYÊN activated_at + expires_at, chỉ đổi HWID
+    await env.DB.prepare(
+      `UPDATE licenses SET hwid = ?, last_seen = ?, last_ip = ?,
+              reset_pending = 0, reset_at = NULL,
+              rebinds = COALESCE(rebinds, 0) + 1
+       WHERE key = ?`
+    ).bind(hwid, now, ip, key).run();
+
+    lic.hwid = hwid;
+    lic.reset_pending = 0;
+    await logEvent(env, key, hwid, 'rebind', 'hwid changed (token)', ip);
+    return {
+      ok: true,
+      rebind: true,
+      days: lic.expires_at > 0 ? Math.max(0, Math.round((lic.expires_at - now) / 86400)) : 0,
+    };
+  }
+
+  // Lần kích hoạt ĐẦU TIÊN: tính hạn từ bây giờ
   const days = lic.expires_at > 0
     ? Math.max(1, Math.round((lic.expires_at - lic.created_at) / 86400))
     : 0;
@@ -134,7 +188,7 @@ async function bindFirstTime(env, lic, key, hwid, ip, now) {
   lic.expires_at = exp;
   lic.activated_at = now;
   lic.hwid = hwid;
-  return days;
+  return { ok: true, days, rebind: false };
 }
 
 /* ------------------------------ handlers ------------------------------ */
@@ -184,7 +238,16 @@ export async function apiActivate(env, request) {
   }
 
   if (v.firstBind) {
-    await bindFirstTime(env, lic, key, hwid, ip, now);
+    // Truyền token để bindFirstTime biết đây là đổi máy hay kích hoạt lần đầu
+    const br = await bindFirstTime(env, lic, key, hwid, ip, now, b.token);
+    if (!br.ok) {
+      await logAttempt(env, ip, false);
+      return json({
+        ok: false, code: br.code,
+        msg: MESSAGES[br.code] || 'Cần mã đổi máy hợp lệ',
+        now,
+      }, 403);
+    }
   } else {
     await env.DB.prepare(
       'UPDATE licenses SET last_seen = ?, last_ip = ? WHERE key = ?'
@@ -233,9 +296,18 @@ export async function apiCheck(env, request) {
   // Bản cũ gọi lại apiActivate ở đây -> body đã bị đọc -> 400.
   // Nay xử lý bind trực tiếp.
   if (v.firstBind) {
-    await bindFirstTime(env, lic, key, hwid, ip, now);
+    // license từng bị reset -> cần token đổi máy, tránh máy cũ tự bind lại
+    const br = await bindFirstTime(env, lic, key, hwid, ip, now, b.token);
+    if (!br.ok) {
+      await logAttempt(env, ip, false);
+      return json({
+        ok: false, code: br.code,
+        msg: MESSAGES[br.code] || 'Cần mã đổi máy hợp lệ',
+        now,
+      }, 403);
+    }
     await logAttempt(env, ip, true);
-    return json(publicLic(lic, { first_bind: true }));
+    return json(publicLic(lic, { first_bind: true, rebound: !!br.rebind }));
   }
 
   await env.DB.prepare(
