@@ -564,12 +564,10 @@ Good 'Da tao thu muc.'
 
 $needDownload = $true
 if (Test-Path -LiteralPath $Exe) {
-  /*
-   * KHONG duoc chi so kich thuoc. Truoc day chi can dung $WantSize la
-   * "bo qua tai" -> dat mot binary tuy y dung 13.2 MB vao duong dan cai dat
-   * la duoc chay bang quyen Administrator ma khong bi phat hien.
-   * Luon bam lai SHA-256; certutil tren 13 MB chi mat ~30ms.
-   */
+  # KHONG duoc chi so kich thuoc. Truoc day chi can dung $WantSize la
+  # "bo qua tai" -> dat mot binary tuy y dung 13.2 MB vao duong dan cai dat
+  # la duoc chay bang quyen Administrator ma khong bi phat hien.
+  # Luon bam lai SHA-256; certutil tren 13 MB chi mat ~30ms.
   $cacheSha = ''
   try {
     $cacheSha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256 -ErrorAction Stop).Hash

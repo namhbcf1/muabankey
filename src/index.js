@@ -157,7 +157,9 @@ r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
 
 /* Xác nhận thanh toán TAY khi webhook trượt — đường cứu để không treo đơn. */
 r.post('/api/admin/orders/:id/confirm-payment', (env, req, p) => payments.adminConfirmPayment(env, req, p.id));
-r.get('/api/admin/payments', payments.adminListPayments);
+
+/* Mã hoá key đã giao còn plaintext — chạy một lần sau khi bật KEY_ENC. */
+r.post('/api/admin/migrate-delivered-keys', orders.adminMigrateDeliveredKeys);
 
 r.get('/api/admin/licenses', license.adminLicenses);
 r.post('/api/admin/licenses', license.adminIssueLicenses);

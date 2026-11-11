@@ -199,7 +199,7 @@ export async function deliverOrderItems(env, order) {
     }
 
     // Dòng đã giao lần trước -> không giao lại
-    const already = safeParse(item.delivered_keys);
+    const already = await safeParse(item.delivered_keys, env);
     if (already.length > 0) {
       if (product.delivery_type === 'manual') pendingManual = true;
       planned.push({ item, product, qty: item.quantity, kind: 'already', keys: already });
@@ -331,7 +331,7 @@ export async function deliverOrderItems(env, order) {
       }
 
       await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
-        .bind(JSON.stringify(secrets), item.id).run();
+        .bind(await sealKeys(env, secrets), item.id).run();
       made.items.push(item.id);
 
       await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')
@@ -460,7 +460,7 @@ export async function listOrders(env, request) {
       deliveryType: i.delivery_type,
       manual: i.delivery_type === 'manual',
       license: i.delivery_type === 'license',
-      keys: safeParse(i.delivered_keys),
+      keys: await safeParse(i.delivered_keys, env),
     });
   }
 
@@ -538,7 +538,11 @@ export async function getOrder(env, request, orderId) {
       total: o.total,
       createdAt: o.created_at,
       paidAt: o.paid_at,
-      items: (items || []).map((i) => ({
+      /*
+       * `safeParse` là async (phải giải mã AES trước khi parse), nên dùng
+       * Promise.all thay `.map` đồng bộ — nếu không sẽ trả về Promise object.
+       */
+      items: await Promise.all((items || []).map(async (i) => ({
         productId: i.product_id,
         name: i.product_name,
         unitPrice: i.unit_price,
@@ -547,16 +551,44 @@ export async function getOrder(env, request, orderId) {
         deliveryType: i.delivery_type,
         manual: i.delivery_type === 'manual',
         license: i.delivery_type === 'license',
-        keys: keysVisible ? safeParse(i.delivered_keys) : [],
-      })),
+        keys: keysVisible ? await safeParse(i.delivered_keys, env) : [],
+      }))),
     },
   });
 }
 
-function safeParse(s) {
-  if (!s) return [];
+/**
+ * Mã hoá mảng key trước khi ghi vào `order_items.delivered_keys`.
+ *
+ * VÌ SAO: key khách đã mua trước đây lưu plaintext dạng JSON
+ * (`["AOE1-LSR4-R869-Z77C"]`). Ai đọc được DB là có toàn bộ key đã bán —
+ * đúng loại dữ liệu không được để lộ. Nay bọc AES-256-GCM qua KEY_ENC.
+ *
+ * Định dạng lưu: chuỗi có tiền tố `enc1:` chứa base64(iv+ct+tag) của JSON.
+ * Giá trị không có tiền tố được coi là dữ liệu cũ và đọc thẳng — nhờ vậy
+ * không phải migrate một lần toàn bộ bảng.
+ */
+async function sealKeys(env, keys) {
+  const json = JSON.stringify(Array.isArray(keys) ? keys : []);
+  const { sealSecret } = await import('../lib/secrets.js');
+  return sealSecret(env, json);
+}
+
+async function safeParse(stored, env) {
+  if (!stored) return [];
+  let raw = stored;
+  // Dữ liệu mã hoá: giải mã trước rồi mới parse.
+  if (typeof stored === 'string' && stored.startsWith('enc1:')) {
+    if (!env) return [];
+    try {
+      const { openSecret } = await import('../lib/secrets.js');
+      raw = await openSecret(env, stored);
+    } catch {
+      return [];
+    }
+  }
   try {
-    const v = JSON.parse(s);
+    const v = JSON.parse(raw);
     return Array.isArray(v) ? v : [];
   } catch {
     return [];
@@ -787,4 +819,63 @@ export async function adminRefund(env, request, orderId) {
 
   await audit(env, admin.id, 'order.refund', orderId, { total: o.total, revoked });
   return ok({ id: orderId, revoked });
+}
+
+/**
+ * POST /api/admin/migrate-delivered-keys — mã hoá key đã giao còn plaintext.
+ *
+ * Chạy MỘT LẦN sau khi bật KEY_ENC. Idempotent: dòng đã mã hoá (tiền tố
+ * `enc1:`) bị bỏ qua, nên gọi lại nhiều lần không hỏng dữ liệu.
+ *
+ * Phải chạy TRONG Worker vì KEY_ENC là secret chỉ Worker đọc được.
+ * Chỉ admin thật.
+ */
+export async function adminMigrateDeliveredKeys(env, request) {
+  const { requireAdminStrict } = await import('../lib/auth.js');
+  const admin = await requireAdminStrict(env, request);
+  const body = await readJson(request).catch(() => ({}));
+  if (body.confirm !== true) {
+    throw new ApiError(
+      400,
+      'Gửi {"confirm":true} để xác nhận mã hoá toàn bộ key đã giao',
+      'CONFIRM_REQUIRED',
+    );
+  }
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, delivered_keys FROM order_items
+      WHERE delivered_keys IS NOT NULL AND delivered_keys <> '[]'
+        AND delivered_keys NOT LIKE 'enc1:%'
+      LIMIT 500`
+  ).all();
+
+  let done = 0;
+  let skipped = 0;
+  for (const row of results || []) {
+    try {
+      const arr = JSON.parse(row.delivered_keys);
+      if (!Array.isArray(arr)) { skipped++; continue; }
+      await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
+        .bind(await sealKeys(env, arr), row.id).run();
+      done++;
+    } catch {
+      // Dòng hỏng định dạng: để nguyên, không làm mất dữ liệu.
+      skipped++;
+    }
+  }
+
+  const left = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM order_items
+      WHERE delivered_keys IS NOT NULL AND delivered_keys <> '[]'
+        AND delivered_keys NOT LIKE 'enc1:%'`
+  ).first();
+
+  await audit(env, admin.id, 'security.migrate_keys', 'order_items', { done, skipped });
+
+  return ok({
+    encrypted: done,
+    skipped,
+    remaining: left?.n ?? null,
+    note: (left?.n ?? 0) > 0 ? 'Còn dòng chưa mã hoá — gọi lại để xử lý tiếp' : 'Hoàn tất',
+  });
 }
