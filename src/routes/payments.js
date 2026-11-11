@@ -488,6 +488,17 @@ export async function confirmOrderPaid(env, {
 
   const paid = Math.floor(Number(amount) || expected);
 
+  // CỘNG DỒN: các lần chuyển trước đó cho cùng đơn.
+  // Khách có thể chuyển thiếu rồi chuyển bù (90k + 90k = 180k).
+  // Nếu chỉ so từng lần thì không bao giờ giao dù đã đủ tiền.
+  const prev = await env.DB.prepare(
+    `SELECT COALESCE(SUM(amount),0) AS s FROM payments
+     WHERE order_id = ? AND state IN ('matched','wrong_amount')`
+  ).bind(order.id).first();
+  const prevPaid = Math.floor(Number(prev?.s) || 0);
+  const totalPaid = prevPaid + paid;
+
+
   const state = paid >= expected ? 'matched'
 
     : paid > 0 ? 'wrong_amount' : 'matched';
@@ -530,7 +541,7 @@ export async function confirmOrderPaid(env, {
 
   // Thiếu tiền -> KHÔNG giao, chờ admin quyết
 
-  if (paid < expected) {
+  if (totalPaid < expected) {
 
     return {
 
@@ -542,7 +553,7 @@ export async function confirmOrderPaid(env, {
 
       paid, expected,
 
-      missing: expected - paid,
+      missing: expected - totalPaid,
 
     };
 
@@ -575,9 +586,9 @@ export async function confirmOrderPaid(env, {
 
   return await deliverAndFinish(env, fresh, {
 
-    amount: paid, source, adminId, now,
+    amount: totalPaid, source, adminId, now,
 
-    excess: paid > expected ? paid - expected : 0,
+    excess: totalPaid > expected ? totalPaid - expected : 0,
 
   });
 
