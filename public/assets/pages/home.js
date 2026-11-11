@@ -64,7 +64,7 @@ export function renderHome() {
     <div class="container hero-inner">
       <div class="hero-pill">
         <span class="pulse"></span>
-        Dùng thử miễn phí · 1 giờ hoặc 3 ngày · Không cần thẻ
+        Dùng thử miễn phí · 1 giờ hoặc 3 ngày · Không cần đăng ký
       </div>
       <h1>Bản quyền số chính hãng,<br>giao key trong 30 giây</h1>
       <p class="hero-sub">
@@ -138,8 +138,7 @@ export function renderHome() {
 
       <div class="alert alert-info" style="margin-top:16px">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Cần <strong>tài khoản</strong> để dùng thử (miễn phí, chỉ tài khoản + mật khẩu).
-        Tool tự bật dùng thử khi chạy lần đầu, không nhập gì thêm.</span>
+        <span>Không cần đăng ký, không nhập gì. Bấm nút → copy 1 dòng lệnh → dán vào CMD → Enter.</span>
       </div>
     </div>
   </section>
@@ -216,134 +215,135 @@ export function renderHome() {
 }
 
 /**
- * Bắt đầu dùng thử: gọi API thật, rồi hướng dẫn tải tool.
- *
- * kind: '1h' | '3d'
- * onDone: callback reload quota sau khi xong
+ * Bắt đầu dùng thử — KHÔNG đăng nhập, KHÔNG nhập gì.
+ * Web gọi /api/trial/command, trả 1 dòng lệnh CMD cho khách copy.
  */
 async function startTrialFlow(kind, onDone) {
   const label = kind === '1h' ? '1 giờ' : '3 ngày';
 
-  // Chưa đăng nhập -> chuyển sang đăng nhập rồi quay lại
-  if (!state.user) {
-    openModal(`
-      <div class="modal-title">Cần tài khoản để dùng thử</div>
-      <div class="modal-sub">
-        Miễn phí, chỉ cần tài khoản + mật khẩu. Không cần email, không cần thẻ.
-      </div>
-      <div class="alert alert-info" style="margin-bottom:18px">
-        <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Mỗi tài khoản được <strong>10 lượt dùng thử ${label}</strong>.</span>
-      </div>
-      <div class="flex gap-1" style="justify-content:space-between;flex-wrap:wrap">
-        <button class="btn btn-ghost" data-close>Để sau</button>
-        <button class="btn btn-primary" data-reg>Đăng ký ngay</button>
-      </div>
-    `, {
-      onMount(overlay, close) {
-        overlay.querySelector('[data-close]').onclick = close;
-        overlay.querySelector('[data-reg]').onclick = () => {
-          close();
-          navigate('/register?redirect=/');
-        };
-      },
-    });
-    return;
-  }
+  // Xoá mọi modal đang mở trước khi hiện modal mới.
+  document.querySelectorAll('.modal-overlay').forEach((el) => el.remove());
 
-  // Đã đăng nhập -> gọi API
+  let closeLoading = null;
+  openModal(`
+    <div class="modal-title">Đang chuẩn bị dùng thử ${label}...</div>
+    <div class="modal-sub">Vui lòng đợi vài giây</div>
+  `, { onMount(overlay, close) { closeLoading = close; } });
+
   try {
-    const data = await api('/api/trial/start', {
+    const data = await api('/api/trial/command', {
       method: 'POST',
-      body: { kind, app: 'XArena No Fog', ver: '1.3.0' },
+      body: { kind },
     });
-
-    const key = data.key;
-    const left = data.left;
-    const quota = data.quota;
-
-    openModal(`
-      <div class="modal-title" style="display:flex;align-items:center;gap:8px">
-        ${icon('checkCircle', { size: 17 })} Đã bật dùng thử ${label}
-      </div>
-      <div class="modal-sub">
-        Còn <strong>${left}/${quota}</strong> lượt dùng thử ${label}.
-      </div>
-
-      <div class="field">
-        <label class="label">Mã dùng thử của bạn</label>
-        <div class="key-box" style="margin:0">
-          <span class="key-value">${esc(key)}</span>
-          <button class="key-copy" data-copykey>${icon('copy', { size: 12 })} Copy</button>
-        </div>
-      </div>
-
-      <div class="trial-steps">
-        <strong>Bước tiếp theo</strong>
-        <ol>
-          <li>Tải tool bên dưới</li>
-          <li>Chạy tool — nó tự nhận mã này</li>
-          <li>Mở game AoE là dùng được</li>
-        </ol>
-      </div>
-
-      <div class="flex gap-1" style="flex-wrap:wrap;margin-bottom:14px">
-        <a class="btn btn-primary btn-sm" href="${esc(location.origin)}/download/xa_nofog_pro.exe" download>
-          ${icon('download', { size: 13 })} Tải tool (12 MB)
-        </a>
-      </div>
-
-      <div class="alert alert-warn" style="margin-bottom:16px">
-        <span class="ico">${icon('clock', { size: 15 })}</span>
-        <span>Thời gian bắt đầu tính <strong>từ lần đầu chạy tool</strong>, không phải bây giờ.
-        Mã này gắn với máy đầu tiên kích hoạt.</span>
-      </div>
-
-      <div class="flex gap-1" style="justify-content:flex-end">
-        <button class="btn btn-ghost" data-close>Đóng</button>
-        <button class="btn btn-primary" data-golink>Xem bảng giá ${icon('arrowRight', { size: 13 })}</button>
-      </div>
-    `, {
-      onMount(overlay, close) {
-        overlay.querySelector('[data-close]').onclick = close;
-        overlay.querySelector('[data-golink]').onclick = () => {
-          close();
-          navigate('/products?category=license-xarena');
-        };
-        overlay.querySelector('[data-copykey]').onclick = async () => {
-          const okc = await copyText(key);
-          toast(okc ? 'Đã copy mã dùng thử' : 'Không copy được',
-            okc ? 'success' : 'error');
-        };
-      },
-    });
-
+    // Đóng modal loading TRƯỚC khi hiện kết quả
+    if (closeLoading) closeLoading();
+    await new Promise((r) => setTimeout(r, 320));
+    showTrialCommand(data, label);
     if (onDone) await onDone();
   } catch (e) {
-    const msg = e.message || 'Không bật được dùng thử';
-    const isQuota = /hết.*lượt|quota/i.test(msg);
-    openModal(`
-      <div class="modal-title">${isQuota ? 'Đã hết lượt dùng thử' : 'Không bật được dùng thử'}</div>
-      <div class="modal-sub">${esc(msg)}</div>
-      ${isQuota ? `
-        <div class="alert alert-info" style="margin-bottom:16px">
-          <span class="ico">${icon('info', { size: 15 })}</span>
-          <span>Mua key để tiếp tục dùng không giới hạn.</span>
-        </div>` : ''}
-      <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
-        <button class="btn btn-ghost" data-close>Đóng</button>
-        ${isQuota ? `<button class="btn btn-primary" data-golink>Mua key ${icon('arrowRight', { size: 13 })}</button>` : ''}
-      </div>
-    `, {
-      onMount(overlay, close) {
-        overlay.querySelector('[data-close]').onclick = close;
-        const g = overlay.querySelector('[data-golink]');
-        if (g) g.onclick = () => { close(); navigate('/products?category=license-xarena'); };
-      },
-    });
+    if (closeLoading) closeLoading();
+    await new Promise((r) => setTimeout(r, 320));
+    showTrialError(e.message || 'Không tạo được lệnh dùng thử');
   }
 }
 
+function showTrialCommand(data, label) {
+  // Đóng modal loading trước khi hiện kết quả
+  const cmd = data.command || '';
+  const key = data.key || '';
+
+  openModal(`
+    <div class="modal-title">Lệnh dùng thử ${label} đã sẵn sàng</div>
+    <div class="modal-sub">
+      Copy 1 dòng → dán vào CMD → Enter. Không cần nhập gì thêm.
+    </div>
+
+    <div class="field">
+      <label class="label">Lệnh (copy nguyên dòng)</label>
+      <div class="mono" style="font-size:11px;line-height:1.7;word-break:break-all;
+        background:rgba(0,0,0,.5);padding:14px;border-radius:9px;
+        border:1px solid rgba(74,222,128,.35);color:#4ade80;user-select:all">
+        ${esc(cmd)}
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-block btn-lg" data-copycmd style="margin-bottom:14px">
+      Copy lệnh
+    </button>
+
+    <div class="alert alert-info" style="margin-bottom:14px">
+      <span class="ico">${icon('info', { size: 15 })}</span>
+      <span>
+        <strong>Cách chạy:</strong><br>
+        1. Bấm <strong>Copy lệnh</strong><br>
+        2. Nhấn <kbd>Win</kbd>+<kbd>R</kbd> gõ <code class="mono">cmd</code> rồi Enter<br>
+        3. Dán (<kbd>Ctrl</kbd>+<kbd>V</kbd>) rồi Enter<br>
+        4. Windows hỏi quyền → bấm <strong>Yes</strong>
+      </span>
+    </div>
+
+    <div class="alert alert-warn" style="margin-bottom:16px">
+      <span class="ico">${icon('clock', { size: 15 })}</span>
+      <span>
+        Mã: <strong class="mono">${esc(key)}</strong><br>
+        Còn <strong>${data.left}/${data.quota}</strong> lượt.
+        Giờ bắt đầu tính từ lần chạy tool đầu tiên.
+      </span>
+    </div>
+
+    <div class="flex gap-1" style="justify-content:space-between;flex-wrap:wrap">
+      <button class="btn btn-ghost" data-golink>Mua key</button>
+      <button class="btn btn-ghost" data-close>Đóng</button>
+    </div>
+  `, {
+    onMount(overlay, close) {
+      overlay.querySelector('[data-close]').onclick = close;
+      overlay.querySelector('[data-golink]').onclick = () => {
+        close();
+        navigate('/products?category=license-xarena');
+      };
+      overlay.querySelector('[data-copycmd]').onclick = async () => {
+        const okc = await copyText(cmd);
+        toast(okc ? 'Đã copy — dán vào CMD và Enter'
+          : 'Không copy được, chọn tay dòng lệnh',
+          okc ? 'success' : 'error', 6000);
+      };
+    },
+  });
+}
+
+function showTrialError(msg) {
+  const isQuota = /hết.*lượt|hết lượt/i.test(msg);
+  const isIp = /kết nối này|mạng này/i.test(msg);
+  const isDevice = /máy này|máy ảo/i.test(msg);
+
+  openModal(`
+    <div class="modal-title">${isQuota ? 'Đã hết lượt dùng thử' : 'Không bật được dùng thử'}</div>
+    <div class="modal-sub">${esc(msg)}</div>
+    ${isQuota || isIp ? `
+      <div class="alert alert-info" style="margin-bottom:16px">
+        <span class="ico">${icon('info', { size: 15 })}</span>
+        <span>Mua key để dùng không giới hạn — giao tự động 24/7.</span>
+      </div>` : ''}
+    ${isDevice ? `
+      <div class="alert alert-warn" style="margin-bottom:16px">
+        <span class="ico">${icon('info', { size: 15 })}</span>
+        <span>Cần hỗ trợ? Zalo <strong>0836768597</strong></span>
+      </div>` : ''}
+    <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
+      <button class="btn btn-ghost" data-close>Đóng</button>
+      <button class="btn btn-primary" data-golink>Xem bảng giá</button>
+    </div>
+  `, {
+    onMount(overlay, close) {
+      overlay.querySelector('[data-close]').onclick = close;
+      overlay.querySelector('[data-golink]').onclick = () => {
+        close();
+        navigate('/products?category=license-xarena');
+      };
+    },
+  });
+}
 
 export async function mountHome(root) {
   root.querySelectorAll('[data-goto]').forEach((b) => {

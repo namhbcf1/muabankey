@@ -14,8 +14,8 @@ import { readLicense, normKey } from './license.js';
 
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
 const EXE_NAME = 'xa_nofog_pro.exe';
-const EXE_SHA256 = '30550816AABDBC0D3E08DD2D72BD515214EEB6CF9D7B803111B9080A74178D36';
-const EXE_SIZE = 13221300;
+const EXE_SHA256 = 'BA87AB9DC3DA52FEE8D85B9F55D4A2C67B0C3FD36EC62D27BF56934F6E7EE46F';
+const EXE_SIZE = 13219264;
 
 function siteBase(request) {
   const u = new URL(request.url);
@@ -262,8 +262,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
 rem ---- 5. Kich hoat license ----
 echo.
-echo  [*] Kich hoat license...
-"%EXE%" --key "%KEY%"
+rem Ma TR- = dung thu -> tool nhan bang --trial-key (khong hoi gi)
+rem Ma khac = key mua -> --key
+set "IS_TRIAL=0"
+echo %KEY% | findstr /b /c:"TR-" >nul 2>&1 && set "IS_TRIAL=1"
+if "%IS_TRIAL%"=="1" (
+  echo  [*] Kich hoat dung thu %KEY%...
+  "%EXE%" --trial-key "%KEY%"
+) else (
+  echo  [*] Kich hoat license...
+  "%EXE%" --key "%KEY%"
+)
 set "ACT=%errorlevel%"
 echo.
 if not "%ACT%"=="0" (
@@ -521,7 +530,12 @@ foreach ($hive in @('HKCU:','HKLM:')) {
 }
 
 Step 'Kich hoat license...'
-& $Exe --key $Key
+# Ma TR- = dung thu -> --trial-key (khong hoi gi)
+if ($Key -like 'TR-*') {
+  & $Exe --trial-key $Key
+} else {
+  & $Exe --key $Key
+}
 if ($LASTEXITCODE -ne 0) {
   Write-Host ''
   Warn "KICH HOAT THAT BAI (ma $LASTEXITCODE)."

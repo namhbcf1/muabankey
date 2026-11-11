@@ -9,13 +9,19 @@
     xa_nofog_pro.exe --full         # them 7 cong legacy (F I J K L O T2)
     xa_nofog_pro.exe --watch        # va lai moi 0.5s -- CHI de debug
     xa_nofog_pro.exe --key XXXX     # kich hoat bang key, roi thoat
-    xa_nofog_pro.exe --trial        # bat dung thu 3 ngay (tu dong neu chua co key)
-    xa_nofog_pro.exe --buy          # mo trang mua key
-    xa_nofog_pro.exe --rebind K T   # doi may bang token
-    xa_nofog_pro.exe --key K --token T  # kich hoat sau khi admin reset
-    xa_nofog_pro.exe --status       # xem trang thai license
-    xa_nofog_pro.exe --deactivate   # xoa key khoi may nay
-    xa_nofog_pro.exe --help         # huong dan
+    xa_nofog_pro.exe --trial 1h      # dung thu 1 GIO  (10 luot/tai khoan)
+    xa_nofog_pro.exe --trial 3d      # dung thu 3 NGAY (10 luot/tai khoan)
+    xa_nofog_pro.exe --trial         # mac dinh 3 ngay
+    xa_nofog_pro.exe --trial-key TR-XXXX-XXXX-XXXX   # nhan ma do WEB cap
+    xa_nofog_pro.exe --login         # dang nhap (hoi tai khoan + mat khau)
+    xa_nofog_pro.exe --login tk mk   # dang nhap truc tiep
+    xa_nofog_pro.exe --logout        # dang xuat (GIU key ban quyen)
+    xa_nofog_pro.exe --buy           # mo trang mua key
+    xa_nofog_pro.exe --rebind K T    # doi may bang token
+    xa_nofog_pro.exe --key K --token T   # kich hoat sau khi admin reset
+    xa_nofog_pro.exe --status        # xem trang thai + so luot con lai
+    xa_nofog_pro.exe --deactivate    # xoa key khoi may nay
+    xa_nofog_pro.exe --help          # huong dan
 
 Quyen admin:
   --list / --status / --help / --deactivate / --key  -> KHONG can admin
@@ -2681,11 +2687,12 @@ def run():
             _han_txt = 'VINH VIEN'
             title('XA NoFog - Vinh vien')
         elif _exp:
-            _left = _days_left(_st0) or 0
-            _han_txt = '%s  (con %.2f ngay)' % (
-                time.strftime(_fmt, time.localtime(_exp)), _left)
-            title('XA NoFog - %s con %.0f ngay'
-                  % ('DUNG THU' if _trial else 'con', _left))
+            # Dùng _fmt_left: hiện MM:SS cho trial 1 giờ, X.Y ngày cho 3 ngày
+            _left_txt = _fmt_left(_st0)
+            _han_txt = '%s  (con %s)' % (
+                time.strftime(_fmt, time.localtime(_exp)), _left_txt)
+            title('XA NoFog - %s con %s'
+                  % ('DUNG THU' if _trial else 'con', _left_txt))
         else:
             _han_txt = 'khong xac dinh'
             title('XA NoFog - dang cho game')
@@ -2693,7 +2700,9 @@ def run():
         print('')
         print('  ' + '-' * 58)
         if _trial:
-            print('   DANG DUNG THU %d NGAY' % TRIAL_DAYS)
+            _tl = _st0.get('trial_label') or ('1 GIO' if _st0.get('trial_kind') == '1h'
+                                              else '%d NGAY' % TRIAL_DAYS)
+            print('   DANG DUNG THU %s' % _tl)
         else:
             print('   BAN QUYEN HOP LE')
         print('  ' + '-' * 58)

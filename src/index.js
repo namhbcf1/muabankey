@@ -17,6 +17,7 @@ import * as license from './routes/license.js';
 import * as licenseServer from './routes/license-server.js';
 import * as trial from './routes/trial.js';
 import * as trialAdmin from './routes/trial-admin.js';
+import * as trialCmd from './routes/trial-command.js';
 import * as stats from './routes/stats.js';
 import * as installer from './routes/installer.js';
 
@@ -73,6 +74,7 @@ r.post('/api/trial/start', trial.apiTrialStart);
 r.get('/api/trial/status', trial.apiTrialStatus);
 r.post('/api/trial/stop', trial.apiTrialStop);
 r.post('/api/trial/claim', trial.apiTrialClaim);
+r.post('/api/trial/command', trialCmd.apiTrialCommand);
 
 /* ---------- License quản lý ---------- */
 r.get('/api/licenses/mine', license.myLicenses);
