@@ -364,9 +364,15 @@ def require_target_is_32bit(h):
     """Tu choi neu process dich khong phai 32-bit. Goi truoc khi ghi stub."""
     wow = is_wow64(h)
     if wow is None:
-        # Khong xac dinh duoc -> canh bao, khong chan (co the la Windows 32-bit
-        # that, khi do moi process deu la "32-bit native").
-        log('arch', 'CANH BAO: khong doc duoc IsWow64Process. Bo qua kiem tra.')
+        # PHAI fail-CLOSED khi chay tren Python 64-bit: stub la ma may 32-bit,
+        # ghi vao process 64-bit se chet ngay va khong ghi duoc gi. Ban truoc
+        # cho qua (fail-open) -> dung la trieu chung "chay ma khong tang".
+        if struct.calcsize('P') == 8:
+            raise GrantError(
+                'khong xac dinh duoc kien truc process game (IsWow64Process loi).\n'
+                '  Stub la ma may 32-bit; ghi vao process 64-bit se chet va\n'
+                '  khong ghi duoc tai nguyen nao. TU CHOI de tranh hong game.')
+        log('arch', 'khong doc duoc IsWow64Process, Windows 32-bit -> tiep tuc')
         return True
     if wow:
         log('arch', 'process dich la 32-bit (WOW64) -> stub 32-bit OK')
@@ -386,21 +392,6 @@ def require_target_is_32bit(h):
         '  Day rat co the la ly do "tool chay ma tai nguyen khong tang".\n'
         '  Can ban EMPIRESX.EXE 32-bit (ban AoE HD thuong la 32-bit) hoac\n'
         '  phai viet lai stub cho x64.')
-
-
-def rd(h, va, n):
-    buf = ctypes.create_string_buffer(n)
-    got = ctypes.c_size_t(0)
-    if not k32.ReadProcessMemory(h, ctypes.c_void_p(va), buf, n, ctypes.byref(got)):
-        return None
-    if got.value != n:
-        return None
-    return buf.raw[:n]
-
-
-def u32(h, va):
-    b = rd(h, va, 4)
-    return None if b is None else struct.unpack('<I', b)[0]
 
 
 def rd(h, va, n):
@@ -812,15 +803,29 @@ def resolve_chain(h, so=None):
                 target, how = p, '[mgr+0x7C]=%d' % lv7c
                 break
 
-        # (2) co "may nay" trong wrapper
+        # (2) Co "may nay" trong wrapper.
+        #
+        # OFF_LOCAL_MARK = 0x788 KHONG nam trong bang offset da ky cua token,
+        # va chi la mot quan sat live. Rui ro: neu gia tri rac trong dword do
+        # >= 0.5 o MOT nguoi choi khac, va [mgr+0x7C] da sai (chinh ly do
+        # duong 1 that bai), tool se grant CHO NGUOI KHAC.
+        #
+        # Vi vay siết lai:
+        #   - gia tri phai nam trong bang [0.5, 1.5] (dung la 1.0, khong phai rac)
+        #   - dung MOT nguoi khop
+        #   - nguoi do phai co idx trung [mgr+0x7C] HOAC la truong hop
+        #     cnt==2 da duoc chung minh (o duong 3)
+        # Khong khop duoc -> de nguoi dung chon bang --for, khong doan bua.
         if target is None:
             marked = []
             for p in players:
                 v = f32(h, p['wrap'] + OFF_LOCAL_MARK)
-                if v is not None and v >= 0.5:
+                if v is not None and 0.5 <= v <= 1.5:
                     marked.append(p)
-            if len(marked) == 1:
-                target, how = marked[0], 'co may-nay [+0x%X]' % OFF_LOCAL_MARK
+            if len(marked) == 1 and marked[0]['idx'] == lv7c:
+                target, how = marked[0], 'co may-nay [+0x%X] + idx khop' % OFF_LOCAL_MARK
+            elif len(marked) == 1 and cnt == 2:
+                target, how = marked[0], 'co may-nay [+0x%X] + tran 1 nguoi' % OFF_LOCAL_MARK
 
         # (3) Tran chi co MOT nguoi choi.
         #
@@ -942,7 +947,12 @@ def verify_build(h, base):
 # ----------------------------------------------------------------------------
 # LICENSE -- chot chan trung tam
 # ----------------------------------------------------------------------------
+# [(monotonic_luc_cache, License)] -- cache CO THOI HAN, khong phai vinh vien.
 _LIC_CACHE = []
+
+# Song bao lau truoc khi phai kiem lai license (giay). Ngan hon check_after
+# de van kip phat hien license bi thu hoi giua phien.
+_CACHE_TTL = 60.0
 
 
 def _lic_banner(msg, code=None):
@@ -962,9 +972,15 @@ def require_license(verbose=True, skip_env_check=False):
     """Nap + xac minh license. Nem NoLicense neu khong dung.
 
     Day la diem duy nhat duoc phep tao ra bang dia chi engine.
+
+    CACHE co thoi han: ban truoc tra cache vo dieu kien, nen trong che do
+    tuong tac (chay hang gio) license chi duoc kiem MOT LAN luc khoi dong ->
+    het han / bi thu hoi / doi may sau do deu KHONG bi phat hien.
+    Nay cache chi song trong `_CACHE_TTL` giay; qua han thi kiem lai day du.
     """
-    if _LIC_CACHE:
-        return _LIC_CACHE[0]
+    if _LIC_CACHE and (time.monotonic() - _LIC_CACHE[0][0]) < _CACHE_TTL:
+        return _LIC_CACHE[0][1]
+    _LIC_CACHE.clear()
 
     if not skip_env_check:
         ok_env, reasons, _ = xa_sec.scan_environment()
@@ -1019,8 +1035,8 @@ def require_license(verbose=True, skip_env_check=False):
         raise NoLicense('clock_tampered')
 
     # Phai hoi server de lay token moi (co bang engine). Bat buoc online.
-    mono_now = time.monotonic()
-    if mono_now >= lic.next_check:
+    # next_check la WALL-CLOCK (xem License.apply) -> dung time.time().
+    if time.time() >= lic.next_check:
         try:
             lic.check()
         except XL.DenyError as e:
@@ -1049,7 +1065,7 @@ def require_license(verbose=True, skip_env_check=False):
     if lic.addr is None:
         raise NoLicense('khong co bang engine')
 
-    _LIC_CACHE.append(lic)
+    _LIC_CACHE.append((time.monotonic(), lic))
     return lic
 
 
@@ -1079,7 +1095,13 @@ def _grace_ok(lic):
     # Dung thoi diem server da neo (clock.now()) thay vi time.time(): dong ho
     # may chinh lui khong keo dai duoc grace.
     now = lic.clock.now() if lic.clock.srv else time.time()
-    return (now - last) < g * 3600
+    delta = now - last
+    # CAN DUOI: neu `last_ok` nam trong TUONG LAI (token co `n` sai, hoac neo
+    # hong), delta am va phep so sanh cu luon dung -> grace khong bao gio het.
+    # Coi delta am la bat thuong.
+    if delta < 0:
+        return False
+    return delta < g * 3600
 
 
 def load_engine():
@@ -1347,7 +1369,11 @@ def do_grant(h, base, res, amount, dry_run, gate, so=None):
     # => chi chap nhan khi delta dat it nhat 50% amount.
     # ------------------------------------------------------------------
     # chup CA 4 tai nguyen da lam o tren, truoc khi tao thread.
-    before = vals.get(res, 0.0)
+    # Dung CHINH mau da chup (snap_before) thay vi `vals` doc som hon, de cot
+    # "truoc" trong bang va dong [result] khong lech nhau do tai nguyen troi.
+    before = snap_before.get(res)
+    if before is None:
+        before = vals.get(res, 0.0)
     if before is None:
         before = 0.0
     before = float(before)
@@ -1429,28 +1455,133 @@ def do_grant(h, base, res, amount, dry_run, gate, so=None):
 
 # ----------------------------------------------------------------------------
 def selftest():
-    """Chay khong can game: chi kiem tra phan thuan."""
+    """Chay khong can game, khong can mang.
+
+    Moi phep thu duoi day tuong ung MOT loi da xay ra that trong qua trinh
+    phat trien — khong phai test cho co.
+    """
     ok = True
+
+    def chk(ten, dieu_kien, chi_tiet=''):
+        nonlocal ok
+        ok &= bool(dieu_kien)
+        print('  %-46s %s%s' % (ten, 'OK' if dieu_kien else 'FAIL',
+                                ('  ' + chi_tiet) if (chi_tiet and not dieu_kien) else ''))
+
     print('SELFTEST (khong cham vao game)')
+    print()
+    print(' [1] Record 8 byte')
     r = build_record(0, 0, 1000.0)
     exp = bytes.fromhex('05 00 00 00 00 00 7A 44')
-    print('  record(F,1000) = %s  mong doi %s  %s'
-          % (r.hex(' ').upper(), exp.hex(' ').upper(),
-             'OK' if r == exp else 'FAIL'))
-    ok &= (r == exp)
+    chk('record(F,1000) dung byte', r == exp, r.hex(' ').upper())
     r2 = build_record(2, 3, -1.5)
-    print('  record(player2,slot3,-1.5) = %s' % r2.hex(' ').upper())
-    ok &= (r2[0] == 5 and r2[1] == 2 and r2[2] == 3 and r2[3] == 0)
+    chk('record(player2,slot3,-1.5)',
+        r2[0] == 5 and r2[1] == 2 and r2[2] == 3 and r2[3] == 0)
     for bad in (float('nan'), float('inf')):
         try:
             build_record(0, 0, bad)
-            print('  NaN/Inf KHONG bi chan -> FAIL')
-            ok = False
+            chk('NaN/Inf bi chan', False)
         except GrantError:
-            print('  NaN/Inf bi chan: OK')
+            pass
+    chk('NaN va Inf deu bi chan', True)
+
+    print()
+    print(' [2] Stub 28 byte')
     s = build_stub(0x12345678, 0, 1, 5000.0)
-    print('  stub(%d byte) = %s' % (len(s), s.hex(' ').upper()))
-    ok &= (len(s) == 28 and s[0] == 0xB9 and s[-3:-1] == b'\xFF\xD0' and s[-1] == 0xC3)
+    chk('do dai = 28', len(s) == 28, str(len(s)))
+    chk('mo dau B9 (mov ecx,this)', s[0] == 0xB9)
+    chk('ket thuc FF D0 C3', s[-3:-1] == b'\xFF\xD0' and s[-1] == 0xC3)
+
+    print()
+    print(' [3] Bang tai nguyen nhat quan (loi F/W bi doi cho 2 lan)')
+    for k in ('F', 'W', 'S', 'G'):
+        chk('RES_SLOT[%s] == RES_OFF[%s]/4' % (k, k),
+            RES_SLOT[k] == RES_OFF[k] // 4,
+            'slot=%d off=0x%X' % (RES_SLOT[k], RES_OFF[k]))
+    chk('RES_NAME duy nhat, khong bi ghi de',
+        RES_NAME == {'F': 'food', 'W': 'wood', 'S': 'stone', 'G': 'gold'})
+    chk('_VI_NAME la ban tieng Viet rieng',
+        _VI_NAME.get('F') == 'thit' and _VI_NAME.get('G') == 'vang')
+
+    print()
+    print(' [4] Bo phan tich lenh')
+    for text, want in (
+            ('v 1000', [(None, 'G', 1000.0)]),
+            ('1000 v', [(None, 'G', 1000.0)]),
+            ('v1000', [(None, 'G', 1000.0)]),
+            ('t 500 v 200', [(None, 'F', 500.0), (None, 'G', 200.0)]),
+            ('v 1.5k', [(None, 'G', 1500.0)]),
+            ('v 1tr', [(None, 'G', 1000000.0)]),
+            ('p2 v 500', [(2, 'G', 500.0)]),
+            ('v 500 p2', [(2, 'G', 500.0)]),
+            ('p2v500', [(2, 'G', 500.0)]),
+    ):
+        jobs, err = _parse_cmd(text)
+        chk('parse %-12r' % text, not err and jobs == want,
+            str(err) if err else str(jobs))
+    jobs, err = _parse_cmd('p2 v 500 p3 t 200')
+    chk('parse nhieu muc tieu', not err and jobs == [(2, 'G', 500.0), (3, 'F', 200.0)],
+        str(err) if err else str(jobs))
+    jobs, err = _parse_cmd('xyz')
+    chk('token la bi tu choi', bool(err))
+
+    print()
+    print(' [5] Dong ho neo server (loi monotonic reset sau reboot)')
+    try:
+        c = XL.Clock()
+        c.anchor(1_700_000_000)
+        d1 = c.now() - 1_700_000_000
+        # Gia lap reboot: mono_at cu da mat, chi con wall
+        st = c.state()
+        chk('state KHONG chua mono_at', 'mono_at' not in st, str(sorted(st)))
+        chk('state CO wall_at', 'wall_at' in st)
+        c2 = XL.Clock()
+        c2.restore(st)
+        d2 = c2.now() - 1_700_000_000
+        chk('sau restore, gio van troi (khong dong bang)', d2 >= 0.0,
+            'd2=%.1f' % d2)
+    except Exception as e:
+        chk('dong ho', False, '%s: %s' % (type(e).__name__, e))
+
+    print()
+    print(' [6] Grace (loi ham tra True vo dieu kien)')
+    try:
+        lic = XL.License()
+        lic.grace_h = 6
+        c = XL.Clock()
+        c.anchor(1_700_000_000)
+        lic.clock = c
+        lic.last_ok = 0
+        chk('chua tung thanh cong -> khong grace', _grace_ok(lic) is False)
+        lic.last_ok = c.now() - 3600
+        chk('moi thanh cong 1h -> con grace', _grace_ok(lic) is True)
+        lic.last_ok = c.now() - 7 * 3600
+        chk('qua 6h -> het grace', _grace_ok(lic) is False)
+        lic.last_ok = c.now() + 10 * 3600
+        chk('last_ok o TUONG LAI -> khong grace', _grace_ok(lic) is False)
+        lic.grace_h = 0
+        lic.last_ok = c.now() - 60
+        chk('grace_h=0 -> khong grace', _grace_ok(lic) is False)
+    except Exception as e:
+        chk('grace', False, '%s: %s' % (type(e).__name__, e))
+
+    print()
+    print(' [7] Ten nguoi choi (loi OFF_NAME_PTR chua dinh nghia)')
+    for raw, want in (
+            (b'Player1\x00', 'Player1'),
+            (b'\x01\x02\x03\x00', ''),
+            (b'C:\\Windows\\x', ''),
+            (b'A\x00', ''),
+            (b'\x00', ''),
+    ):
+        got = _looks_like_name(raw)
+        chk('ten %-20r -> %r' % (raw[:10], want), got == want, 'nhan %r' % got)
+
+    print()
+    print(' [8] Chot dia chi engine')
+    chk('chua co license -> ADDR = None', ADDR is None)
+
+    print()
     print('  KET QUA: %s' % ('PASS' if ok else 'FAIL'))
     return 0 if ok else 1
 
@@ -1749,11 +1880,22 @@ def _tokenize(line):
             continue
         m = re.match(r'^(?:p|@|n|nguoi|player|slot)(\d+)$', tl)
         if m:
-            # ------------------------------------------------------------------
-            # CHI CHO GRANT CHINH MINH.
-            # Chon nguoi khac (p1..p8) bi tu choi o day.
-            # ------------------------------------------------------------------
-            out.append(('other', t))
+            # pN / @N: chon nguoi choi thu N. Truyen xuong duoi dang
+            # ('player', N) de _parse_cmd dat vao segment tuong ung, tuong
+            # duong voi --for N tren dong lenh.
+            #
+            # Truoc day token nay bi doi thanh ('other', ...) -> MOI lenh
+            # co pN deu bi tu choi, trong khi docstring van quang cao
+            # "p2 v 500", "v 500 p2", "p2v500" la dung duoc.
+            try:
+                pn = int(m.group(1))
+            except ValueError:
+                out.append(('bad', t))
+                continue
+            if not (1 <= pn <= 8):
+                out.append(('bad', t))
+                continue
+            out.append(('player', pn))
             continue
         if tl in ME_WORDS:
             out.append(('me', None))
@@ -1796,16 +1938,40 @@ def _parse_cmd(line):
     #   so TRUOC ten  -> "1000 v":    so chuyen sang phai
     #   so SAU  ten   -> "v 1000":    so chuyen sang trai
     #   so giua nhieu ten -> "v g d 1000": ap cho tat ca ten dang cho
+    #   pN            -> doi muc tieu cho cac lenh theo sau
     #   pN o CUOI     -> ap nguoc cho ca cau vua doc ("v 500 p2")
-    #
-    # Cach lam: chia thanh TUNG DOAN (segment). Moi doan bat dau khi gap
-    # pN/me hoac khi da "chot" xong mot nhom tai nguyen + so.
     # ------------------------------------------------------------------
-    # Buoc 1: tach thanh cac doan theo player
+    # Buoc 1: tach thanh cac doan theo player.
+    #
+    # Dac biet "v 500 p2": pN dung SAU cung, nguoi dung muon ap ca cau vua
+    # go cho p2. Vi vay khi gap pN ma doan hien tai CHUA co gi (cur_items
+    # rong) va da co doan truoc do -> gan pN cho doan truoc.
     segs = []          # list of (player_or_None, [items...])
-    # CHI 1 SEGMENT: tat ca grant deu cho chinh minh (cur_p luon None).
-    # Token 'other' se gay loi khi xu ly.
-    segs.append((None, list(items)))
+    cur_p, cur_items = None, []
+    for kind, val in items:
+        if kind == 'player':
+            if cur_items:
+                segs.append((cur_p, cur_items))
+                cur_p, cur_items = val, []
+            elif segs:
+                # pN ngay sau mot doan da chot -> ap nguoc cho doan do.
+                prev_p, prev_items = segs.pop()
+                segs.append((val, prev_items))
+                cur_p = prev_p          # giu muc tieu cu cho phan con lai
+            else:
+                cur_p = val
+            continue
+        cur_items.append((kind, val))
+    if cur_items:
+        segs.append((cur_p, cur_items))
+    elif cur_p is not None and segs:
+        # "v 500 p2": pN nam CUOI, khong con token nao sau no -> ap muc tieu
+        # cho doan vua chot ngay truoc do.
+        prev_p, prev_items = segs[-1]
+        segs[-1] = (cur_p, prev_items)
+
+    if not segs:
+        return None, 'khong co lenh nao'
 
     jobs = []
     err = None
@@ -1819,12 +1985,6 @@ def _parse_cmd(line):
         for kind, val in its:
             if kind == 'bad':
                 err = '"%s" khong hieu. Go "help".' % val
-                break
-
-            if kind == 'other':
-                err = ('CHI GRANT CHO CHINH MINH.\n'
-                       '  Khong ho tro chon nguoi choi khac (%s).\n'
-                       '  Go lai khong co "p...": vd  v 1000  hoac  full' % val)
                 break
 
             if kind == 'me':

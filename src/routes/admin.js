@@ -2,7 +2,7 @@
 import { ok, ApiError, readJson } from '../lib/http.js';
 import { str, int, email as vEmail, password as vPassword, enum_ok, bool } from '../lib/validate.js';
 import { hashPassword, uuid } from '../lib/crypto.js';
-import { requireAdmin } from '../lib/auth.js';
+import { requireAdmin, requireAdminStrict } from '../lib/auth.js';
 import { audit } from './products.js';
 
 export async function dashboard(env, request) {
@@ -149,6 +149,16 @@ export async function updateUser(env, request, userId) {
     if (u.id === admin.id && status !== 'active') {
       throw new ApiError(400, 'Không thể tự khoá tài khoản của mình', 'VALIDATION');
     }
+    /*
+     * Trước đây chỉ chặn tự khoá: staff khoá được admin thật → đá chủ shop ra
+     * khỏi hệ thống rồi tự do dùng các quyền tài chính. Chặn theo cấp bậc.
+     */
+    if (u.role === 'admin' && u.id !== admin.id) {
+      throw new ApiError(403, 'Không thể khoá tài khoản quản trị viên khác', 'FORBIDDEN');
+    }
+    if (admin.role !== 'admin' && u.role !== 'user') {
+      throw new ApiError(403, 'Chỉ quản trị viên mới được đổi trạng thái tài khoản nội bộ', 'FORBIDDEN');
+    }
     fields.push('status = ?'); binds.push(status);
   }
   if (body.fullName !== undefined) {
@@ -238,16 +248,39 @@ export async function listAuditLogs(env, request) {
   });
 }
 
+/*
+ * Khoá bí mật KHÔNG bao giờ trả về client, kể cả cho admin.
+ * `payos_checksum_key` cho phép tự ký webhook payOS (= tự tạo tiền) và
+ * `telegram_bot_token` điều khiển kênh duyệt nạp. Trước đây getSettings trả
+ * nguyên bảng settings nên staff đọc được cả hai.
+ */
+const SECRET_SETTING_KEYS = [
+  'payos_checksum_key', 'telegram_bot_token', 'telegram_chat_id',
+  'sepay_api_key', 'xg_sign_jwk', 'key_enc',
+];
+
 export async function getSettings(env, request) {
   await requireAdmin(env, request);
-  const { results } = await env.DB.prepare('SELECT key, value FROM settings').all();
+  const placeholders = SECRET_SETTING_KEYS.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(
+    `SELECT key, value FROM settings WHERE key NOT IN (${placeholders})`
+  ).bind(...SECRET_SETTING_KEYS).all();
   const map = {};
   for (const r of results || []) map[r.key] = r.value;
+
+  // Chỉ báo đã cấu hình hay chưa — đủ để admin biết trạng thái, không lộ giá trị.
+  const { results: secretRows } = await env.DB.prepare(
+    `SELECT key FROM settings WHERE key IN (${placeholders})`
+  ).bind(...SECRET_SETTING_KEYS).all();
+  map._secretsConfigured = Object.fromEntries(
+    (secretRows || []).map((r) => [r.key, Boolean(r.value)])
+  );
   return ok({ settings: map });
 }
 
 export async function saveSettings(env, request) {
-  const admin = await requireAdmin(env, request);
+  // Đổi bank_account/bank_owner chuyển hướng tiền của MỌI khách → chỉ admin thật.
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request);
   // Cho phép lưu cả cấu hình trial.
   // Trước đây chỉ 6 key -> admin không đổi được số lượt trial, phải sửa SQL tay.

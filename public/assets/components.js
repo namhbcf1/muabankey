@@ -297,8 +297,8 @@ export function renderFooter() {
             bảo hành 1 đổi 1, thanh toán an toàn qua VietQR.
           </p>
           <div class="flex gap-1 mt-2" style="flex-wrap:wrap">
-            <span class="pill pill-gray">${icon('lock', { size: 11 })} SSL 256-bit</span>
-            <span class="pill pill-gray">${icon('activity', { size: 11 })} Uptime 99.9%</span>
+            <span class="pill pill-gray">${icon('lock', { size: 11 })} HTTPS</span>
+            <span class="pill pill-gray">${icon('activity', { size: 11 })} Cloudflare 300+ PoP</span>
           </div>
         </div>
         <div class="footer-col">

@@ -64,7 +64,7 @@ export async function mountLicenses(root) {
   host.innerHTML = `
     <div class="alert alert-info">
       <span class="ico">${icon('info', { size: 15 })}</span>
-      <span>Bấm <strong>Lấy lệnh cài đặt</strong> để sinh lệnh riêng (dùng một lần, hết hạn sau 24 giờ).
+      <span>Bấm <strong>Lấy lệnh cài đặt</strong> để sinh lệnh riêng (hiệu lực 24 giờ, bấm lại để tạo lệnh mới).
       Sau đó bấm <strong>Win + R</strong>, dán lệnh và nhấn Enter.</span>
     </div>
     <div class="stack">

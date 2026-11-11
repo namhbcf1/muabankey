@@ -172,8 +172,15 @@ Cập nhật thông tin ngân hàng tại `/#/admin?tab=settings` nếu cần đ
 ## 7. Lệnh vận hành
 
 ```powershell
-$env:CLOUDFLARE_API_TOKEN="cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6"
-$env:CLOUDFLARE_ACCOUNT_ID="5b62d10947844251d23e0eac532531dd"
+# Token KHÔNG ghi vào README (file này commit lên git).
+# Lấy token từ: https://dash.cloudflare.com/profile/api-tokens
+# Lưu vào biến môi trường máy, KHÔNG hardcode:
+#   [Environment]::SetEnvironmentVariable('CLOUDFLARE_API_TOKEN','<token>','User')
+#   [Environment]::SetEnvironmentVariable('CLOUDFLARE_ACCOUNT_ID','<account>','User')
+#
+# Hoặc set tạm trong phiên PowerShell (không lưu lịch sử):
+#   $env:CLOUDFLARE_API_TOKEN = Read-Host -AsSecureString | ConvertFrom-SecureString -AsPlainText
+$env:CLOUDFLARE_ACCOUNT_ID = $env:CLOUDFLARE_ACCOUNT_ID  # đọc từ môi trường máy
 
 # Deploy
 npx wrangler@4 deploy

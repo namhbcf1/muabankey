@@ -162,7 +162,7 @@ export async function mountProductDetail(root, slug) {
             <span class="ico">${icon(isLicense ? 'key' : 'info', { size: 15 })}</span>
             <span>${isLicense
               ? 'Sau khi thanh toán, bạn nhận <strong>lệnh CMD cài đặt tự động</strong>. Dán vào CMD để tool tự cài, kích hoạt và tạo shortcut trên Desktop.'
-              : 'Sau khi thanh toán, key hiển thị ngay trong mục <strong>Đơn hàng</strong> và được gửi về email của bạn.'}</span>
+              : 'Sau khi thanh toán, key hiển thị ngay trong mục <strong>Đơn hàng</strong> và hiển thị ngay trong mục Đơn hàng (xem lại bất cứ lúc nào).'}</span>
           </div>
         </div>
       </div>

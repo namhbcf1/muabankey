@@ -107,7 +107,7 @@ export function renderHome() {
           <h3 class="trial-name">Dùng thử <span class="trial-hl warn">1 giờ</span></h3>
           <div class="trial-price">0đ</div>
           <ul class="feature-list trial-feats">
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Bỏ sương mù toàn map + minimap (10 điểm vá)</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đủ chơi 1–2 trận để thử</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / thiết bị</span></li>
           </ul>
@@ -125,7 +125,7 @@ export function renderHome() {
           <h3 class="trial-name">Dùng thử <span class="trial-hl accent">3 ngày</span></h3>
           <div class="trial-price">0đ</div>
           <ul class="feature-list trial-feats">
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Bỏ sương mù toàn map + minimap (10 điểm vá)</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Chơi thoải mái nhiều ngày</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / thiết bị</span></li>
           </ul>
@@ -269,7 +269,15 @@ async function startTrialFlow(kind, onDone) {
 
 function showTrialCommand(data, label) {
   // Đóng modal loading trước khi hiện kết quả
-  const cmd = data.command || '';
+  // Dùng oneLiner (PowerShell) chứ KHÔNG dùng command (CMD):
+  // "curl ... && ..." chết trong PowerShell vì && không phải statement
+  // separator ở PS 5.1. Win11 Win+X mở Terminal = PowerShell -> phần lớn
+  // khách dán vào đó và nhận lỗi "The token '&&' is not a valid statement
+  // separator". oneLiner dùng "iex (irm URL)" chạy được ở CẢ cmd và PS.
+  const isPowerShell = data.oneLiner;
+  const cmd = isPowerShell ? data.oneLiner : (data.command || '');
+  // Nhãn hướng dẫn theo loại lệnh
+  const shellName = isPowerShell ? 'PowerShell hoặc CMD' : 'CMD';
   const key = data.key || '';
 
   openModal(`
@@ -294,9 +302,9 @@ function showTrialCommand(data, label) {
     <div class="alert alert-info" style="margin-bottom:14px">
       <span class="ico">${icon('info', { size: 15 })}</span>
       <span>
-        <strong>Cách chạy:</strong><br>
+        <strong>Cách chạy (${shellName}):</strong><br>
         1. Bấm <strong>Copy lệnh</strong><br>
-        2. Nhấn <kbd>Win</kbd>+<kbd>R</kbd> gõ <code class="mono">cmd</code> rồi Enter<br>
+        2. Nhấn <kbd>Win</kbd>+<kbd>R</kbd> gõ <code class="mono">powershell</code> rồi Enter<br>
         3. Dán (<kbd>Ctrl</kbd>+<kbd>V</kbd>) rồi Enter<br>
         4. Windows hỏi quyền → bấm <strong>Yes</strong>
       </span>
@@ -306,7 +314,9 @@ function showTrialCommand(data, label) {
       <span class="ico">${icon('clock', { size: 15 })}</span>
       <span>
         Mã: <strong class="mono">${esc(key)}</strong><br>
-        Còn <strong>${data.left}/${data.quota}</strong> lượt.
+        ${data.left == null
+          ? '<strong>Không giới hạn lượt</strong> cho thiết bị này.'
+          : `Còn <strong>${data.left}/${data.quota}</strong> lượt.`}
         Giờ bắt đầu tính từ lần chạy tool đầu tiên.
       </span>
     </div>

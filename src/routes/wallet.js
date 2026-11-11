@@ -2,7 +2,7 @@
 import { ok, ApiError, readJson } from '../lib/http.js';
 import { int, str } from '../lib/validate.js';
 import { uuid, topupCode } from '../lib/crypto.js';
-import { requireUser, requireAdmin } from '../lib/auth.js';
+import { requireUser, requireAdmin, requireAdminStrict } from '../lib/auth.js';
 import { rateLimit, clientIp } from '../lib/ratelimit.js';
 import { audit } from './products.js';
 
@@ -269,7 +269,7 @@ export async function payosWebhook(env, request) {
     // Chuyển thiếu -> cộng phần đã nhận
     const credited = Math.floor(amountIn);
     const claim = await env.DB.prepare(
-      "UPDATE topups SET status='partial', txn_ref = ?, provider='payos' WHERE id = ? AND status != 'paid'"
+      "UPDATE topups SET status='partial', txn_ref = ?, provider='payos' WHERE id = ? AND status IN ('pending','expired')"
     ).bind(ref, topup.id).run();
     if (!claim.meta || claim.meta.changes !== 1) {
       return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
@@ -373,7 +373,8 @@ export async function webhookHealth(env) {
  * (Khuyến nghị dùng `wrangler secret put PAYOS_CHECKSUM_KEY` để bảo mật hơn.)
  */
 export async function adminSetPayosKey(env, request) {
-  const admin = await requireAdmin(env, request);
+  // Đặt checksum key cho phép tự ký webhook payOS = tự tạo tiền. Chỉ admin thật.
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request);
   const key = String(body.checksumKey || '').trim();
 
@@ -586,7 +587,8 @@ export async function adminTelegramStatus(env, request) {
 
 /** POST /api/admin/telegram/config — lưu bot token + chat id vào settings. */
 export async function adminTelegramConfig(env, request) {
-  const admin = await requireAdmin(env, request);
+  // Bot token điều khiển kênh duyệt nạp tiền → chỉ admin thật.
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request);
   const token = String(body.botToken || '').trim();
   const chatId = String(body.chatId || '').trim();
@@ -665,7 +667,7 @@ export async function adminTelegramConfig(env, request) {
     // Guard: chỉ cộng nếu thực sự chuyển được sang 'partial'.
     // Thiếu guard -> webhook retry hoặc 2 webhook song song cộng tiền nhiều lần.
     const claimPartial = await env.DB.prepare(
-      "UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status != 'paid'"
+      "UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status IN ('pending','expired')"
     ).bind(ref, topup.id).run();
     if (!claimPartial.meta || claimPartial.meta.changes !== 1) {
       return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
@@ -774,7 +776,7 @@ export async function sepayWebhook(env, request) {
     // Thiếu guard -> webhook retry (SePay retry là bình thường) hoặc 2 webhook
     // song song sẽ cộng tiền nhiều lần -> mất tiền thật.
     const claimPartial = await env.DB.prepare(
-      "UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status != 'paid'"
+      "UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status IN ('pending','expired')"
     ).bind(ref, topup.id).run();
     if (!claimPartial.meta || claimPartial.meta.changes !== 1) {
       return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
@@ -898,7 +900,8 @@ export async function adminApproveTopup(env, request, topupId) {
   const { requireAdmin } = await import('../lib/auth.js');
   const { ok, ApiError: AE } = await import('../lib/http.js');
   const { uuid } = await import('../lib/crypto.js');
-  const admin = await requireAdmin(env, request);
+  // Duyệt nạp = cộng tiền vào ví, không kiểm chứng ngân hàng → chỉ admin thật.
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request).catch(() => ({}));
 
   const t = await env.DB.prepare('SELECT * FROM topups WHERE id = ?').bind(topupId).first();
@@ -1022,7 +1025,8 @@ export async function adminRejectTopup(env, request, topupId) {
    ============================================================ */
 
 export async function adminAdjustBalance(env, request) {
-  const admin = await requireAdmin(env, request);
+  // Cộng/trừ số dư trực tiếp — đây chính là "tạo tiền". Chỉ admin thật.
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request);
   const userId = str(body.userId, 'userId', { max: 64 });
   const amount = int(body.amount, 'amount', { min: -1_000_000_000, max: 1_000_000_000 });

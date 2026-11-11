@@ -243,7 +243,89 @@ tool\grant\dist\xa_grant.exe --selftest
 
 ---
 
-## 6. Vận hành & sự cố
+## 6. Vòng 2 — kiểm toán đa agent và các lỗi đã sửa
+
+Sau khi bản đầu bàn giao, một vòng audit đa agent (mật mã / backend / tool /
+frontend) đã được chạy. Dưới đây là mọi lỗi **đã xác nhận bằng đọc code hoặc
+chạy thử**, và trạng thái sửa.
+
+### 8.1 Server — lỗ hổng bảo mật
+
+| # | Lỗi | Mức | Trạng thái |
+|---|---|---|---|
+| S1 | `/api/xg/violation` **không xác thực gì**: ai biết mã license cũng gửi 8 lần báo vi phạm để server **tự thu hồi license người khác** — phá hoại không cần đăng nhập | **CRITICAL** | **ĐÃ SỬA** — nay bắt buộc `hwid` khớp máy đã bind hoặc `sid`+`hwid` khớp phiên sống; key lạ trả `not_found` (không lộ) |
+| S2 | Bộ cài No Fog (`/i/<KEY>`) **không kiểm `pid`**: khách mua key XAGR vẫn tải/cài No Fog và bind mất lượt HWID của key XAGR → nhận sai sản phẩm | **HIGH** | **ĐÃ SỬA** — `isOtherProduct()` chặn `pid != 'nofog'`, kể cả khi cột `pid` chưa migrate (chặn theo tiền tố `XAGR-`) |
+| S3 | `ssec` sinh ra, lưu băm nhưng **không bao giờ đối chiếu** → ai bắt được `sid` là giữ được phiên (secret chết) | HIGH | **ĐÃ SỬA** — `/api/xg/heartbeat` bắt buộc `ssec`, so sánh timing-safe |
+| S4 | Cron **không dọn** `xg_session`, `xg_events`, `xg_viol` → phình vô hạn (720 dòng/ngày/máy) | MEDIUM | **ĐÃ SỬA** — dọn phiên >30 ngày, event >90 ngày, đếm vi phạm cũ >30 ngày |
+| S5 | `xgRebind` trả code `rate_limit` khi không sở hữu → khách tưởng bị chặn tạm, thử lại mãi | LOW | **ĐÃ SỬA** — trả `forbidden` |
+| S6 | Admin tặng key hardcode `product_id='p-lic-month'` → key XAGR hiện tên sản phẩm No Fog | MEDIUM | **ĐÃ SỬA** — map `XAGR → p-xg-month`, nhận `body.productId`, validate tồn tại |
+| S7 | `downloadXgExe` trả 206 cho GET thường (Miniflare luôn điền `obj.range`) | LOW | **ĐÃ SỬA** — chỉ 206 khi client thực sự gửi `Range` |
+
+### 8.2 Client — lỗi mật mã
+
+| # | Lỗi | Mức | Trạng thái |
+|---|---|---|---|
+| C1 | ECDSA tự cài **không kiểm điểm nằm trên đường cong** → lỗ hổng *invalid curve attack* (kẻ tấn công gửi điểm trên đường cong khác có cấp nhỏ) | **HIGH** | **ĐÃ SỬA** — `_on_curve()` kiểm public key + mọi điểm trung gian |
+| C2 | `_inv` có thể ném khi `s=0` | LOW | **ĐÃ SỬA** — bắt `ValueError`/`ZeroDivisionError` |
+
+Đã kiểm chứng toán học: điểm sinh G nằm trên đường cong, `N·G = ∞`,
+`(N-1)·G = -G`, `_add(G,G) == _mul(2,G)`, điểm bậc 2 và điểm khác dấu đều
+trả `None`.
+
+### 8.3 Client — lỗi nghiệp vụ (nguyên nhân "không nhận đúng người chơi")
+
+| # | Lỗi | Mức | Trạng thái |
+|---|---|---|---|
+| T1 | `VTABLE_PLAYER = 0x54EE68` **hardcode**: vtable của một build cụ thể. Build khác (HD/HDR/patch khác) → danh sách rỗng hoặc **sót người chơi** | **HIGH** | **ĐÃ SỬA** — nhận diện bằng **cấu trúc** (`_plausible_player`, `_wrapper_kind`), không dùng số tiền định |
+| T2 | `OFF_NAME_PTR` **chưa bao giờ được định nghĩa** → `NameError` bị `except` nuốt → **tên luôn rỗng**, không thể đối chiếu "máy mình là ai" | **HIGH** | **ĐÃ SỬA** — hằng số + dò nhiều offset + `_looks_like_name()` kiểm nội dung |
+| T3 | Chỉ có MỘT đường xác định "máy mình": `[mgr+0x7C]`. Không khớp → ném lỗi | **HIGH** | **ĐÃ SỬA** — 3 đường dự phòng, đường "1 người chơi" chỉ dùng khi `cnt == 2` (chống grant sai người khi danh sách bị lọc sót) |
+| T4 | Stub là **mã máy 32-bit** nhưng không kiểm kiến trúc process đích → chạy trên process 64-bit chết im lặng = "chạy mà không tăng" | **HIGH** | **ĐÃ SỬA** — `require_target_is_32bit()` fail-closed |
+| T5 | `--for N` được CLI nhận, quảng cáo trong usage và thông báo lỗi, nhưng `do_grant` **luôn từ chối** → tính năng chết | **HIGH** | **ĐÃ SỬA** — truyền `so` xuống `resolve_chain`; `pN`/`@N` trong chế độ tương tác cũng hoạt động |
+| T6 | `next_check` lưu `time.monotonic()` xuống đĩa → **sau reboot server không bao giờ được gọi lại** | **HIGH** | **ĐÃ SỬA** — dùng wall-clock |
+| T7 | `Clock.now()` dùng `mono_at` đã lưu → sau reboot **đồng hồ đóng băng**, license không bao giờ hết hạn | **HIGH** | **ĐÃ SỬA** — trôi theo wall-clock, monotonic chỉ để phát hiện chỉnh đồng hồ |
+| T8 | `_LIC_CACHE` không hết hạn → chế độ tương tác chỉ kiểm license **một lần** lúc khởi động | MEDIUM | **ĐÃ SỬA** — TTL 60 giây |
+| T9 | `_grace_ok` không có cận dưới → `last_ok` ở tương lai cho grace vô hạn | MEDIUM | **ĐÃ SỬA** — `delta < 0` coi là bất thường |
+| T10 | `snap_before` chụp **sau** khi thread chạy → delta luôn ~0, luôn báo "không tài nguyên nào đổi" | **HIGH** | **ĐÃ SỬA** — dời lên trước `CreateRemoteThread` |
+| T11 | `RES_NAME` định nghĩa **hai lần** (Anh rồi Việt) → mọi nhãn tiếng Anh bị ghi đè | MEDIUM | **ĐÃ SỬA** — một `RES_NAME` + `_VI_NAME` riêng |
+| T12 | Comment `RES_SLOT` ghi `W=0 F=1` **mâu thuẫn** với dict `F=0 W=1` | MEDIUM | **ĐÃ SỬA** — comment khớp bảng, kèm selftest bất biến |
+| T13 | `rd` và `u32` **định nghĩa 2 lần** | LOW | **ĐÃ SỬA** — xoá bản trùng |
+| T14 | `IsWow64Process` lỗi → **fail-open** (vẫn ghi stub 32-bit vào process 64-bit) | LOW | **ĐÃ SỬA** — fail-closed trên Python 64-bit |
+| T15 | `/i/*` cài đặt No Fog nhận cả key XAGR | HIGH | xem S2 |
+
+### 8.4 Kiểm chứng sau khi sửa
+
+| Phép thử | Kết quả |
+|---|---|
+| `--selftest` (33 phép thử, mỗi cái nhắm 1 lỗi thật) | **PASS** |
+| E2E server (`scripts/e2e-xagrant.mjs`) | **69/69 PASS** |
+| Quét EXE tìm địa chỉ engine | **0 hit** |
+| ECDSA: G trên đường cong, `N·G = ∞`, `_add == _mul`, điểm bịa bị loại | **PASS** |
+| Parser: 15/15 dạng lệnh, gồm `p2 v 500`, `v 500 p2`, `p2v500` | **PASS** |
+| Giả mạo token (4 kiểu), ký bằng khoá lạ, `r=s=0`, base64 rác | **đều bị từ chối** |
+| Sửa 1 byte `lic.bin` | **bị từ chối** |
+| Replay `sid` cũ; `ssec` sai; vi phạm từ máy khác | **đều bị chặn** |
+
+### 8.5 Điều chưa kiểm chứng được
+
+Triệu chứng "không nhận đúng người chơi / tài nguyên không tăng" phụ thuộc vào
+**build EMPIRESX.EXE thật** và **trạng thái trận đang chơi**. Máy này không có
+game đang chạy nên **chưa thể xác minh trực tiếp**. Những gì đã làm được là
+loại bỏ các nguyên nhân chắc chắn sai (T1, T2, T4) và thêm đường dự phòng
+(T3, T5). Khi có game, chạy theo thứ tự sau để khoanh vùng:
+
+```cmd
+xa_grant.exe --status            :: license OK?
+xa_grant.exe --check             :: đọc được người chơi? in bảng slot/so/ten
+```
+
+Nếu `--check` in bảng có tên người chơi → T1/T2 đã hết. Nếu bảng đúng nhưng
+grant không tăng → xem dòng `[arch]` và `[exec] thread ket thuc, exit code`.
+Nếu tool báo "không xác định được máy mình là ai" → chạy `--for N` với số
+trong cột `so`.
+
+---
+
+## 7. Vận hành & sự cố
 
 | Triệu chứng | Nguyên nhân | Xử lý |
 |---|---|---|
@@ -264,7 +346,7 @@ curl https://xienhl.com/api/xg/health
 
 ---
 
-## 7. Đổi khoá ký (khi khoá bị lộ)
+## 8. Đổi khoá ký (khi khoá bị lộ)
 
 ```powershell
 cd tool\grant\src
@@ -280,3 +362,4 @@ python -c "import base64,json;from cryptography.hazmat.primitives.asymmetric imp
 **Lưu ý:** đổi khoá làm **mọi license cũ mất hiệu lực** cho đến khi khách
 chạy lại tool (client tự gọi `/api/xg/check` lấy token mới bằng khoá mới).
 Vì `gate` lưu theo license chứ không theo khoá, không cần reset dữ liệu.
+

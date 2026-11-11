@@ -4,8 +4,12 @@
  *
  * Chạy: node scripts/migrate-secrets.mjs
  */
-const T = 'cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6';
-const A = '5b62d10947844251d23e0eac532531dd';
+const T = process.env.CLOUDFLARE_API_TOKEN;
+if (!T || !process.env.CLOUDFLARE_ACCOUNT_ID) {
+  console.error('Thiếu CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID');
+  process.exit(1);
+}
+const A = process.env.CLOUDFLARE_ACCOUNT_ID;
 const D = '81f478c9-5627-458a-a35f-d483e69d400b';
 const B = 'https://xienhl.com';
 

@@ -28,7 +28,7 @@
  *   POST /api/xg/violation {key, hwid, sid, code}
  *   GET  /api/xg/health
  */
-import { json } from '../lib/http.js';
+import { json, ApiError } from '../lib/http.js';
 import { randomHex, timingSafeEqual } from '../lib/crypto.js';
 
 /* ------------------------------------------------------------------ */
@@ -42,27 +42,34 @@ const PID = 'xagrant';
  * Khoá ký RIÊNG của server.
  *
  * Ưu tiên Worker secret `XG_SIGN_JWK` (đặt bằng `wrangler secret put`).
- * Giá trị dưới đây là bản dự phòng khi chạy local/CI không có secret.
  *
- * Client CHỈ giữ public key (x, y), nên dù lộ toàn bộ source client thì kẻ
- * tấn công vẫn KHÔNG sinh được token hợp lệ.
+ * KHÔNG có bản dự phòng. Trước đây một private key ECDSA P-256 được hardcode
+ * làm fallback, nên khi secret chưa đặt (đúng trạng thái production lúc phát
+ * hiện) server ký bằng key nằm công khai trong repo — ai đọc source cũng mint
+ * được token hợp lệ và giải mã khối ENGINE. Comment cũ khẳng định "lộ source
+ * client vẫn không sinh được token" chỉ đúng khi secret đã được đặt.
+ *
+ * Nay thiếu secret thì FAIL CLOSED: từ chối ký, không âm thầm dùng key khác.
  */
-const SIGN_JWK_DEFAULT = {
-  kty: 'EC',
-  crv: 'P-256',
-  x: 'sFcZr62qKyOI_poIqOEiYzElFUa2bQ4x4fzvAFFqPUI',
-  y: 'ezg0AkiixsPXJ7bzVcrYvLKJLvNWYoltMnCxN2aiDlc',
-  d: 'GYU0xtob3Jk4VzgsXLr9zycFvEYzyQbMDuohlSm2xkg',
-};
-
 function signJwk(env) {
   const raw = env && env.XG_SIGN_JWK;
-  if (!raw) return SIGN_JWK_DEFAULT;
+  if (!raw) {
+    throw new ApiError(
+      503,
+      'Chưa cấu hình XG_SIGN_JWK — không thể ký token',
+      'NOT_CONFIGURED',
+    );
+  }
+  let v;
   try {
-    const v = JSON.parse(raw);
-    if (v && v.kty === 'EC' && v.d && v.x && v.y) return v;
-  } catch { /* secret hỏng -> dùng bản dự phòng, vẫn ký đúng */ }
-  return SIGN_JWK_DEFAULT;
+    v = JSON.parse(raw);
+  } catch {
+    throw new ApiError(503, 'XG_SIGN_JWK không phải JSON hợp lệ', 'NOT_CONFIGURED');
+  }
+  if (!v || v.kty !== 'EC' || !v.d || !v.x || !v.y) {
+    throw new ApiError(503, 'XG_SIGN_JWK thiếu thành phần EC', 'NOT_CONFIGURED');
+  }
+  return v;
 }
 
 /**

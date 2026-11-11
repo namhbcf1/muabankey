@@ -438,10 +438,8 @@ function buildPs1({ key, base, installDir, selfUrl, token }) {
   // khoi nhieu dong lam vo parser ("The terminator '#>' is missing").
   // Dung comment tung dong '#' thay the.
   return `# XArena No Fog - Bo cai dat tu dong (PowerShell)
-# Ma license: ${key}
 #
 # Cach dung 1 lenh (khuyen dung):
-#   irm ${selfUrl} | iex
 #
 # Hoac tai file roi chay:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File cai-dat.ps1
@@ -455,7 +453,8 @@ $Base     = '${base}'
 $Target   = '${installDir}'
 $ExeName  = '${EXE_NAME}'
 $Exe      = Join-Path $Target $ExeName
-$Url      = "$Base/download/$ExeName"
+# PowerShell đọc "$Base/download/..." là PHÉP CHIA (vì /download/
+$Url      = "\${Base}/download/$ExeName"
 $WantSha  = '${EXE_SHA256}'
 $WantSize = ${EXE_SIZE}
 
@@ -649,6 +648,9 @@ export async function serveInstaller(env, request, rawKey) {
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';
+  // assertCanInstall() trả sớm khi đã đăng nhập, nên token PHẢI được kiểm ở đây
+  // trước khi nội suy vào script — nếu không, newline trong `t` = command injection.
+  if (token) assertTokenShape(token);
   const body = buildCmd({
     key: lic.key, base: siteBase(request),
     exeSha: EXE_SHA256, exeSize: EXE_SIZE, installDir: INSTALL_DIR, token,
@@ -673,6 +675,7 @@ export async function servePs1(env, request, rawKey) {
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';
+  if (token) assertTokenShape(token);
   const base = siteBase(request);
   const selfUrl = `${base}/i/${lic.key}.ps1?t=${token}`;
   const body = buildPs1({
@@ -698,6 +701,7 @@ export async function installerCommand(env, request, rawKey) {
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';
+  if (token) assertTokenShape(token);
   const base = siteBase(request);
   const q = token ? `?t=${token}` : '';
   return new Response(JSON.stringify({

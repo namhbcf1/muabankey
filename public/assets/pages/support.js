@@ -6,7 +6,7 @@ const FAQS = [
   ['Key tôi mua có phải hàng chính hãng không?',
    'Có. Tất cả key đều là key Retail/OEM chính hãng mua trực tiếp từ nhà phân phối ủy quyền. Bạn có thể kiểm tra tính hợp lệ bằng công cụ chính thức của Microsoft hoặc nhà cung cấp.'],
   ['Bao lâu thì tôi nhận được key sau khi thanh toán?',
-   'Với sản phẩm giao tự động, key hiển thị ngay lập tức trong mục "Đơn hàng" (thường dưới 5 giây). Với sản phẩm giao thủ công (tài khoản), chúng tôi xử lý trong 5-15 phút qua email hoặc Telegram.'],
+   'Với sản phẩm giao tự động, key hiển thị ngay lập tức trong mục "Đơn hàng" (thường dưới 5 giây). Mọi sản phẩm còn hàng đều giao tự động ngay sau khi trừ ví (dưới 5 giây) hoặc Telegram.'],
   ['Tôi nạp tiền nhưng chưa thấy tiền vào ví?',
    'Hệ thống tự động cộng tiền sau 1-2 phút kể từ khi ngân hàng ghi nhận giao dịch. Nếu bạn chuyển sai nội dung, vui lòng liên hệ Telegram/Zalo kèm ảnh chụp giao dịch để được hỗ trợ.'],
   ['Key không kích hoạt được thì sao?',

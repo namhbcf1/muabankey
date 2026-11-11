@@ -154,8 +154,19 @@ export async function apiTrialClaim(env, request) {
     await env.DB.prepare(
       'UPDATE licenses SET hwid = ?, activated_at = COALESCE(activated_at, ?) WHERE key = ?'
     ).bind(ids.hwid, now, key).run();
+    // Phải trả trial_kind + label, nếu không client mặc định '3d'
+    // -> mã 1 GIỜ hiện thành "DÙNG THỬ 3 NGÀY -- còn 7.0 ngày".
+    const cfgL = await trialCfg(env);
+    const kcL = kindCfg(cfgL, KIND_3D);
     return json({
       ok: true, key, plan: 'trial', legacy: true,
+      trial: true,
+      trial_kind: KIND_3D,
+      trial_kind_state: 'claimed',
+      activated: true,
+      time_left_sec: lic.expires_at ? Math.max(0, lic.expires_at - now) : 0,
+      recheck_sec: cfgL.recheck3d,
+      quota_total: kcL ? kcL.quota : null,
       expires_at: lic.expires_at, now,
     });
   }

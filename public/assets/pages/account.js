@@ -115,7 +115,7 @@ export async function mountAccount(root) {
             <div class="field">
               <label class="label" for="pw-new">Mật khẩu mới</label>
               <input class="input" id="pw-new" type="password" autocomplete="new-password"
-                placeholder="Tối thiểu 8 ký tự, có chữ và số" aria-describedby="pw-new-hint" required>
+                placeholder="Tối thiểu 6 ký tự" aria-describedby="pw-new-hint" required>
               <span class="form-hint" id="pw-new-hint">Tối thiểu 8 ký tự, nên có cả chữ và số.</span>
             </div>
             <div class="field">

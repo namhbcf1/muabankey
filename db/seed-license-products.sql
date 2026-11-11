@@ -17,7 +17,7 @@ VALUES
  'Key license XArena No Fog gói TUẦN (7 ngày). Key được sinh tự động ngay sau khi thanh toán, kích hoạt trực tiếp trong tool. Mỗi key gắn với 1 máy tính (HWID), hỗ trợ đổi máy 1 lần.',
  '/img/license-xarena.svg', null, 70000, 150000,
  'license', 0, 0, 5, 0, 7, '7 ngày',
- '["Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7","Hạn tính từ lần kích hoạt đầu","Hỗ trợ offline grace 24 giờ"]',
+ '["Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7","Hạn tính từ lần kích hoạt đầu","Bắt buộc có mạng mỗi lần chạy (kiểm tra license online)"]',
  1, 0, 20, 'AOE1', 7, 1731000000000, 1731000000000),
 
 ('p-lic-month', 'license-xarena-thang', 'cat-license',
@@ -25,7 +25,7 @@ VALUES
  'Key license XArena No Fog gói THÁNG (30 ngày). Lựa chọn phổ biến nhất — chi phí thấp hơn gói tuần tính theo ngày. Key sinh tự động, kích hoạt trong tool.',
  '/img/license-xarena.svg', 'HOT', 180000, 300000,
  'license', 0, 0, 5, 0, 30, '30 ngày',
- '["Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7","Hạn tính từ lần kích hoạt đầu","Hỗ trợ offline grace 24 giờ"]',
+ '["Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7","Hạn tính từ lần kích hoạt đầu","Bắt buộc có mạng mỗi lần chạy (kiểm tra license online)"]',
  1, 1, 21, 'AOE1', 30, 1731000000000, 1731000000000),
 
 ('p-lic-year', 'license-xarena-nam', 'cat-license',
@@ -33,7 +33,7 @@ VALUES
  'Key license XArena No Fog gói NĂM (365 ngày). Tiết kiệm nhất cho người dùng lâu dài. Key sinh tự động, kích hoạt trong tool, hỗ trợ đổi máy.',
  '/img/license-xarena.svg', 'SALE', 590000, 1500000,
  'license', 0, 0, 5, 0, 365, '365 ngày',
- '["Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7","Hạn tính từ lần kích hoạt đầu","Hỗ trợ offline grace 24 giờ"]',
+ '["Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7","Hạn tính từ lần kích hoạt đầu","Bắt buộc có mạng mỗi lần chạy (kiểm tra license online)"]',
  1, 0, 22, 'AOE1', 365, 1731000000000, 1731000000000),
 
 ('p-lic-forever', 'license-xarena-vinh-vien', 'cat-license',
