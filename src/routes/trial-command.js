@@ -271,11 +271,13 @@ export async function apiTrialCommand(env, request) {
     }
   }
 
-  // ---- Sinh mã + grant ----
+  // Tạo mã + grant
   const key = trialKey();
   const useId = crypto.randomUUID();
   const now = nowSec();
-  const holdUntil = now + cfg.holdSec;
+  // CHỦ SHOP CHỐT: thời gian dùng thử tính NGAY TỪ LÚC TẠO MÃ,
+  // không phải từ lúc chạy tool. Đơn giản, không phụ thuộc client.
+  const expiresAt = now + kc.sec;
   const hwid = ids ? ids.hwid : null;
   const weak = ids ? ids.weak : null;
 
@@ -284,17 +286,18 @@ export async function apiTrialCommand(env, request) {
       env.DB.prepare(
         `INSERT INTO licenses
            (key, hwid, plan, note, created_at, activated_at, expires_at,
-            last_seen, last_ip, revoked, max_rebind, rebinds)
-         VALUES (?,?, 'trial', ?,?, NULL, ?, NULL, ?, 0, 0, 0)`
+            last_seen, last_ip, revoked, max_rebind, rebinds, source)
+         VALUES (?,?, 'trial', ?,?, ?, ?, NULL, ?, 0, 0, 0, 'trial')`
       ).bind(key, hwid, `Trial ${kind} - ${userLabel || 'web'}`,
-        now, holdUntil, ip),
+        now, now, expiresAt, ip),
       env.DB.prepare(
         `INSERT INTO trial_uses
            (id, user_id, kind, lic_key, hwid, device_weak, ip, ua,
             started_at, expires_at, created_at)
-         VALUES (?,?,?,?,?,?,?,?, NULL, ?, ?)`
+         VALUES (?,?,?,?,?,?,?,?, ?, ?, ?)`
       ).bind(useId, userId, kind, key, hwid, weak,
-        ip, (request.headers.get('user-agent') || '').slice(0, 200), holdUntil, now),
+        ip, (request.headers.get('user-agent') || '').slice(0, 200),
+        now, expiresAt, now),
     ]);
   } catch (e) {
     await refundUse(env, userId, kind);

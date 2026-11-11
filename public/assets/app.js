@@ -17,6 +17,7 @@ import { renderWallet, mountWallet } from './pages/wallet.js';
 import { renderSupport, mountSupport } from './pages/support.js';
 import { renderLicenses, mountLicenses } from './pages/licenses.js';
 import { renderAdmin, mountAdmin } from './pages/admin.js';
+import { renderGuide, mountGuide } from './pages/guide.js';
 
 const ROUTES = [
   { pattern: /^\/$/, render: renderHome, mount: mountHome },
@@ -30,6 +31,7 @@ const ROUTES = [
   { pattern: /^\/wallet$/, render: renderWallet, mount: mountWallet },
   { pattern: /^\/licenses$/, render: renderLicenses, mount: mountLicenses },
   { pattern: /^\/support$/, render: renderSupport, mount: mountSupport },
+  { pattern: /^\/huong-dan$/, render: renderGuide, mount: mountGuide },
   { pattern: /^\/admin$/, render: renderAdmin, mount: mountAdmin },
 ];
 

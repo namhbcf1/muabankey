@@ -138,7 +138,13 @@ export function renderHome() {
 
       <div class="alert alert-info" style="margin-top:16px">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Không cần đăng ký, không nhập gì. Bấm nút → copy 1 dòng lệnh → dán vào CMD → Enter.</span>
+        <span>Không cần đăng ký, không nhập gì. Bấm nút → copy 1 dòng lệnh → dán vào PowerShell → Enter.</span>
+      </div>
+
+      <div class="alert alert-warn" style="margin-top:10px">
+        <span class="ico">${icon('info', { size: 15 })}</span>
+        <span><strong>Bắt buộc có mạng mỗi lần chạy.</strong> Tool xác minh bản quyền với máy chủ
+        mỗi 5 phút — mất mạng là tool dừng, không có chế độ offline.</span>
       </div>
     </div>
   </section>
@@ -317,7 +323,7 @@ function showTrialCommand(data, label) {
         ${data.left == null
           ? '<strong>Không giới hạn lượt</strong> cho thiết bị này.'
           : `Còn <strong>${data.left}/${data.quota}</strong> lượt.`}
-        Giờ bắt đầu tính từ lần chạy tool đầu tiên.
+        Giờ bắt đầu tính ngay khi tạo mã. Nếu chưa chạy tool trong 24h, mã hết hiệu lực.
       </span>
     </div>
 

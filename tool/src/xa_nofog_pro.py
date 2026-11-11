@@ -767,7 +767,7 @@ def rebind_key(key, token, verbose=True):
         'expires_at': r.get('expires_at', st.get('expires_at', 0)),
         'activated_at': r.get('activated_at', st.get('activated_at', 0)),
         'plan': r.get('plan') or st.get('plan') or 'aoe1',
-        'grace_hours': r.get('grace_hours', 24),
+        'grace_hours': r.get('grace_hours', 0),   # BAT BUOC ONLINE: khong offline grace
         'last_ok': time.time(),
         'mono_last_ok': _mono(),
         'mode': 'server',
@@ -824,7 +824,7 @@ def activate(key, verbose=True, token=None):
         # cu = 'trial' se song sot -> _grace_left() tra 0 vinh vien cho
         # khach DA TRA TIEN.
         'plan': r.get('plan') or 'aoe1',
-        'grace_hours': r.get('grace_hours', 24),
+        'grace_hours': r.get('grace_hours', 0),   # BAT BUOC ONLINE: khong offline grace
         'last_ok': time.time(),
         'mode': 'server',
     })
@@ -855,7 +855,7 @@ def check_online(st=None, verbose=True):
         'expires_at': r.get('expires_at', 0),
         'activated_at': r.get('activated_at', 0),
         'plan': r.get('plan'),
-        'grace_hours': r.get('grace_hours', 24),
+        'grace_hours': r.get('grace_hours', 0),   # BAT BUOC ONLINE: khong offline grace
         'last_ok': time.time(),
         'mono_last_ok': _mono(),
     })
@@ -891,7 +891,7 @@ def _grace_left(st):
         return 0
     if elapsed < 0:
         elapsed = 0
-    return st.get('grace_hours', 24) * 3600 - elapsed
+    return st.get('grace_hours', 0) * 3600 - elapsed   # 0 = bat buoc online
 
 
 # =============================================================================
@@ -2716,6 +2716,13 @@ def run():
         print('(de cua so nay mo. Ctrl-C de dung)')
         print('(can mang: tool xac minh ban quyen moi %d phut)'
               % (TRIAL_RECHECK_SEC // 60))
+        if REQUIRE_ONLINE:
+            # BAT BUOC ONLINE (chu shop chot): khong co offline grace.
+            # Mat mang = tool dung ngay, khong cho phep chay tiep.
+            print('')
+            print('  *** BAT BUOC CO MANG MOI LUC CHAY ***')
+            print('  Khong co che do offline. Mat mang la tool dung.')
+            print('  Kiem tra: mo https://xienhl.com xem vao duoc khong.')
 
     cur_pid = 0
     h = None

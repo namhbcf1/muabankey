@@ -144,6 +144,7 @@ export function renderSupport() {
             <a class="btn btn-primary btn-block" href="https://t.me/muabankey" target="_blank" rel="noopener">
               ${icon('send', { size: 15 })} Telegram — phản hồi nhanh nhất
             </a>
+        <a class="btn btn-ghost btn-sm" href="#/huong-dan">Hướng dẫn cài đặt (SmartScreen)</a>
             <div class="sp-contact">
               <a class="sp-contact-item" href="https://zalo.me/0836768597" target="_blank" rel="noopener">
                 <span class="ic-box">${icon('message', { size: 15 })}</span>
