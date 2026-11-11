@@ -12,6 +12,7 @@ import * as products from './routes/products.js';
 import * as orders from './routes/orders.js';
 import * as wallet from './routes/wallet.js';
 import * as payments from './routes/payments.js';
+import * as sepayRc from './routes/sepay-reconcile.js';
 import * as admin from './routes/admin.js';
 import * as ai from './routes/ai.js';
 import * as license from './routes/license.js';
@@ -122,6 +123,11 @@ r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, 
   r.post('/api/admin/orders/:id/confirm-payment', (env, req, p) => payments.adminConfirmPayment(env, req, p.id));
   // Sổ tiền vào: matched / unmatched / wrong_amount / claimed
   r.get('/api/admin/payments', payments.adminListPayments);
+  // Đối soát SePay: tìm tiền vào webhook bỏ lỡ
+  r.get('/api/admin/sepay/reconcile', sepayRc.reconcileSePay);
+  r.post('/api/admin/sepay/sync', sepayRc.syncSePayTxn);
+  // Hạn mức 50 GD/tháng + cửa sổ giờ tự động
+  r.get('/api/admin/sepay/quota', sepayRc.sepayQuota);
 r.post('/api/admin/settings/payos', wallet.adminSetPayosKey);
 r.get('/api/admin/trial/accounts', trialAdmin.adminTrialAccounts);
 r.get('/api/admin/trial/uses', trialAdmin.adminTrialUses);

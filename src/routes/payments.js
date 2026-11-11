@@ -524,9 +524,9 @@ export async function confirmOrderPaid(env, {
 
          (id, order_id, order_code, amount, expected, method, txn_ref,
 
-          content, state, confirmed_by, raw, at)
+          content, state, confirmed_by, raw, at, is_test)
 
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
     ).bind(payId, order.id, order.code, paid, expected,
 
@@ -536,7 +536,8 @@ export async function confirmOrderPaid(env, {
 
       source === 'sepay' || source === 'payos' ? source : (adminId || 'admin'),
 
-      raw ? JSON.stringify(raw).slice(0, 4000) : null, now).run();
+      raw ? JSON.stringify(raw).slice(0, 4000) : null, now,
+      isTest ? 1 : 0).run();
 
   } catch (e) {
 
@@ -805,6 +806,13 @@ export async function sepayWebhook(env, request) {
   }
 
   const amount = Math.floor(Number(body.transferAmount) || 0);
+  /*
+   * NHẬN DIỆN GIAO DỊCH TEST để KHÔNG tính vào hạn mức 50 GD/tháng.
+   * Chủ shop: "hạn chế test bằng sepay". Test tự động dùng mã
+   * referenceCode bắt đầu bằng các tiền tố dưới đây.
+   */
+  const txnRefRaw = String(body.referenceCode || body.id || '');
+  const isTest = /^(TEST|PROBE|SHORT|TOPUP|OVER|TWICE|MULTI|OUT|WRONGACC|NOMATCH|SAME|TWO|AGAIN|EXP|CAN|OOS|APPROVE|E2E)/i.test(txnRefRaw);
 
   if (amount <= 0) return ok({ matched: false, reason: 'ZERO_AMOUNT' });
 
@@ -834,7 +842,7 @@ export async function sepayWebhook(env, request) {
 
         txnRef || null, content, 'unmatched', 'sepay',
 
-        JSON.stringify(body).slice(0, 4000), nowSec()).run();
+        JSON.stringify(body).slice(0, 4000), nowSec(), isTest ? 1 : 0).run();
 
     } catch { /* trùng txn_ref -> bỏ qua */ }
 
@@ -849,6 +857,44 @@ export async function sepayWebhook(env, request) {
 
     return ok({ matched: false, reason: 'NO_ORDER_MATCH' });
 
+  }
+
+
+  /*
+   * CỬA SỔ GIỜ TỰ ĐỘNG XÁC NHẬN (chủ shop chốt):
+   *   00:00 - 11:59  -> tự động giao ngay
+   *   12:00 - 23:59  -> GHI NHẬN tiền + báo Telegram, admin duyệt tay
+   *
+   * Lý do: admin muốn kiểm soát buổi chiều, và giảm hạn mức free.
+   */
+  const { autoWindow } = await import('./sepay-reconcile.js');
+  const win = await autoWindow(env);
+
+  if (!win.inWindow) {
+    // Ngoài cửa sổ: ghi sổ + báo Telegram, KHÔNG giao
+    try {
+      await env.DB.prepare(
+        `INSERT INTO payments
+           (id, order_id, order_code, amount, expected, method, txn_ref,
+            content, state, confirmed_by, raw, at)
+         VALUES (?,?,?,?,?,?,?,?,'matched','sepay-window',?,?,?)`
+      ).bind(crypto.randomUUID(), order.id, order.code, amount,
+        Number(order.total) || 0, 'sepay', txnRef || null, content || null,
+        JSON.stringify(body).slice(0, 3000), nowSec(), isTest ? 1 : 0).run();
+    } catch { /* trùng txn_ref -> đã ghi rồi */ }
+
+    try {
+      const { notifyPaymentClaim } = await import('../lib/telegram-pay.js');
+      await notifyPaymentClaim(env, order, { username: 'SePay ngoai gio tu dong' });
+    } catch { /* bỏ qua */ }
+
+    return ok({
+      matched: true,
+      order: order.code,
+      delivered: false,
+      reason: 'AWAITING_ADMIN_APPROVAL',
+      window: { from: win.from, to: win.to, hour: win.hour },
+    });
   }
 
   const r = await confirmOrderPaid(env, {
