@@ -349,6 +349,19 @@ export async function claimOrderPaid(env, request, orderId) {
 
   ).bind(order.id, nowSec() - 120).first();
 
+ // Chống spam theo USER: tối đa 3 đơn / 10 phút.
+ // Trước đây chỉ theo đơn -> 1 tài khoản bấm 8 đơn = 8 tin Telegram.
+ const userRecent = await env.DB.prepare(
+   `SELECT COUNT(*) AS n FROM payments p
+    JOIN orders o ON o.id = p.order_id
+    WHERE o.user_id = ? AND p.state = 'claimed' AND p.at > ?`
+ ).bind(user.id, nowSec() - 600).first();
+ if ((userRecent?.n || 0) >= 3) {
+   throw new ApiError(429,
+     'Bạn đã báo nhiều lần. Vui lòng chờ admin kiểm tra hoặc nhắn Zalo 0836768597.',
+     'TOO_MANY_CLAIMS');
+ }
+
   if ((recent?.n || 0) > 0) {
 
     return ok({ already: true, reason: 'Vừa báo rồi, admin đang kiểm tra.' });
@@ -629,6 +642,14 @@ async function deliverAndFinish(env, order, { amount, source, adminId, now, exce
        WHERE id = ? AND status = 'processing'`
 
     ).bind(`Giao lỗi: ${String(e?.message || e).slice(0, 200)}`, order.id).run();
+
+    // P0: TRƯỚC ĐÂY IM LẶNG — admin không biết khách đã trả tiền
+    // mà chưa nhận hàng. Khách thấy "đang xử lý" vô hạn.
+    try {
+      const { notifyOutOfStock } = await import('../lib/telegram-pay.js');
+      await notifyOutOfStock(env, order,
+        String(e?.message || e).slice(0, 150));
+    } catch { /* bỏ qua */ }
 
     return {
 

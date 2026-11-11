@@ -610,15 +610,42 @@ export async function adminDeliverManual(env, request, orderId) {
   const admin = await requireAdmin(env, request);
   const o = await env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
   if (!o) throw new ApiError(404, 'Đơn hàng không tồn tại', 'NOT_FOUND');
-  // Chỉ giao đơn đã thanh toán — trước đây giao được cả đơn pending
+
+  if (o.status === 'delivered') {
+    return ok({ id: orderId, already: true });
+  }
+
+  // Chỉ giao đơn đã thanh toán
   if (!['paid', 'delivered'].includes(o.status)) {
     throw new ApiError(409,
       `Chỉ giao đơn đã thanh toán. Đơn này đang "${o.status}".`, 'BAD_STATE');
   }
-  await env.DB.prepare("UPDATE orders SET status='delivered', delivered_at = ? WHERE id = ?")
-    .bind(Date.now(), orderId).run();
-  await audit(env, admin.id, 'order.manual_deliver', orderId, {});
-  return ok({ id: orderId });
+
+  /*
+   * P0: TRƯỚC ĐÂY hàm này chỉ UPDATE status='delivered' mà KHÔNG cấp key.
+   * Khách trả tiền -> admin bấm "Giao" -> đơn báo "đã giao" nhưng
+   * delivered_keys rỗng -> KHÁCH MẤT HÀNG. Đây là đường admin dùng để
+   * cứu đơn giao lỗi, nên cứu sai cách còn tệ hơn không cứu.
+   * Nay phải gọi deliverOrderItems() để thực sự cấp key/license.
+   */
+  const result = await deliverOrderItems(env, o);
+
+  const finalStatus = result.pendingManual ? 'paid' : 'delivered';
+  await env.DB.prepare(
+    `UPDATE orders SET status = ?, delivered_at = ? WHERE id = ?`
+  ).bind(finalStatus, result.pendingManual ? null : Date.now(), orderId).run();
+
+  await audit(env, admin.id, 'order.manual_deliver', orderId, {
+    delivered: (result.delivered || []).length,
+    pendingManual: !!result.pendingManual,
+  });
+
+  return ok({
+    id: orderId,
+    status: finalStatus,
+    delivered: result.delivered || [],
+    pendingManual: !!result.pendingManual,
+  });
 }
 
 export async function adminRefund(env, request, orderId) {
