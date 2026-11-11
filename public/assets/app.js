@@ -29,8 +29,16 @@ const ROUTES = [
   { pattern: /^\/orders$/, render: renderOrders, mount: mountOrders },
   // /wallet bỏ (không nạp tiền). Chuyển sang đơn hàng.
   { pattern: /^\/wallet$/, render: renderOrders, mount: mountOrders },
-  // Trang thanh toán QR theo đơn
-  { pattern: /^\/order\/([^/]+)$/, render: renderCheckout, mount: mountCheckout, param: true },
+  // Trang thanh toán QR theo đơn.
+  // PHẢI bọc mount: route có param:true nên app gọi mount(app, param, query)
+  // trong khi mountCheckout(root, query) -> nếu truyền thẳng thì UUID thành
+  // query, query.mode=undefined, items=state.cart -> TẠO ĐƠN MỚI SAI GIÁ.
+  {
+    pattern: /^\/order\/([^/]+)$/,
+    render: renderCheckout,
+    mount: (app, id) => mountCheckout(app, { mode: 'order', orderId: id }),
+    param: true,
+  },
   { pattern: /^\/licenses$/, render: renderLicenses, mount: mountLicenses },
   { pattern: /^\/support$/, render: renderSupport, mount: mountSupport },
   { pattern: /^\/huong-dan$/, render: renderGuide, mount: mountGuide },

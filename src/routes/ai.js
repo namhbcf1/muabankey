@@ -8,7 +8,7 @@ const SYSTEM_PROMPT = `Bạn là "Key Bot" - trợ lý tư vấn bán hàng củ
 NHIỆM VỤ:
 - Tư vấn sản phẩm phù hợp nhu cầu khách hàng (Windows, Office, AI tools, thiết kế, streaming, VPN, dev tools)
 - Giải đáp về cách kích hoạt, bảo hành, hoàn tiền
-- Hướng dẫn nạp tiền vào ví và đặt hàng
+- Hướng dẫn thanh toán QR và đặt hàng
 
 NGUYÊN TẮC:
 - Trả lời bằng tiếng Việt, thân thiện, ngắn gọn (tối đa 120 từ)
@@ -43,7 +43,7 @@ export async function aiChat(env, request) {
     { role: 'system', content: SYSTEM_PROMPT },
     {
       role: 'system',
-      content: `DANH SÁCH SẢN PHẨM HIỆN CÓ:\n${catalog}\n\nGiá niêm yết bằng VND. Thanh toán qua ví điện tử.`,
+      content: `DANH SÁCH SẢN PHẨM HIỆN CÓ:\n${catalog}\n\nGiá niêm yết bằng VND. Thanh toán qua chuyển khoản QR.`,
     },
     ...history
       .filter((h) => h && typeof h.content === 'string' && (h.role === 'user' || h.role === 'assistant'))

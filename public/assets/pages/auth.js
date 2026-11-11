@@ -42,7 +42,7 @@ export function renderLogin(query) {
     <div class="auth-head">
       <div class="auth-icon">${icon('login', { size: 20 })}</div>
       <h1 class="auth-title">Đăng nhập</h1>
-      <p class="auth-sub">Quản lý đơn hàng, bản quyền và số dư ví của bạn.</p>
+      <p class="auth-sub">Quản lý đơn hàng và bản quyền của bạn.</p>
     </div>
     <form id="login-form" novalidate>
       <div class="field">

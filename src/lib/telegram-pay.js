@@ -119,3 +119,37 @@ export async function notifyOutOfStock(env, order, note) {
     },
   });
 }
+
+/** Khách chuyển THIẾU tiền — tiền đã vào ngân hàng, admin phải biết. */
+export async function notifyUnderpaid(env, order, info = {}) {
+  const cfg = await tgConfig(env);
+  if (!cfg.token || !cfg.chatId) return;
+
+  const paid = Number(info.paid) || 0;
+  const expected = Number(info.expected) || Number(order.total) || 0;
+  const missing = Number(info.missing) || (expected - paid);
+
+  const lines = [
+    '⚠️ *CHUYỂN THIẾU TIỀN*',
+    '',
+    `Mã đơn : \`${mdEsc(order.code)}\``,
+    `Cần thu : *${mdEsc(vnd(expected))}*`,
+    `Đã nhận : *${mdEsc(vnd(paid))}*`,
+    `Còn thiếu: *${mdEsc(vnd(missing))}*`,
+    '',
+    '_Đơn vẫn chờ. Khách chuyển bù thì tự giao._',
+    '_Nếu muốn giao luôn: bấm Duyệt._',
+  ];
+
+  await tgCall(env, 'sendMessage', {
+    chat_id: cfg.chatId,
+    text: lines.join('\n'),
+    parse_mode: 'MarkdownV2',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Duyệt dù thiếu', callback_data: `py:ok:${order.id}` },
+        { text: '❌ Chưa xử lý', callback_data: `py:no:${order.id}` },
+      ]],
+    },
+  });
+}

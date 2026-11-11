@@ -231,7 +231,7 @@ async function renderOrders(host) {
 
     host.querySelectorAll('[data-refund]').forEach((b) => {
       b.onclick = async () => {
-        if (!await confirmDialog('Hoàn tiền đơn hàng?', 'Số tiền sẽ được cộng lại vào ví khách hàng.', 'Hoàn tiền')) return;
+        if (!await confirmDialog('Hoàn tiền đơn hàng?', 'Hoàn tiền qua chuyển khoản tay cho khách.', 'Hoàn tiền')) return;
         try {
           await api(`/api/admin/orders/${b.dataset.refund}/refund`, { method: 'POST' });
           toast('Đã hoàn tiền', 'success');
@@ -253,18 +253,37 @@ const TOPUP_STATUS = {
 };
 
 async function renderTopups(host) {
-  let filter = 'pending';
+  // Tab "Chờ thanh toán": đơn QR chờ tiền + sổ tiền vào.
+  // Thay hệ ví cũ (bảng topups) — nay tiền vào gắn với ĐƠN.
+  let stateFilter = '';
+
   const load = async () => {
-    const d = await api('/api/admin/topups' + (filter ? '?status=' + filter : ''));
-    const s = d.stats || {};
+    const [payData, orderData] = await Promise.all([
+      api('/api/admin/payments' + (stateFilter ? '?state=' + stateFilter : '')),
+      api('/api/admin/orders?status=pending'),
+    ]);
+
+    const st = payData.stats || {};
+    const unmatched = (st.unmatched?.count || 0);
+    const wrongAmt = (st.wrong_amount?.count || 0);
+    const claimed = (st.claimed?.count || 0);
+    const pendingOrders = (orderData.orders || []).length;
+
+    const STATE_LABEL = {
+      matched: ['pill-green', 'Khớp đơn', 'check'],
+      unmatched: ['pill-red', 'Không khớp', 'alert'],
+      wrong_amount: ['pill-yellow', 'Thiếu tiền', 'clock'],
+      claimed: ['pill-blue', 'Khách báo đã CK', 'info'],
+      duplicate: ['pill-gray', 'Trùng', 'help'],
+    };
 
     host.innerHTML = `
       <div class="stat-grid">
         ${[
-          ['chart', fmtNum(s.total || 0), 'Tổng lệnh nạp'],
-          ['clock', fmtNum(s.pending || 0), 'Chờ duyệt'],
-          ['check', fmtNum(s.paid || 0), 'Đã nhận'],
-          ['coins', fmtVnd(s.totalAmount || 0), 'Tổng đã nạp'],
+          ['clock', fmtNum(pendingOrders), 'Đơn chờ chuyển khoản'],
+          ['info', fmtNum(claimed), 'Khách báo đã CK'],
+          ['alert', fmtNum(unmatched), 'Tiền chưa gán đơn'],
+          ['coins', fmtVnd(st.matched?.total || 0), 'Tổng đã khớp'],
         ].map(([ico, v, l]) => `
           <div class="stat-card">
             <div class="ico">${icon(ico, { size: 16 })}</div>
@@ -273,138 +292,135 @@ async function renderTopups(host) {
           </div>`).join('')}
       </div>
 
-      ${s.pending > 0 ? `
-      <div class="alert alert-warn">
+      ${unmatched > 0 ? `
+      <div class="alert alert-error">
         <span class="ico">${icon('alert', { size: 15 })}</span>
-        <span>Có <strong>${s.pending}</strong> lệnh nạp đang chờ.
-        Mở app ngân hàng, đối chiếu nội dung <code class="mono">NAPxxxxx</code>,
-        rồi bấm <strong>Duyệt</strong>.</span>
+        <span><strong>${unmatched} giao dịch tiền vào KHÔNG khớp đơn</strong>
+        (tổng ${fmtVnd(st.unmatched?.total || 0)}). Khách có thể ghi sai nội dung.
+        Kiểm tra sao kê rồi xác nhận tay cho đơn tương ứng.</span>
+      </div>` : ''}
+
+      ${wrongAmt > 0 ? `
+      <div class="alert alert-warn">
+        <span class="ico">${icon('clock', { size: 15 })}</span>
+        <span><strong>${wrongAmt} đơn chuyển thiếu tiền</strong>
+        (tổng thiếu ${fmtVnd(st.wrong_amount?.total || 0)}).
+        Khách chuyển bù sẽ tự giao; hoặc bấm Duyệt để giao luôn.</span>
       </div>` : ''}
 
       <div class="panel">
         <div class="adm-panel-head">
-          <div class="panel-title">${icon('coins', { size: 15 })} Lệnh nạp tiền (${d.topups.length})</div>
+          <div class="panel-title">${icon('coins', { size: 15 })} Đơn chờ thanh toán (${pendingOrders})</div>
+        </div>
+        <div class="table-wrap adm-table-wrap">
+          <table class="adm-table">
+            <thead><tr>
+              <th scope="col">Mã đơn</th>
+              <th scope="col" class="adm-num">Số tiền</th>
+              <th scope="col">Khách</th>
+              <th scope="col">Tạo</th>
+              <th scope="col">Thao tác</th>
+            </tr></thead>
+            <tbody>
+              ${pendingOrders === 0
+                ? '<tr><td colspan="5" class="adm-empty">Không có đơn chờ</td></tr>'
+                : (orderData.orders || []).map((o) => `
+                  <tr>
+                    <td><span class="mono">${esc(o.code)}</span></td>
+                    <td class="adm-num"><strong>${fmtVnd(o.total)}</strong></td>
+                    <td>
+                      <div class="adm-cell-main">${esc(o.customer || '—')}</div>
+                      <div class="adm-cell-sub">${esc(o.email || '')}</div>
+                    </td>
+                    <td class="adm-cell-sub">${fmtDate(o.createdAt)}</td>
+                    <td>
+                      <div class="adm-actions">
+                        <button type="button" class="btn btn-primary btn-sm"
+                          data-confirm-pay="${esc(o.id)}" data-code="${esc(o.code)}"
+                          data-amt="${esc(o.total)}">${icon('check', { size: 13 })} Đã nhận tiền</button>
+                      </div>
+                    </td>
+                  </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="adm-panel-head">
+          <div class="panel-title">${icon('chart', { size: 15 })} Sổ tiền vào (${(payData.payments || []).length})</div>
           <div class="adm-toolbar">
-            <label class="sr-only" for="tp-filter">Lọc theo trạng thái lệnh nạp</label>
-            <select class="select" id="tp-filter">
+            <label class="sr-only" for="pay-filter">Lọc trạng thái</label>
+            <select class="select" id="pay-filter">
               <option value="">Tất cả</option>
-              ${['pending', 'paid', 'partial', 'expired', 'cancelled'].map((k) =>
-                `<option value="${k}"${filter === k ? ' selected' : ''}>${esc(TOPUP_STATUS[k][1])}</option>`).join('')}
+              ${['matched', 'unmatched', 'wrong_amount', 'claimed', 'duplicate'].map((k) =>
+                `<option value="${k}"${stateFilter === k ? ' selected' : ''}>${STATE_LABEL[k][1]}</option>`).join('')}
             </select>
           </div>
         </div>
         <div class="table-wrap adm-table-wrap">
           <table class="adm-table">
             <thead><tr>
+              <th scope="col">Mã đơn</th>
+              <th scope="col" class="adm-num">Nhận</th>
+              <th scope="col" class="adm-num">Cần</th>
               <th scope="col">Nội dung CK</th>
-              <th scope="col" class="adm-num">Số tiền</th>
-              <th scope="col">Khách</th>
               <th scope="col">Trạng thái</th>
-              <th scope="col">Tạo</th>
-              <th scope="col">Thao tác</th>
+              <th scope="col">Lúc</th>
             </tr></thead>
             <tbody>
-              ${d.topups.length === 0
-                ? `<tr><td colspan="6" class="adm-empty">Không có lệnh nạp</td></tr>`
-                : d.topups.map((t) => {
-                  const [cls, label, icoName] = TOPUP_STATUS[t.status] || ['pill-gray', t.status, 'help'];
+              ${(payData.payments || []).length === 0
+                ? '<tr><td colspan="6" class="adm-empty">Chưa có giao dịch</td></tr>'
+                : (payData.payments || []).map((p) => {
+                  const [cls, label, icoName] = STATE_LABEL[p.state] || ['pill-gray', p.state, 'help'];
                   return `<tr>
-                    <td>
-                      <button type="button" class="adm-copy mono" data-copy-memo="${esc(t.memo)}"
-                        title="Bấm để sao chép nội dung chuyển khoản">${esc(t.memo)}</button>
-                    </td>
-                    <td class="adm-num"><strong>${fmtVnd(t.amount)}</strong></td>
-                    <td>
-                      <div class="adm-cell-main">${esc(t.customer || '—')}</div>
-                      <div class="adm-cell-sub">${esc(t.email || '')}</div>
-                    </td>
+                    <td><span class="mono">${esc(p.orderCode || '—')}</span></td>
+                    <td class="adm-num"><strong>${fmtVnd(p.amount)}</strong></td>
+                    <td class="adm-num">${p.expected ? fmtVnd(p.expected) : '—'}</td>
+                    <td><span class="adm-cell-sub mono">${esc((p.content || '').slice(0, 24))}</span></td>
                     <td><span class="pill ${cls}">${icon(icoName, { size: 11 })} ${esc(label)}</span></td>
-                    <td class="adm-cell-sub">${fmtDate(t.createdAt)}</td>
-                    <td>
-                      <div class="adm-actions">
-                        ${t.status !== 'paid'
-                          ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${esc(t.id)}" data-amt="${esc(t.amount)}">${icon('check', { size: 13 })} Duyệt</button>`
-                          : ''}
-                        ${['pending', 'expired'].includes(t.status)
-                          ? `<button type="button" class="btn btn-ghost btn-sm" data-reject="${esc(t.id)}">Huỷ</button>`
-                          : ''}
-                      </div>
-                    </td>
+                    <td class="adm-cell-sub">${fmtDate((p.at || 0) * 1000)}</td>
                   </tr>`;
                 }).join('')}
             </tbody>
           </table>
         </div>
-      </div>`;
+      </div>
+    `;
 
-    host.querySelector('#tp-filter').onchange = (e) => {
-      filter = e.target.value;
-      load();
-    };
+    const sel = host.querySelector('#pay-filter');
+    if (sel) {
+      sel.onchange = () => { stateFilter = sel.value; load(); };
+    }
 
-    host.querySelectorAll('[data-copy-memo]').forEach((el) => {
-      el.onclick = async () => {
-        const { copyText } = await import('../lib.js');
-        const okc = await copyText(el.dataset.copyMemo);
-        toast(okc ? 'Đã copy nội dung CK: ' + el.dataset.copyMemo : 'Không copy được',
-          okc ? 'success' : 'error');
-      };
-    });
-
-    host.querySelectorAll('[data-approve]').forEach((b) => {
-      b.onclick = () => {
-        openModal(`
-          <div class="modal-title">Duyệt lệnh nạp</div>
-          <div class="modal-sub">
-            Chỉ duyệt sau khi đã <strong>tự kiểm tra app ngân hàng</strong> và thấy
-            giao dịch với đúng nội dung này.
-          </div>
-          <div class="field">
-            <label class="label" for="ap-amt">Số tiền cộng vào ví (₫)</label>
-            <input class="input" id="ap-amt" type="number" value="${b.dataset.amt}">
-            <div class="form-hint">Sửa nếu khách chuyển số khác.</div>
-          </div>
-          <div class="field">
-            <label class="label" for="ap-note">Ghi chú</label>
-            <input class="input" id="ap-note" placeholder="VD: MB 1234 500k luc 18:30">
-          </div>
-          <div class="adm-actions-end">
-            <button type="button" class="btn btn-ghost" data-cancel>Huỷ</button>
-            <button type="button" class="btn btn-primary" data-ok>${icon('check', { size: 14 })} Xác nhận đã nhận tiền</button>
-          </div>
-        `, {
-          onMount(overlay, close) {
-            overlay.querySelector('[data-cancel]').onclick = close;
-            overlay.querySelector('[data-ok]').onclick = async () => {
-              const body = {
-                amount: Number(overlay.querySelector('#ap-amt').value) || undefined,
-                note: overlay.querySelector('#ap-note').value.trim() || undefined,
-              };
-              try {
-                const r = await api(`/api/admin/topups/${b.dataset.approve}/approve`, {
-                  method: 'POST', body,
-                });
-                toast(`Đã cộng ${fmtVnd(r.credited)} vào ví`, 'success', 5000);
-                close();
-                load();
-              } catch (e) { toast(e.message, 'error'); }
-            };
-          },
-        });
-      };
-    });
-
-    host.querySelectorAll('[data-reject]').forEach((b) => {
+    host.querySelectorAll('[data-confirm-pay]').forEach((b) => {
       b.onclick = async () => {
-        if (!await confirmDialog('Huỷ lệnh nạp?', 'Không cộng tiền. Chỉ dùng khi chắc chắn không có giao dịch.', 'Huỷ lệnh')) return;
+        const code = b.dataset.code;
+        const amt = Number(b.dataset.amt) || 0;
+        if (!(await confirmDialog({
+          title: 'Xác nhận đã nhận tiền',
+          message: `Đơn ${code} — ${fmtVnd(amt)}.\n\n`
+            + 'Chỉ bấm khi bạn ĐÃ THẤY tiền trong app ngân hàng. '
+            + 'Hệ thống sẽ giao key ngay cho khách.',
+          confirmText: 'Đã nhận tiền — giao key',
+        }))) return;
+
+        b.disabled = true;
         try {
-          await api(`/api/admin/topups/${b.dataset.reject}/reject`, { method: 'POST', body: {} });
-          toast('Đã huỷ lệnh nạp', 'success');
+          const r = await api(`/api/admin/orders/${b.dataset.confirmPay}/confirm-payment`, {
+            method: 'POST', body: {},
+          });
+          toast(r.delivered ? 'Đã xác nhận và giao key' : 'Đã xác nhận (chờ giao tay)',
+            'success');
           load();
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) {
+          toast(e.message, 'error', 6000);
+          b.disabled = false;
+        }
       };
     });
   };
+
   await load();
 }
 
@@ -1233,7 +1249,7 @@ async function renderUsers(host) {
           </tr></thead>
           <tbody>
             ${d.users.length === 0
-              ? `<tr><td colspan="7" class="adm-empty">Chưa có người dùng</td></tr>`
+              ? `<tr><td colspan="6" class="adm-empty">Chưa có người dùng</td></tr>`
               : d.users.map((u) => `
               <tr>
                 <td class="adm-cell-main">${esc(u.email)}</td>
@@ -1244,8 +1260,6 @@ async function renderUsers(host) {
                 <td><span class="pill ${u.status === 'active' ? 'pill-green' : 'pill-red'}">${esc(u.status)}</span></td>
                 <td>
                   <div class="adm-actions">
-                    <button type="button" class="btn btn-ghost btn-sm" data-adj="${esc(u.id)}" data-email="${esc(u.email)}"
-                      aria-label="Điều chỉnh số dư" title="Điều chỉnh số dư">${icon('wallet', { size: 14 })}</button>
                     <button type="button" class="btn btn-ghost btn-sm" data-lock="${esc(u.id)}"
                       aria-label="${u.status === 'active' ? 'Khoá tài khoản' : 'Mở khoá tài khoản'}"
                       title="${u.status === 'active' ? 'Khoá tài khoản' : 'Mở khoá tài khoản'}">${u.status === 'active' ? icon('lock', { size: 14 }) : icon('unlock', { size: 14 })}</button>
@@ -1372,7 +1386,7 @@ async function renderSettings(host) {
       <div class="adm-section">
         <div class="panel-title adm-panel-title-sm">${icon('link', { size: 14 })} Kết nối webhook tự động</div>
         <p class="adm-p">
-          Dán URL bên dưới vào dashboard dịch vụ để tiền tự vào ví khi khách chuyển khoản.
+          Dán URL bên dưới vào dashboard dịch vụ để đơn tự xác nhận khi khách chuyển khoản.
           Không nối thì phải duyệt tay ở tab <strong>Chờ thanh toán</strong>.
         </p>
 

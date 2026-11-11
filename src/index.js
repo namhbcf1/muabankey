@@ -118,6 +118,10 @@ r.delete('/api/admin/keys/:id', (env, req, p) => products.adminDeleteKey(env, re
 r.get('/api/admin/orders', orders.adminListOrders);
 r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManual(env, req, p.id));
 r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, req, p.id));
+  // Xác nhận đã thấy tiền -> giao key. Đường CỨU khi webhook trượt.
+  r.post('/api/admin/orders/:id/confirm-payment', (env, req, p) => payments.adminConfirmPayment(env, req, p.id));
+  // Sổ tiền vào: matched / unmatched / wrong_amount / claimed
+  r.get('/api/admin/payments', payments.adminListPayments);
 r.post('/api/admin/settings/payos', wallet.adminSetPayosKey);
 r.get('/api/admin/trial/accounts', trialAdmin.adminTrialAccounts);
 r.get('/api/admin/trial/uses', trialAdmin.adminTrialUses);
@@ -135,6 +139,19 @@ r.post('/api/admin/telegram/test', wallet.adminTelegramTest);
 r.get('/api/admin/topups', wallet.adminListTopups);
 r.post('/api/admin/topups/:id/approve', (env, req, p) => wallet.adminApproveTopup(env, req, p.id));
 r.post('/api/admin/topups/:id/reject', (env, req, p) => wallet.adminRejectTopup(env, req, p.id));
+
+/*
+ * Điều chỉnh số dư là đường DUY NHẤT để admin hoàn tiền tay sau khi bỏ ví:
+ * `adminRefund` cộng vào `users.balance` mà khách không còn chỗ tiêu, nên khi
+ * cần trả tiền thật cho khách, admin dùng route này để ghi nhận và đối soát.
+ * Trước đây route bị xoá cùng đợt bỏ ví nhưng frontend vẫn gọi → nút trong
+ * trang Người dùng luôn trả 404.
+ */
+r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
+
+/* Xác nhận thanh toán TAY khi webhook trượt — đường cứu để không treo đơn. */
+r.post('/api/admin/orders/:id/confirm-payment', (env, req, p) => payments.adminConfirmPayment(env, req, p.id));
+r.get('/api/admin/payments', payments.adminListPayments);
 
 r.get('/api/admin/licenses', license.adminLicenses);
 r.post('/api/admin/licenses', license.adminIssueLicenses);

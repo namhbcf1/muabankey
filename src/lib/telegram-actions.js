@@ -100,6 +100,67 @@ export async function handleCallback(env, cq, deps) {
     return { handled: true, rejected: true };
   }
 
+  /* ================= THANH TOÁN QR ================= */
+  // Nút từ telegram-pay.js: py:ok:<orderId> / py:no:<orderId>
+  // Admin xác nhận đã thấy tiền -> giao key. Đây là đường CỨU khi webhook
+  // trượt (SePay chết, khách ghi sai nội dung, chuyển tay).
+  if (kind === 'py') {
+    const o = await DB.prepare('SELECT * FROM orders WHERE id = ?').bind(target).first();
+    if (!o) {
+      await tgAnswerCallback(env, cq.id, 'Không tìm thấy đơn', true);
+      return { handled: true, ignored: 'not_found' };
+    }
+
+    if (action === 'no') {
+      await tgAnswerCallback(env, cq.id, 'Đã ghi nhận: chưa thấy tiền');
+      if (cq.message) {
+        await tgUpdateMessage(env, cq.message.chat.id, cq.message.message_id,
+          `❌ *CHƯA THẤY TIỀN*\n\nMã: \`${mdEsc(o.code)}\`\n` +
+          `_Kiểm tra lại sao kê. Đơn vẫn chờ tại trang khách._`);
+      }
+      return { handled: true, rejected: true };
+    }
+
+    if (action === 'ok') {
+      if (o.status === 'delivered') {
+        await tgAnswerCallback(env, cq.id, '✅ Đơn đã giao rồi', true);
+        return { handled: true, duplicated: true };
+      }
+      // Đi qua confirmOrderPaid() — cửa duy nhất, có chống trùng
+      const { confirmOrderPaid } = await import('../routes/payments.js');
+      const r = await confirmOrderPaid(env, {
+        orderId: target,
+        amount: o.total,
+        source: 'telegram',
+        adminId: adminName || 'telegram',
+      });
+
+      if (r.duplicated) {
+        await tgAnswerCallback(env, cq.id, 'Đã xác nhận trước đó rồi', true);
+        return { handled: true, duplicated: true };
+      }
+      if (!r.ok) {
+        await tgAnswerCallback(env, cq.id,
+          `❌ ${r.reason || r.error || 'Không giao được'}`, true);
+        return { handled: true, error: r.reason };
+      }
+
+      await audit(env, null, 'order.pay_confirm', target, {
+        via: 'telegram', by: adminName, amount: o.total,
+      });
+      await tgAnswerCallback(env, cq.id, '✅ Đã xác nhận & giao key');
+      if (cq.message) {
+        await tgUpdateMessage(env, cq.message.chat.id, cq.message.message_id,
+          `✅ *ĐÃ XÁC NHẬN THANH TOÁN*\n\n` +
+          `Mã: \`${mdEsc(o.code)}\`\n` +
+          `Tổng: *${mdEsc(vnd(o.total))}*\n` +
+          `Người duyệt: ${mdEsc(adminName)}\n` +
+          `_Key đã giao cho khách._`);
+      }
+      return { handled: true, delivered: !!r.delivered };
+    }
+  }
+
   /* ================= ĐƠN HÀNG ================= */
   if (kind === 'od') {
     const o = await DB.prepare('SELECT * FROM orders WHERE id = ?').bind(target).first();

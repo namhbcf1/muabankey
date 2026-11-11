@@ -28,6 +28,27 @@ export async function mountCheckout(root, query = {}) {
     return;
   }
 
+  // ===== Chế độ XEM LẠI ĐƠN: mở QR của đơn có sẵn =====
+  // Dùng khi khách bấm "Thanh toán ngay" ở trang Đơn hàng, hoặc vào
+  // #/order/<id>. KHÔNG tạo đơn mới — chỉ hiện lại QR của đơn đó.
+  if (mode === 'order' && query.orderId) {
+    host.innerHTML = loadingBlock('Đang tải mã thanh toán...');
+    try {
+      const qrData = await api(`/api/orders/${query.orderId}/qr`, { method: 'POST' });
+      showQrPayment(host, qrData, {
+        code: qrData.order?.code, total: qrData.order?.total,
+      });
+    } catch (e) {
+      host.innerHTML = emptyBlock({
+        ico: 'alert',
+        title: 'Không mở được mã thanh toán',
+        desc: e.message || 'Đơn không tồn tại hoặc đã đóng.',
+        action: '<a class="btn btn-primary btn-sm" href="#/orders">Về đơn hàng</a>',
+      });
+    }
+    return;
+  }
+
   // ===== Chế độ MUA NGAY: chỉ thanh toán 1 sản phẩm, không đụng giỏ hàng =====
   let buyNowItems = null;
   if (mode === 'buynow') {
@@ -184,7 +205,7 @@ export async function mountCheckout(root, query = {}) {
 
           <div class="alert alert-info ck-secure">
             <span class="ico">${icon('shieldCheck', { size: 14 })}</span>
-            <span>Giao dịch được xử lý qua kết nối mã hoá. Key hiển thị ngay sau khi trừ tiền từ ví.</span>
+            <span>Giao dịch được xử lý qua kết nối mã hoá. Key hiển thị ngay khi hệ thống xác nhận được tiền.</span>
           </div>
         </div>
       </div>
@@ -242,7 +263,7 @@ export async function mountCheckout(root, query = {}) {
 /**
  * Màn hình QR thanh toán: số tiền + nội dung + đếm ngược + polling.
  */
-function showQrPayment(host, data, created) {
+export function showQrPayment(host, data, created) {
   const qr = data.qr || {};
   const order = data.order || {};
   const total = qr.amount || order.total || 0;
@@ -435,7 +456,7 @@ function showSuccess(host, order, created) {
       </div>
 
       <div class="ck-delivered">
-        ${order.delivered.map((d) => `
+        ${(order.delivered || order.items || []).map((d) => `
           <section class="ck-delivered-item">
             <h3 class="ck-delivered-name">${icon('package', { size: 15 })} ${esc(d.name)}</h3>
             ${d.manual
@@ -443,8 +464,13 @@ function showSuccess(host, order, created) {
                    <span class="ico">${icon('clock', { size: 15 })}</span>
                    <span>Sản phẩm này cần giao thủ công. Chúng tôi sẽ liên hệ bạn qua email hoặc Telegram trong 5–15 phút.</span>
                  </div>`
-              : d.license
-                ? d.keys.map((raw) => {
+              : (d.keys || []).length === 0
+                ? `<div class="alert alert-info ck-alert-flat">
+                     <span class="ico">${icon('clock', { size: 15 })}</span>
+                     <span>Đơn đã được xác nhận thanh toán. Key đang được tạo — tải lại trang sau ít giây, hoặc xem tại <a href="#/orders">Đơn hàng của tôi</a>.</span>
+                   </div>`
+                : d.license
+                  ? d.keys.map((raw) => {
                     const key = decodeKey(raw);
                     return `
                       <div class="key-box">

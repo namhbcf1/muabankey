@@ -36,6 +36,16 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_pay_order   ON payments(order_id);
 CREATE INDEX IF NOT EXISTS idx_pay_code    ON payments(order_code);
 CREATE INDEX IF NOT EXISTS idx_pay_txn     ON payments(txn_ref);
+/*
+ * UNIQUE thật trên txn_ref — lớp chống replay webhook ở tầng DB.
+ *
+ * Code (payments.js) dựa vào ràng buộc này để bắt lỗi trùng khi INSERT; nếu
+ * chỉ có index thường thì 2 webhook song song cùng mã giao dịch đều lọt qua
+ * bước SELECT-then-INSERT (TOCTOU) và đơn bị giao 2 lần.
+ * Production đã có index này (tên ux_pay_txn); file này phải khớp để dựng DB
+ * mới cũng có cùng bảo vệ.
+ */
+CREATE UNIQUE INDEX IF NOT EXISTS ux_pay_txn ON payments(txn_ref) WHERE txn_ref IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pay_state   ON payments(state, at DESC);
 CREATE INDEX IF NOT EXISTS idx_pay_at      ON payments(at);
 

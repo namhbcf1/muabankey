@@ -274,9 +274,8 @@ export async function payosWebhook(env, request) {
     if (!claim.meta || claim.meta.changes !== 1) {
       return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
     }
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
 
-    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-      .bind(credited, now, topup.user_id).run();
     const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
       .bind(topup.user_id).first();
     await env.DB.prepare(
@@ -311,9 +310,8 @@ export async function payosWebhook(env, request) {
   if (!claim.meta || claim.meta.changes !== 1) {
     return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
   }
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
 
-  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-    .bind(credited, now, topup.user_id).run();
   const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
     .bind(topup.user_id).first();
   await env.DB.prepare(
@@ -725,8 +723,8 @@ export async function adminTelegramConfig(env, request) {
     if (!claimPartial.meta || claimPartial.meta.changes !== 1) {
       return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
     }
-    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-      .bind(credited, now, topup.user_id).run();
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
+
     const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
     await env.DB.prepare(
       `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
@@ -761,8 +759,8 @@ export async function adminTelegramConfig(env, request) {
   if (!claimPaid.meta || claimPaid.meta.changes !== 1) {
     return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
   }
-  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-    .bind(credited, now, topup.user_id).run();
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
+
 
   const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
   await env.DB.prepare(
@@ -834,8 +832,8 @@ export async function sepayWebhook(env, request) {
     if (!claimPartial.meta || claimPartial.meta.changes !== 1) {
       return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
     }
-    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-      .bind(credited, now, topup.user_id).run();
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
+
     const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
     await env.DB.prepare(
       `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
@@ -861,8 +859,8 @@ export async function sepayWebhook(env, request) {
   if (!claimPaid.meta || claimPaid.meta.changes !== 1) {
     return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
   }
-  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-    .bind(credited, now, topup.user_id).run();
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
+
 
   const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
   await env.DB.prepare(
@@ -995,8 +993,8 @@ export async function adminApproveTopup(env, request, topupId) {
     }
 
     const nowP = Date.now();
-    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-      .bind(creditedPartial, nowP, t.user_id).run();
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
+
     const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(t.user_id).first();
     await env.DB.prepare(
       `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
@@ -1037,8 +1035,8 @@ export async function adminApproveTopup(env, request, topupId) {
   }
 
   const now = Date.now();
-  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-    .bind(credited, now, t.user_id).run();
+    // Không cộng ví (đã bỏ ví). Hoàn tiền = chuyển khoản tay.
+
 
   const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(t.user_id).first();
   await env.DB.prepare(

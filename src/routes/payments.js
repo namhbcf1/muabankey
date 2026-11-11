@@ -542,6 +542,15 @@ export async function confirmOrderPaid(env, {
   // Thiếu tiền -> KHÔNG giao, chờ admin quyết
 
   if (totalPaid < expected) {
+    // P0: TRƯỚC ĐÂY IM LẶNG — khách chuyển thiếu mà không ai biết.
+    // Tiền vào ngân hàng thật, admin phải thấy để xử lý.
+    try {
+      const { notifyUnderpaid } = await import('../lib/telegram-pay.js');
+      await notifyUnderpaid(env, order, {
+        paid: totalPaid, expected, missing: expected - totalPaid,
+      });
+    } catch { /* bỏ qua */ }
+
 
     return {
 
@@ -866,7 +875,12 @@ export async function payosWebhook(env, request) {
 
   if (!key) throw new ApiError(503, 'Chưa cấu hình payOS', 'NO_KEY');
 
-  const sig = payosSignature(body.data || {}, key);
+  /*
+   * `payosSignature` là async (nó băm HMAC-SHA256 qua WebCrypto). Thiếu
+   * `await` thì `sig` là một Promise; `String(promise)` = "[object Promise]"
+   * nên phép so sánh luôn sai và MỌI thanh toán payOS bị trả 401.
+   */
+  const sig = await payosSignature(body.data || {}, key);
 
   if (!timingSafeEqualStr(String(body.signature || ''), sig)) {
 
@@ -933,5 +947,117 @@ function timingSafeEqualStr(a, b) {
 
   return diff === 0;
 
+}
+
+/* ------------------------------------------------------------------ */
+/* ADMIN                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * POST /api/admin/orders/:id/confirm-payment
+ *
+ * Admin xác nhận đã thấy tiền trong sao kê -> giao key.
+ * Đây là ĐƯỜNG CỨU khi webhook trượt (SePay chết, khách ghi sai
+ * nội dung, khách chuyển tay). Trước đây KHÔNG CÓ endpoint này
+ * -> đơn kẹt 'pending' vĩnh viễn dù tiền đã vào ngân hàng.
+ */
+export async function adminConfirmPayment(env, request, orderId) {
+  const { requireAdminStrict } = await import('../lib/auth.js');
+  const admin = await requireAdminStrict(env, request);
+  const body = await readJson(request).catch(() => ({}));
+
+  const order = await env.DB.prepare('SELECT * FROM orders WHERE id = ?')
+    .bind(orderId).first();
+  if (!order) throw new ApiError(404, 'Không tìm thấy đơn', 'NOT_FOUND');
+
+  if (order.status === 'delivered') {
+    throw new ApiError(409, 'Đơn đã giao rồi', 'ALREADY_DELIVERED');
+  }
+
+  // Admin có thể nhập số tiền thực nhận (mặc định = tổng đơn)
+  const amount = Number(body.amount) > 0 ? Math.floor(Number(body.amount))
+    : Number(order.total);
+
+  const r = await confirmOrderPaid(env, {
+    orderId,
+    amount,
+    source: 'admin',
+    adminId: admin.username || admin.id,
+    content: body.note || null,
+  });
+
+  if (!r.ok) {
+    throw new ApiError(400,
+      `Không giao được: ${r.reason || r.error || 'lỗi không rõ'}`,
+      'DELIVER_FAILED');
+  }
+
+  await env.DB.prepare(
+    `UPDATE orders SET admin_note = ? WHERE id = ?`
+  ).bind(String(body.note || `Xác nhận tay bởi ${admin.username || admin.id}`)
+    .slice(0, 300), orderId).run();
+
+  return ok({
+    order: r.order,
+    delivered: !!r.delivered,
+    pendingManual: !!r.pendingManual,
+    duplicated: !!r.duplicated,
+    excess: r.excess || 0,
+    underpaid: !!r.underpaid,
+  });
+}
+
+/** GET /api/admin/payments — sổ tiền vào. */
+export async function adminListPayments(env, request) {
+  const { requireAdminStrict } = await import('../lib/auth.js');
+  await requireAdminStrict(env, request);
+
+  const url = new URL(request.url);
+  const state = url.searchParams.get('state') || '';
+  const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+
+  const where = state ? 'WHERE p.state = ?' : '';
+  const params = state ? [state, limit] : [limit];
+
+  const { results } = await env.DB.prepare(
+    `SELECT p.*, o.code AS order_code, o.status AS order_status,
+            o.total AS order_total, u.username
+     FROM payments p
+     LEFT JOIN orders o ON o.id = p.order_id
+     LEFT JOIN users u ON u.id = o.user_id
+     ${where}
+     ORDER BY p.at DESC
+     LIMIT ?`
+  ).bind(...params).all();
+
+  // Thống kê
+  const stats = await env.DB.prepare(
+    `SELECT state, COUNT(*) AS n, COALESCE(SUM(amount),0) AS total
+     FROM payments GROUP BY state`
+  ).all();
+
+  const byState = {};
+  for (const r of stats.results || []) {
+    byState[r.state] = { count: r.n, total: r.total };
+  }
+
+  return ok({
+    payments: (results || []).map((p) => ({
+      id: p.id,
+      orderId: p.order_id,
+      orderCode: p.order_code,
+      orderStatus: p.order_status,
+      username: p.username,
+      amount: p.amount,
+      expected: p.expected,
+      state: p.state,
+      method: p.method,
+      txnRef: p.txn_ref,
+      content: p.content,
+      confirmedBy: p.confirmed_by,
+      at: p.at,
+    })),
+    stats: byState,
+  });
 }
 

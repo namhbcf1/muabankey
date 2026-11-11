@@ -440,8 +440,12 @@ export async function listOrders(env, request) {
   const ids = rows.map((o) => o.id);
   const placeholders = ids.map(() => '?').join(',');
   const { results: allItems } = await env.DB.prepare(
-    `SELECT order_id, product_id, product_name, unit_price, quantity, line_total, delivered_keys
-     FROM order_items WHERE order_id IN (${placeholders})`
+    `SELECT oi.order_id, oi.product_id, oi.product_name, oi.unit_price,
+            oi.quantity, oi.line_total, oi.delivered_keys,
+            COALESCE(p.delivery_type, 'manual') AS delivery_type
+       FROM order_items oi
+       LEFT JOIN products p ON p.id = oi.product_id
+      WHERE oi.order_id IN (${placeholders})`
   ).bind(...ids).all();
 
   const itemsByOrder = new Map();
@@ -453,6 +457,9 @@ export async function listOrders(env, request) {
       unitPrice: i.unit_price,
       quantity: i.quantity,
       lineTotal: i.line_total,
+      deliveryType: i.delivery_type,
+      manual: i.delivery_type === 'manual',
+      license: i.delivery_type === 'license',
       keys: safeParse(i.delivered_keys),
     });
   }
@@ -497,8 +504,20 @@ export async function getOrder(env, request, orderId) {
     .first();
   if (!o) throw new ApiError(404, 'Đơn hàng không tồn tại', 'NOT_FOUND');
 
+  /*
+   * JOIN products để lấy `delivery_type`: frontend cần biết dòng nào là
+   * license (hiện hướng dẫn lấy lệnh cài đặt) và dòng nào giao tay (hiện
+   * "chờ 5–15 phút"). Thiếu field này thì cả hai nhánh UI thành code chết và
+   * khách mua license không biết bước tiếp theo.
+   * LEFT JOIN: sản phẩm có thể đã bị xoá, đơn cũ vẫn phải đọc được.
+   */
   const { results: items } = await env.DB.prepare(
-    'SELECT product_id, product_name, unit_price, quantity, line_total, delivered_keys FROM order_items WHERE order_id = ?'
+    `SELECT oi.product_id, oi.product_name, oi.unit_price, oi.quantity,
+            oi.line_total, oi.delivered_keys,
+            COALESCE(p.delivery_type, 'manual') AS delivery_type
+       FROM order_items oi
+       LEFT JOIN products p ON p.id = oi.product_id
+      WHERE oi.order_id = ?`
   ).bind(o.id).all();
 
   /*
@@ -525,6 +544,9 @@ export async function getOrder(env, request, orderId) {
         unitPrice: i.unit_price,
         quantity: i.quantity,
         lineTotal: i.line_total,
+        deliveryType: i.delivery_type,
+        manual: i.delivery_type === 'manual',
+        license: i.delivery_type === 'license',
         keys: keysVisible ? safeParse(i.delivered_keys) : [],
       })),
     },
@@ -720,22 +742,18 @@ export async function adminRefund(env, request, orderId) {
    * env.DB.batch chạy như một transaction của D1 nên không có cửa sổ nào
    * để tiền đã cộng mà sổ vẫn 'pending'.
    */
+  // KHÔNG cộng vào ví nữa: không còn trang nạp/tiêu số dư.
+  // Hoàn tiền = chuyển khoản tay cho khách, ghi admin_note để đối soát.
   await env.DB.batch([
-    env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-      .bind(o.total, now, o.user_id),
-    env.DB.prepare(
-      `INSERT INTO wallet_transactions
-         (id, user_id, type, amount, balance_after, status, reference, description, created_at)
-       VALUES (?,?,'refund',?,(SELECT balance FROM users WHERE id = ?),'success',?,?,?)`
-    ).bind(uuid(), o.user_id, o.total, o.user_id, o.code,
-      `Hoàn tiền đơn ${o.code}${revoked.licenses ? ` (thu hồi ${revoked.licenses} license)` : ''}`,
-      now),
     env.DB.prepare(
       `UPDATE refund_ledger SET state = 'done', revoked = ?,
-              claim_token = NULL, at = ?
-        WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
+       claim_token = NULL, at = ?
+       WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
     ).bind(revoked.keys + revoked.licenses, now, orderId, claimToken),
-    env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?").bind(orderId),
+    env.DB.prepare(
+      `UPDATE orders SET status = 'refunded',
+              admin_note = ? WHERE id = ?`
+    ).bind(`Hoàn tiền tay ${o.total}đ — chuyển khoản cho khách`, orderId),
   ]);
 
   await releaseCoupon(env, o.coupon_code, orderId);

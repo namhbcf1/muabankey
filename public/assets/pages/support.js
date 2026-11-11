@@ -6,7 +6,7 @@ const FAQS = [
   ['Key tôi mua có phải hàng chính hãng không?',
    'Có. Tất cả key đều là key Retail/OEM chính hãng mua trực tiếp từ nhà phân phối ủy quyền. Bạn có thể kiểm tra tính hợp lệ bằng công cụ chính thức của Microsoft hoặc nhà cung cấp.'],
   ['Bao lâu thì tôi nhận được key sau khi thanh toán?',
-   'Với sản phẩm giao tự động, key hiển thị ngay lập tức trong mục "Đơn hàng" (thường dưới 5 giây). Mọi sản phẩm còn hàng đều giao tự động ngay sau khi trừ ví (dưới 5 giây) hoặc Telegram.'],
+   'Với sản phẩm giao tự động, key hiển thị ngay lập tức trong mục "Đơn hàng" (thường dưới 5 giây). Mọi sản phẩm còn hàng đều giao tự động ngay khi tiền vào tài khoản shop (dưới 5 giây) hoặc Telegram.'],
   ['Key không kích hoạt được thì sao?',
    'Trong thời hạn bảo hành (365 ngày với Windows/Office, 30 ngày với AI tools, đổi mới với streaming), chúng tôi đổi key mới hoàn toàn miễn phí. Nếu không còn hàng thay thế, bạn được hoàn 100% qua chuyển khoản.'],
   ['Có được dùng key trên nhiều máy không?',

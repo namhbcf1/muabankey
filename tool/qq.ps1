@@ -1,6 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$Sql, [switch]$Raw)
-$env:CLOUDFLARE_API_TOKEN="cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6"
-$env:CLOUDFLARE_ACCOUNT_ID="5b62d10947844251d23e0eac532531dd"
+# Credentials lấy từ .env (đã gitignore). KHÔNG hardcode token vào file này.
+. (Join-Path $PSScriptRoot '..\scripts\load-env.ps1') | Out-Null
 $out = npx wrangler d1 execute muabankey-db --remote --json --command=$Sql 2>&1 | Out-String
 if ($Raw) { Write-Host $out; return }
 # extract JSON from first '[' to last ']'

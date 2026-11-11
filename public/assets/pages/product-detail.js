@@ -81,7 +81,7 @@ export async function mountProductDetail(root, slug) {
           <div class="info-strip">
             <div class="ico">${icon('card', { size: 17 })}</div>
             <div class="t">VietQR</div>
-            <div class="d">Nạp ví tự động, không gián đoạn</div>
+            <div class="d">Quét QR thanh toán, tự giao key ngay</div>
           </div>
         </div>
 
@@ -224,7 +224,12 @@ export async function mountProductDetail(root, slug) {
         // Chưa đăng nhập: giữ cart cũ, chỉ lưu buynow để dùng sau khi login
         store.set('mbk_buynow', [item]);
         toast('Vui lòng đăng nhập để thanh toán', 'info');
-        navigate('/login?redirect=/checkout?mode=buynow');
+        /*
+     * PHẢI encode: parseRoute tách query bằng `split('?')` nên dấu `?` thứ hai
+     * không encode sẽ cắt mất `mode=buynow`. Khách vãng lai bấm "Mua ngay",
+     * đăng nhập xong quay về /checkout rỗng → mất sản phẩm đã chọn.
+     */
+    navigate('/login?redirect=' + encodeURIComponent('/checkout?mode=buynow'));
         return;
       }
 
