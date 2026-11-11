@@ -207,13 +207,27 @@ export async function mountCheckout(root, query = {}) {
     const bal = state.user.balance;
     const warn = host.querySelector('#balance-warning');
     const topupBtn = host.querySelector('#btn-topup');
+    const payBtnEl = host.querySelector('#btn-place-order');
+    /*
+     * Số dư thiếu thì khoá nút thay vì để khách bấm rồi nhận lỗi từ server.
+     * Server vẫn là nơi quyết định cuối cùng (giá có thể đổi giữa chừng), nên
+     * đây chỉ là lớp phản hồi sớm — không thay thế kiểm tra phía server.
+     */
     if (bal < total) {
       warn.hidden = false;
       warn.textContent = `Thiếu ${fmtVnd(total - bal)}. Vui lòng nạp thêm tiền vào ví.`;
       topupBtn.hidden = false;
+      if (payBtnEl) {
+        payBtnEl.disabled = true;
+        payBtnEl.setAttribute('aria-describedby', 'balance-warning');
+      }
     } else {
       warn.hidden = true;
       topupBtn.hidden = true;
+      if (payBtnEl) {
+        payBtnEl.disabled = false;
+        payBtnEl.removeAttribute('aria-describedby');
+      }
     }
   }
 

@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 .wrangler/
 *.log
 shots/
@@ -26,6 +26,8 @@ ADMIN_CREDENTIALS.txt
 .secret-only.txt
 .env
 .env.*
+.dev.vars
+.dev.vars.*
 *.pem
 *.key
 

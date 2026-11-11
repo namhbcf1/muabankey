@@ -87,12 +87,35 @@ export async function mountOrders(root) {
                 ? i.keys.map((k) => {
                     const key = decodeKey(k);
                     const isLic = /^[A-Z0-9]+-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(key);
+                    /*
+                     * Key kiểu "account" lưu dạng base64("email|mật khẩu"). Hiển
+                     * thị nguyên chuỗi thì khách phải tự tách dấu "|" mới đăng
+                     * nhập được. Tách sẵn thành 2 dòng có nút sao chép riêng.
+                     */
+                    const parts = !isLic && key.includes('|') ? key.split('|') : null;
                     return `
                   <div class="key-box">
-                    <div class="key-value">${esc(key)}</div>
-                    <button class="key-copy" data-copy="${esc(key)}">
-                      ${icon('copy', { size: 12 })} Sao chép
-                    </button>
+                    ${parts
+                      ? `<div class="cred">
+                           <div class="cred-row">
+                             <span class="cred-k">Tài khoản</span>
+                             <span class="cred-v mono">${esc(parts[0])}</span>
+                             <button class="key-copy" data-copy="${esc(parts[0])}" aria-label="Sao chép tài khoản">
+                               ${icon('copy', { size: 12 })}
+                             </button>
+                           </div>
+                           <div class="cred-row">
+                             <span class="cred-k">Mật khẩu</span>
+                             <span class="cred-v mono">${esc(parts.slice(1).join('|'))}</span>
+                             <button class="key-copy" data-copy="${esc(parts.slice(1).join('|'))}" aria-label="Sao chép mật khẩu">
+                               ${icon('copy', { size: 12 })}
+                             </button>
+                           </div>
+                         </div>`
+                      : `<div class="key-value">${esc(key)}</div>
+                         <button class="key-copy" data-copy="${esc(key)}">
+                           ${icon('copy', { size: 12 })} Sao chép
+                         </button>`}
                   </div>
                   ${isLic ? `<div class="line-note mono">
                     ${icon('bolt', { size: 12 })} Lệnh cài:
