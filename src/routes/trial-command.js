@@ -101,8 +101,21 @@ export async function apiTrialCommand(env, request) {
   }
 
   if (!userId) {
-    // Khoá quota theo thiết bị; nếu chưa biết thiết bị thì theo IP
-    const anchor = ids ? ids.weak : ('ip:' + ip);
+    // Web không đọc được phần cứng. Ưu tiên:
+    //   1. device_id do browser sinh (localStorage) — mỗi máy riêng
+    //   2. weak HWID nếu có guid/bios
+    //   3. IP — CHỈ khi không có gì khác (quán net sẽ chia nhau)
+    let anchor;
+    if (ids && ids.weak) {
+      anchor = ids.weak;
+    } else if (body.device_id) {
+      const did = String(body.device_id).trim().slice(0, 64);
+      if (/^[a-zA-Z0-9_-]{8,64}$/.test(did)) {
+        // Băm để không lưu ID thô của trình duyệt
+        anchor = (await sha256hex('d1|' + did)).slice(0, 32);
+      }
+    }
+    if (!anchor) anchor = 'ip:' + ip;
     userId = 'dev:' + anchor;
     userLabel = 'thiết bị';
   }

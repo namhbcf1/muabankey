@@ -321,7 +321,7 @@ export default {
     try {
       // Giới hạn toàn cục theo IP cho mọi endpoint (chống lạm dụng thô)
       if (!url.pathname.startsWith('/api/webhooks/')) {
-        await rateLimit(env, `g:${clientIp(request)}`, 300, 60);
+        await rateLimit(env, `g:${clientIp(request)}`, 3000, 60);
       }
       const res = await match.handler(env, request, match.params);
       // Gắn CORS + security headers cho mọi phản hồi API

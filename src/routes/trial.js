@@ -304,8 +304,8 @@ export async function apiTrialStart(env, request) {
   // ---- 3. Rate limit riêng cho trial ----
   try {
     const { rateLimit } = await import('../lib/ratelimit.js');
-    await rateLimit(env, `trial:${ip}`, 20, 3600);
-    await rateLimit(env, `trial:u:${user.id}`, 30, 3600);
+    await rateLimit(env, `trial:${ip}`, 200, 3600);
+    await rateLimit(env, `trial:u:${user.id}`, 200, 3600);
   } catch (e) {
     if (e && e.code === 'RATE_LIMITED') {
       return json({

@@ -19,7 +19,7 @@ import { audit } from './products.js';
 export async function register(env, request) {
   const ip = clientIp(request);
   // 100/giờ/IP: thoáng cho quán net và NAT chung, vẫn chặn spam tự động hàng loạt
-  await rateLimit(env, `reg:${ip}`, 100, 3600);
+  await rateLimit(env, `reg:${ip}`, 300, 3600);
 
   const body = await readJson(request);
 
@@ -103,7 +103,7 @@ export async function register(env, request) {
 
 export async function login(env, request) {
   const ip = clientIp(request);
-  await rateLimit(env, `login:${ip}`, 100, 900);
+  await rateLimit(env, `login:${ip}`, 500, 900);
 
   const body = await readJson(request);
   const password = str(body.password, 'password', { min: 1, max: 128, trim: false });

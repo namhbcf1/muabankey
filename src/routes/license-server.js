@@ -30,7 +30,10 @@ const MESSAGES = {
 
 // Bắt buộc online: không có offline grace cho bất kỳ key nào.
 const GRACE_HOURS = 0;
-const RATE_LIMIT = 30;
+// Giới hạn số lần THẤT BẠI / IP / giờ.
+// Trước đây 30 -> quán net 30 máy hoặc khách thử vài lần là bị chặn oan.
+// Nay 500: vẫn chặn được brute-force key nhưng không ảnh hưởng NAT chung.
+const RATE_LIMIT = 500;
 const RATE_WINDOW = 3600;
 
 function nowSec() {

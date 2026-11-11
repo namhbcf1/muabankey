@@ -297,7 +297,7 @@ export async function rebindMyLicense(env, request, key) {
   }
 
   // Rate limit đặt SAU khi đã chắc chắn được phép -> nới lên 20/giờ
-  await rateLimit(env, `rebind:${user.id}:${clientIp(request)}`, 20, 3600);
+  await rateLimit(env, `rebind:${user.id}:${clientIp(request)}`, 100, 3600);
 
   // Sinh token dùng 1 lần — client EXE gửi kèm khi gọi /api/rebind
   const token = randomHex(24);
