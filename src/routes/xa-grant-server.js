@@ -562,6 +562,10 @@ export async function xgCheck(env, request) {
 /**
  * POST /api/xg/heartbeat — nhịp tim nhẹ khi tool đang chạy.
  * Không cấp token mới (tránh tăng tải), chỉ xác nhận phiên còn sống.
+ *
+ * YÊU CẦU `ssec` (khoá phiên). Trước đây server sinh `ssec`, lưu băm vào
+ * xg_session nhưng KHÔNG BAO GIỜ đối chiếu -> đó là secret chết: ai bắt được
+ * `sid` trên đường truyền là giữ được phiên. Nay sid một mình không đủ.
  */
 export async function xgHeartbeat(env, request) {
   const ip = ipOf(request);
@@ -571,7 +575,8 @@ export async function xgHeartbeat(env, request) {
   const key = normKey(b.key);
   const hwid = String(b.hwid || '').trim().toLowerCase();
   const sid = String(b.sid || '').trim();
-  if (!key || !hwid || !sid) return deny('bad_request', 400);
+  const ssec = String(b.ssec || '').trim();
+  if (!key || !hwid || !sid || !ssec) return deny('bad_request', 400);
 
   const now = nowSec();
   const lic = await getLicense(env, key);
@@ -579,9 +584,15 @@ export async function xgHeartbeat(env, request) {
   if (!v.ok) return deny(v.code, 403, now);
 
   const row = await env.DB.prepare(
-    'SELECT sid FROM xg_session WHERE sid = ? AND key = ? AND revoked = 0 AND hwid = ? LIMIT 1'
+    'SELECT secret_hash FROM xg_session WHERE sid = ? AND key = ? AND revoked = 0 AND hwid = ? LIMIT 1'
   ).bind(sid, key, hwid).first();
   if (!row) return deny('session_invalid', 403, now);
+
+  // So sánh timing-safe để không rò thông tin qua thời gian phản hồi.
+  if (!timingSafeEqual(await sha256hex(ssec), row.secret_hash)) {
+    await logEvent(env, key, hwid, sid, 'deny', 'heartbeat: bad ssec', ip);
+    return deny('session_invalid', 403, now);
+  }
 
   await env.DB.prepare('UPDATE xg_session SET last_at = ? WHERE sid = ?')
     .bind(now, sid).run();
@@ -593,7 +604,21 @@ export async function xgHeartbeat(env, request) {
   });
 }
 
-/** POST /api/xg/violation — client báo bị can thiệp (debugger/VM/patch). */
+/**
+ * POST /api/xg/violation — client báo bị can thiệp (debugger/VM/patch).
+ *
+ * BẮT BUỘC XÁC THỰC. Trước đây endpoint này nhận bất kỳ `key` nào mà không
+ * kiểm tra gì: ai biết (hoặc đoán) một mã license là có thể gửi 8 lần báo
+ * vi phạm để server TỰ THU HỒI license của người khác — phá hoại có chủ đích,
+ * không cần đăng nhập, không cần mã đổi máy.
+ *
+ * Nay chỉ chấp nhận khi:
+ *   - key là của XAGrant và chưa thu hồi, VÀ
+ *   - (sid khớp một phiên đang sống của chính key+hwid đó)
+ *     HOẶC (hwid khớp máy đã bind) — trường hợp client chưa kịp có phiên.
+ *
+ * Vi phạm ghi theo (key, hwid) để máy lạ không "đốt" hạn mức của máy thật.
+ */
 export async function xgViolation(env, request) {
   const ip = ipOf(request);
   const b = await readBody(request);
@@ -604,9 +629,39 @@ export async function xgViolation(env, request) {
   const sid = String(b.sid || '').trim();
   const code = String(b.code || '').slice(0, 64);
 
-  if (!key) return deny('bad_request', 400);
+  if (!key || !/^[a-f0-9]{24,64}$/.test(hwid)) return deny('bad_request', 400);
 
   const now = nowSec();
+
+  let lic;
+  try {
+    lic = await getLicense(env, key);
+  } catch {
+    return deny('schema_missing', 500);
+  }
+  if (!lic || !isXagrant(lic)) {
+    // Không tiết lộ key có tồn tại hay không.
+    await logAttempt(env, ip, false);
+    return deny('not_found', 403, now);
+  }
+  if (lic.revoked) return deny('revoked', 403, now);
+
+  // Xác thực: phải là máy đã bind, hoặc đang giữ phiên hợp lệ.
+  let authed = false;
+  if (lic.hwid && lic.hwid === hwid) {
+    authed = true;
+  } else if (sid) {
+    const s = await env.DB.prepare(
+      'SELECT sid FROM xg_session WHERE sid = ? AND key = ? AND hwid = ? AND revoked = 0 LIMIT 1'
+    ).bind(sid, key, hwid).first();
+    if (s) authed = true;
+  }
+  if (!authed) {
+    await logAttempt(env, ip, false);
+    await logEvent(env, key, hwid, sid, 'deny', 'violation: not owner', ip);
+    return deny('hwid_mismatch', 403, now);
+  }
+
   await logEvent(env, key, hwid, sid, 'violation', code, ip);
 
   try {
@@ -653,7 +708,9 @@ export async function xgRebind(env, request) {
     ).bind(user.id, key).first();
     if (!owns) {
       await logEvent(env, key, hwid, null, 'deny', 'rebind: not owner', ip);
-      return deny('rate_limit', 403);
+      // Trước đây trả code 'rate_limit' -> khách tưởng bị chặn tạm thời và
+      // thử lại mãi. Phải nói đúng là không sở hữu.
+      return json({ ok: false, code: 'forbidden', msg: 'Bạn không sở hữu mã này' }, 403);
     }
   } else {
     const token = String(b.token || request.headers.get('x-rebind-token') || '').trim();

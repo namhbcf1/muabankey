@@ -1049,7 +1049,9 @@ def _fmt_left(st=None):
         return 'chua bat'
     kind = st.get('trial_kind') or ('1h' if s < 86400 and is_trial(st) else '3d')
     if kind == '1h' or (s < 86400 and is_trial(st)):
-        return '%02d:%02d' % (s // 3600, (s % 3600) // 60)
+        # Hiện cả GIÂY để khách thấy đồng hồ chạy (trước chỉ MM:SS nên
+        # chạy --status cách 20 giây vẫn "00:34", tưởng tool treo)
+        return '%02d:%02d:%02d' % (s // 3600, (s % 3600) // 60, s % 60)
     return '%.1f ngay' % (s / 86400.0)
 
 

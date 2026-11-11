@@ -14,8 +14,8 @@ import { readLicense, normKey } from './license.js';
 
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
 const EXE_NAME = 'xa_nofog_pro.exe';
-const EXE_SHA256 = 'BA87AB9DC3DA52FEE8D85B9F55D4A2C67B0C3FD36EC62D27BF56934F6E7EE46F';
-const EXE_SIZE = 13219264;
+const EXE_SHA256 = '512A2782C9A441FD792FC12EBAC6178A6C5288621C55D58F97A4B3B2D0B1D16D';
+const EXE_SIZE = 13220310;
 
 function siteBase(request) {
   const u = new URL(request.url);
@@ -25,6 +25,23 @@ function siteBase(request) {
 async function sha256hex(text) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Token cài đặt do `randomHex(24)` sinh nên LUÔN là 24 byte hex (48 ký tự).
+ *
+ * Phải kiểm trước khi nội suy vào `.cmd`/`.ps1`: token đi thẳng vào
+ * `set "Q=?t=${token}"`, nên một token chứa xuống dòng sẽ thoát khỏi chuỗi
+ * `set` và trở thành lệnh CMD độc lập — chạy với quyền Administrator mà
+ * installer tự nâng lên. Kiểm định dạng đóng luôn cả đường này.
+ */
+function assertTokenShape(token) {
+  if (!token) {
+    throw new ApiError(401, 'Cần đăng nhập hoặc dùng đường dẫn có token', 'UNAUTHORIZED');
+  }
+  if (!/^[0-9a-f]{48}$/.test(token)) {
+    throw new ApiError(401, 'Token không hợp lệ hoặc đã hết hạn', 'UNAUTHORIZED');
+  }
 }
 
 /** Kiểm tra quyền tải installer: session sở hữu key, hoặc token hợp lệ. */
@@ -44,9 +61,7 @@ async function assertCanInstall(env, request, key) {
   // Không đăng nhập: cần token ký kèm (do trang License của tôi phát hành)
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || request.headers.get('x-install-token') || '';
-  if (!token) {
-    throw new ApiError(401, 'Cần đăng nhập hoặc dùng đường dẫn có token', 'UNAUTHORIZED');
-  }
+  assertTokenShape(token);
   const tokenHash = await sha256hex(token);
   const row = await env.DB.prepare(
     `SELECT 1 AS x FROM install_tokens
@@ -67,11 +82,34 @@ async function requireUsableLicense(env, key) {
   // Trả cùng một thông báo cho mọi trường hợp để không lộ key nào tồn tại
   if (!lic) throw new ApiError(404, 'Mã license không hợp lệ', 'NOT_FOUND');
   if (lic.revoked) throw new ApiError(403, 'Mã license đã bị thu hồi', 'REVOKED');
+
+  // KHÔNG cho key của tool khác đi qua bộ cài No Fog.
+  //
+  // Trước đây hàm này chỉ kiểm revoked: khách mua key XAGR (tool tăng tài
+  // nguyên) vẫn tải được bộ cài No Fog, cài No Fog, rồi tool No Fog gọi
+  // /api/activate với key đó. Kết quả: khách nhận SAI sản phẩm, và bản No Fog
+  // chiếm mất lượt bind HWID của key XAGR.
+  if (isOtherProduct(lic)) {
+    throw new ApiError(403,
+      'Mã này là của sản phẩm khác (không phải XArena No Fog)', 'WRONG_PRODUCT');
+  }
+
   // Lớp phòng thủ cuối: key nhúng vào .cmd/.ps1 chạy quyền ADMIN
   if (!/^[A-Z0-9-]+$/.test(lic.key)) {
     throw new ApiError(500, 'Mã license chứa ký tự không hợp lệ', 'INVALID_KEY_CHARS');
   }
   return lic;
+}
+
+/**
+ * License này có thuộc một sản phẩm KHÁC No Fog không?
+ *
+ * Dữ liệu cũ không có cột `pid` -> coi là No Fog (tương thích ngược).
+ * Tiền tố XAGR- cũng bị chặn kể cả khi cột pid chưa được migrate.
+ */
+function isOtherProduct(lic) {
+  if (lic.pid) return lic.pid !== 'nofog';
+  return String(lic.key || '').toUpperCase().startsWith('XAGR-');
 }
 
 /** Phát hành token cài đặt (gọi từ trang License của tôi). */

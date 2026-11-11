@@ -424,6 +424,25 @@ export async function adminIssueLicenses(env, request) {
   const userId = str(body.userId, 'userId', { required: false, max: 64 }) || null;
   const maxRebind = int(body.maxRebind ?? 1, 'maxRebind', { min: 0, max: 99 });
 
+  // Sản phẩm để ghi license_issues. Mặc định đoán theo tiền tố khoá:
+  // AOE1 -> gói tháng No Fog, XAGR -> gói tháng XAGrant. Trước đây LUÔN
+  // ghi 'p-lic-month', nên key XAGrant tặng tay hiện trong "License của tôi"
+  // với tên sản phẩm No Fog -> khách bấm nhầm bộ cài.
+  // Admin có thể chỉ định rõ bằng body.productId.
+  const PREFIX_PRODUCT = {
+    AOE1: 'p-lic-month',
+    XAGR: 'p-xg-month',
+  };
+  const requestedProduct = str(body.productId, 'productId', { required: false, max: 64 });
+  let productId = requestedProduct || PREFIX_PRODUCT[prefix.toUpperCase()] || 'p-lic-month';
+  {
+    // Chỉ nhận productId tồn tại và đúng kiểu giao license.
+    const p = await env.DB.prepare(
+      "SELECT id FROM products WHERE id = ? AND delivery_type = 'license'"
+    ).bind(productId).first();
+    if (!p) productId = PREFIX_PRODUCT[prefix.toUpperCase()] || 'p-lic-month';
+  }
+
   const keys = await issueLicenses(env, {
     count, prefix, days, plan: prefix.toLowerCase(), note, maxRebind,
     pid: pidForPrefix(prefix),
@@ -445,7 +464,7 @@ export async function adminIssueLicenses(env, request) {
           `INSERT INTO license_issues
              (id, order_id, user_id, product_id, license_key, term_days, expires_at, created_at)
            VALUES (?,?,?,?,?,?,?,?)`
-        ).bind(crypto.randomUUID(), 'ADMIN-GIFT', userId, 'p-lic-month',
+        ).bind(crypto.randomUUID(), 'ADMIN-GIFT', userId, productId,
           k, days, expAt, now).run();
         assigned++;
       } catch { /* bảng có thể thiếu cột — bỏ qua */ }

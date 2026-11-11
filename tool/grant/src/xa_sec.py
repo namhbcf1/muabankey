@@ -155,13 +155,37 @@ def _b64u_dec(s):
     return base64.b64decode(s)
 
 
+_B_COEF = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b
+
+
+def _on_curve(pt):
+    """True neu diem nam tren duong cong P-256 (y^2 == x^3 + ax + b).
+
+    BAT BUOC kiem truoc khi dung public key / diem trung gian. Thieu buoc nay
+    la lo hong "invalid curve attack": ke tan cong gui mot diem nam tren
+    duong cong khac co cap nho, doan dan toa do, roi gia mao chu ky.
+    """
+    if not pt:
+        return False
+    x, y = pt
+    if not (0 <= x < _P and 0 <= y < _P):
+        return False
+    return (y * y - (x * x * x + _A * x + _B_COEF)) % _P == 0
+
+
 def _public_key():
-    """Doc public key tu hang so da ma hoa. (x, y)."""
+    """Doc public key tu hang so da ma hoa. (x, y). None neu khong hop le."""
     sx = C(K_PUB_X)
     sy = C(K_PUB_Y)
     if not sx or not sy:
         return None
-    return (int(sx, 16), int(sy, 16))
+    try:
+        pt = (int(sx, 16), int(sy, 16))
+    except ValueError:
+        return None
+    if not _on_curve(pt):
+        return None
+    return pt
 
 
 def verify_sig(message, sig_b64u):
@@ -182,11 +206,25 @@ def verify_sig(message, sig_b64u):
         return False
 
     e = int.from_bytes(hashlib.sha256(message).digest(), 'big') % _N
-    w = _inv(s, _N)
+    try:
+        w = _inv(s, _N)
+    except (ValueError, ZeroDivisionError):
+        return False
     u1 = (e * w) % _N
     u2 = (r * w) % _N
-    pt = _add(_mul(u1, (_GX, _GY)), _mul(u2, q))
+
+    p1 = _mul(u1, (_GX, _GY))
+    p2 = _mul(u2, q)
+    # Ca hai diem trung gian phai con nam tren duong cong.
+    if p1 is not None and not _on_curve(p1):
+        return False
+    if p2 is not None and not _on_curve(p2):
+        return False
+
+    pt = _add(p1, p2)
     if pt is None:
+        return False
+    if not _on_curve(pt):
         return False
     return pt[0] % _N == r
 

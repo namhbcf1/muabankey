@@ -246,22 +246,41 @@ def clear_state():
 # ===========================================================================
 
 class Clock(object):
-    """Neo vao gio server. Moi lan co `now` tu server thi cap nhat neo cu."""
+    """Neo vao gio server, chong chinh lui dong ho.
+
+    QUAN TRONG: KHONG BAO GIO luu `time.monotonic()` xuong dia.
+    `monotonic()` reset ve ~0 moi lan khoi dong lai Windows, nen mot moc
+    monotonic da luu se lon hon gia tri hien tai sau moi lan reboot:
+
+        saved mono_at = 864000  (may da chay 10 ngay)
+        sau reboot     = 21257
+        -> max(0, now - saved) = 0  -> dong ho DONG BANG o gio neo
+        -> license khong bao gio het han, grace khong bao gio het
+        -> va next_check luon "chua toi luot" -> KHONG BAO GIO goi server
+
+    Ban truoc mac dung loi nay. Nay luu moc WALL-CLOCK (`wall_at`) va tinh
+    thoi gian troi qua bang hieu wall-clock; monotonic chi giu trong bo nho
+    de doi chieu bat thuong (wall nhay ma monotonic dung yen).
+    """
 
     def __init__(self):
         self.srv = 0.0
-        self.mono = 0.0
+        self.wall = 0.0          # time.time() tai thoi diem neo
+        self.mono = 0.0          # chi dung trong tien trinh, khong luu
         self.tampered = False
         self.delta = 0.0
+        self.mono_start = time.monotonic()
 
     def restore(self, st):
         try:
             self.srv = float(st.get('srv_ts') or 0)
-            self.mono = float(st.get('mono_at') or 0)
+            self.wall = float(st.get('wall_at') or 0)
+            # mono cua tien trinh truoc KHONG dung lai duoc
+            self.mono = 0.0
             self.tampered = bool(st.get('clock_tampered') or False)
         except (TypeError, ValueError):
             self.srv = 0.0
-            self.mono = 0.0
+            self.wall = 0.0
 
     def anchor(self, server_ts):
         try:
@@ -271,20 +290,42 @@ class Clock(object):
         if ts <= 0:
             return
         self.srv = ts
+        self.wall = time.time()
         self.mono = time.monotonic()
-        self.delta = time.time() - ts
+        self.delta = self.wall - ts
         if self.delta < -CLOCK_SKEW:
             self.tampered = True
 
     def now(self):
-        if not self.srv or not self.mono:
+        """Gio hien tai theo dong ho server.
+
+        Troi qua tinh bang wall-clock (con dung sau reboot). Monotonic chi
+        dung de phat hien dong ho bi chinh: neu wall troi nhieu hon monotonic
+        mot khoang lon, hoac wall lui, danh dau tampered.
+        """
+        if not self.srv or not self.wall:
             return time.time()
-        return self.srv + max(0.0, time.monotonic() - self.mono)
+
+        wall_elapsed = time.time() - self.wall
+        if wall_elapsed < 0:
+            # Dong ho may bi chinh lui so voi luc neo.
+            self.tampered = True
+            wall_elapsed = 0.0
+
+        # Doi chieu voi monotonic neu con trong cung tien trinh.
+        if self.mono:
+            mono_elapsed = max(0.0, time.monotonic() - self.mono)
+            if wall_elapsed - mono_elapsed > CLOCK_SKEW:
+                # Wall chay nhanh hon thoi gian thuc -> bi chinh tien.
+                self.tampered = True
+                wall_elapsed = mono_elapsed
+
+        return self.srv + wall_elapsed
 
     def state(self):
         return {
             'srv_ts': self.srv,
-            'mono_at': self.mono,
+            'wall_at': self.wall,
             'clock_tampered': self.tampered,
         }
 
@@ -489,6 +530,10 @@ class License(object):
     # Token goc da ky (giu nguyen van de luu lai va xac minh lai khi nap)
     _token = ''
 
+    # Thoi diem (giay, theo dong ho server da neo) lan cuoi server tra loi OK.
+    # Dung de tinh cua so offline grace. 0 = chua tung thanh cong.
+    last_ok = 0.0
+
     def __init__(self):
         self.addr = None
         self.payload = None
@@ -529,6 +574,10 @@ class License(object):
             self.next_check = float(st.get('next_check') or 0)
         except (TypeError, ValueError):
             self.next_check = 0.0
+        try:
+            self.last_ok = float(st.get('last_ok') or 0)
+        except (TypeError, ValueError):
+            self.last_ok = 0.0
         return True
 
     # -- luu -------------------------------------------------------------
@@ -543,6 +592,7 @@ class License(object):
             'expires_at': self.expires_at,
             'grace_h': self.grace_h,
             'next_check': self.next_check,
+            'last_ok': self.last_ok,
             'saved_at': time.time(),
         }
         st.update(self.clock.state())
@@ -575,7 +625,14 @@ class License(object):
         self.grace_h = int(payload.get('g') or 0)
         self.check_after = int(payload.get('c') or 120)
         self.clock.anchor(r.get('now') or payload.get('n'))
-        self.next_check = time.monotonic() + max(30, self.check_after)
+        # Moc goi lai server: WALL-CLOCK (time.time()), KHONG phai monotonic.
+        # Ly do: next_check duoc luu xuong dia va so sanh o tien trinh sau.
+        # monotonic reset ve ~0 sau reboot -> sau moi lan khoi dong lai, dieu
+        # kien `now >= next_check` sai -> tool KHONG BAO GIO goi server nua va
+        # chay mai bang state cu (ke ca bang dia chi engine cu).
+        self.next_check = time.time() + max(30, self.check_after)
+        # Moc grace: thoi diem server xac nhan thanh cong gan nhat.
+        self.last_ok = float(self.clock.now())
         self._save()
 
     # -- kiem han --------------------------------------------------------
@@ -613,9 +670,10 @@ class License(object):
     def heartbeat(self):
         r = _post('/api/xg/heartbeat', {
             'key': self.key, 'hwid': self.hwid, 'sid': self.sid,
-            'app': APP, 'ver': VERSION,
+            'ssec': self.ssec, 'app': APP, 'ver': VERSION,
         })
         self.clock.anchor(r.get('now'))
+        self.last_ok = float(self.clock.now())
         self._save()
         return r
 

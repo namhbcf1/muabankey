@@ -19,7 +19,14 @@
   /* --- Chữ --- */
   --text:#FAFAFA;
   --text-dim:#A1A1AA;
-  --text-mute:#71717A;
+  /*
+   * #71717A cũ chỉ đạt 3.40–4.12:1 tuỳ bề mặt — dưới mức AA 4.5:1 cho chữ
+   * thường, mà đây là màu của gần 40 chỗ (mô tả phụ, nhãn, gợi ý). #8A8A92
+   * đạt 4.80:1 trên bề mặt sáng nhất (--surface-3) nên an toàn ở mọi nền.
+   */
+  --text-mute:#8A8A92;
+  /* Viền ô nhập: #27272A chỉ 1.19:1, gần như vô hình (WCAG 1.4.11 cần 3:1). */
+  --border-input:#6B6B74;
 
   /* --- Một điểm nhấn duy nhất + ngữ nghĩa --- */
   --accent:#34D399;          /* hợp lệ / đã giao / số dương */
@@ -70,6 +77,23 @@ input,select,textarea{font-family:inherit;font-size:inherit}
 ::selection{background:rgba(52,211,153,.28);color:#fff}
 
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+/*
+ * `outline:none` trên các ô nhập ghi đè :focus-visible ở trên (cùng
+ * specificity, khai báo sau thắng), khiến người dùng bàn phím gần như không
+ * thấy mình đang ở đâu. Khôi phục ring, và dùng màu tối trên nút nền sáng
+ * vì mint trên trắng chỉ 1.84:1 (WCAG 1.4.11 cần 3:1).
+ */
+.input:focus-visible,.textarea:focus-visible,.select:focus-visible,
+.qty-ctrl input:focus-visible,.search-mini input:focus-visible,
+.ai-input:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px;
+}
+.search-mini input:focus-visible,.ai-input:focus-visible{outline-offset:1px}
+.btn-primary:focus-visible,.btn-buy:focus-visible,.cat-chip.active:focus-visible{
+  outline:2px solid var(--bg);outline-offset:3px;
+}
+/* Chừa chỗ cho header dính khi Tab tới phần tử sát đỉnh (WCAG 2.4.11). */
+:focus{scroll-margin-top:calc(var(--header-h) + 8px)}
 
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -408,7 +432,7 @@ input,select,textarea{font-family:inherit;font-size:inherit}
 .filter-label{font-size:12px;color:var(--text-mute);font-weight:500;white-space:nowrap}
 .select{
   padding:6px 10px;border-radius:var(--r-sm);background:var(--surface-2);
-  border:1px solid var(--border);color:var(--text);font-size:12.5px;font-weight:500;
+  border:1px solid var(--border-input);color:var(--text);font-size:12.5px;font-weight:500;
   outline:none;transition:border-color .16s var(--ease);cursor:pointer;
 }
 .select:hover{border-color:var(--border-strong)}
@@ -421,7 +445,7 @@ input,select,textarea{font-family:inherit;font-size:inherit}
 .label .req{color:var(--danger)}
 .input,.textarea{
   width:100%;padding:10px 13px;border-radius:var(--r);
-  background:var(--surface-2);border:1px solid var(--border);
+  background:var(--surface-2);border:1px solid var(--border-input);
   color:var(--text);font-size:14px;outline:none;
   transition:border-color .16s var(--ease),background .16s var(--ease);
 }
@@ -523,9 +547,12 @@ input,select,textarea{font-family:inherit;font-size:inherit}
   position:fixed;top:0;right:0;bottom:0;width:min(420px,100vw);z-index:201;
   background:var(--bg-soft);border-left:1px solid var(--border);
   display:flex;flex-direction:column;
-  transform:translateX(100%);transition:transform .28s var(--ease);
+  /* translateX(100%) chỉ đẩy ra ngoài viewport, không loại khỏi tab order. */
+  visibility:hidden;
+  transform:translateX(100%);
+  transition:transform .28s var(--ease),visibility 0s linear .28s;
 }
-.drawer.open{transform:none}
+.drawer.open{transform:none;visibility:visible;transition:transform .28s var(--ease),visibility 0s}
 .drawer-head{
   display:flex;align-items:center;justify-content:space-between;
   padding:18px 20px;border-bottom:1px solid var(--border);flex-shrink:0;
@@ -544,7 +571,10 @@ input,select,textarea{font-family:inherit;font-size:inherit}
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .cart-price{font-size:12.5px;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
 .cart-remove{
-  align-self:flex-start;color:var(--text-mute);padding:3px;border-radius:5px;transition:color .16s,background .16s;
+  align-self:flex-start;color:var(--text-mute);
+  /* WCAG 2.5.8 cần tap target >= 24x24px; padding cũ cho ra ~20px. */
+  padding:5px;min-width:28px;min-height:28px;border-radius:5px;
+  transition:color .16s,background .16s;
   display:grid;place-items:center;
 }
 .cart-remove:hover{color:var(--danger);background:var(--danger-dim)}
@@ -692,10 +722,18 @@ tbody tr:hover{background:var(--surface)}
   border-radius:var(--r-xl);background:var(--bg-soft);
   border:1px solid var(--border-strong);box-shadow:0 24px 64px -20px rgba(0,0,0,.95);
   display:flex;flex-direction:column;overflow:hidden;
-  opacity:0;transform:translateY(10px);pointer-events:none;
-  transition:opacity .2s var(--ease),transform .2s var(--ease);
+  /*
+   * opacity:0 + pointer-events:none KHÔNG loại phần tử khỏi tab order — người
+   * dùng bàn phím vẫn tab vào 5–6 nút vô hình. visibility:hidden thì loại thật,
+   * và vẫn transition được (visibility chuyển trạng thái ở cuối animation).
+   */
+  opacity:0;visibility:hidden;transform:translateY(10px);pointer-events:none;
+  transition:opacity .2s var(--ease),transform .2s var(--ease),visibility 0s linear .2s;
 }
-.ai-panel.open{opacity:1;transform:none;pointer-events:auto}
+.ai-panel.open{
+  opacity:1;visibility:visible;transform:none;pointer-events:auto;
+  transition:opacity .2s var(--ease),transform .2s var(--ease),visibility 0s;
+}
 .ai-head{
   padding:14px 16px;border-bottom:1px solid var(--border);display:flex;
   align-items:center;gap:10px;flex-shrink:0;
@@ -900,8 +938,7 @@ tbody tr:hover{background:var(--surface)}
 .mobile-nav-link .i{color:var(--text-mute)}
 .mobile-nav-link.active .i{color:var(--text)}
 
-/* ---------- Ảnh lỗi ---------- */
-/*
+/* ---------- Ảnh lỗi ---------- *//*
  * Ảnh sản phẩm hỏng thì ẩn hẳn thay vì để biểu tượng "ảnh vỡ" của trình duyệt.
  * Khung chứa vẫn giữ kích thước nên bố cục không nhảy.
  */
@@ -922,7 +959,8 @@ img.img-failed{opacity:0;pointer-events:none}
   flex:1;min-width:0;font-size:13px;color:var(--accent);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.cred-row .key-copy{padding:4px 8px}
+/* Tap target >= 24px cho nút copy cạnh tài khoản/mật khẩu (WCAG 2.5.8). */
+.cred-row .key-copy{padding:4px 8px;min-width:28px;min-height:24px;justify-content:center}
 
 /* ---------- Utilities ---------- */
 .mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
@@ -1198,6 +1236,23 @@ img.img-failed{opacity:0;pointer-events:none}
 .sr-only{
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0,0,0,0);white-space:nowrap;border:0;
+}
+
+/* ---------- Skip link ---------- */
+/*
+ * Người dùng bàn phím phải tab qua ~8–13 phần tử header mỗi lần đổi trang
+ * (WCAG 2.4.1). Link này ẩn cho tới khi được focus.
+ */
+.skip-link{
+  position:fixed;top:0;left:0;z-index:9999;
+  padding:10px 16px;border-radius:0 0 var(--r) 0;
+  background:var(--text);color:var(--bg);
+  font-size:13px;font-weight:600;
+  transform:translateY(-120%);
+  transition:transform .16s var(--ease);
+}
+.skip-link:focus-visible{
+  transform:none;outline:2px solid var(--accent);outline-offset:2px;
 }
 /* Auth: form tối giản, lỗi dùng vùng role="alert" thay vì emoji cảnh báo. */
 .auth-err{

@@ -235,6 +235,54 @@ export default {
           await env.DB.prepare('DELETE FROM xg_nonce WHERE at < ?').bind(nowS - 3600).run();
         } catch { /* chưa migrate CSDL */ }
 
+        // ===== XAGrant: dọn định kỳ =====
+        // Không dọn thì ba bảng này phình vô hạn: mỗi client gọi /api/xg/check
+        // 120 giây/lần và ghi 1 dòng xg_events -> 720 dòng/ngày/máy.
+        try {
+          // Phiên đã huỷ hoặc quá cũ (client không quay lại).
+          await env.DB.prepare(
+            'DELETE FROM xg_session WHERE revoked = 1 OR last_at < ?'
+          ).bind(nowS - 30 * 86400).run();
+          // Nhật ký XAGrant: giữ 90 ngày.
+          await env.DB.prepare('DELETE FROM xg_events WHERE at < ?')
+            .bind(nowS - 90 * 86400).run();
+          // Đếm vi phạm: reset sau 30 ngày không vi phạm, để khách quay lại
+          // không bị thu hồi oan vì lỗi cũ.
+          await env.DB.prepare('DELETE FROM xg_viol WHERE last_at < ?')
+            .bind(nowS - 30 * 86400).run();
+        } catch { /* chưa migrate CSDL */ }
+
+        // ===== Dọn bảng APPEND-ONLY (trước đây tăng vô hạn) =====
+        // lic_events: ghi 1 dòng/lần client check license (+ cron xoá sau 90 ngày).
+        // audit_logs: nhật ký thao tác admin/user — giữ 180 ngày.
+        // trial_attempts: nhật ký xin trial — giữ 30 ngày.
+        // rate_limits: bảng fallback của rate limiter — dọn theo window_at.
+        // license_issues: KHÔNG dọn (là bằng chứng mua bán).
+        try {
+          await env.DB.prepare('DELETE FROM lic_events WHERE at < ?')
+            .bind(nowS - 90 * 86400).run();
+        } catch { /* bảng chưa có */ }
+        try {
+          await env.DB.prepare('DELETE FROM audit_logs WHERE created_at < ?')
+            .bind(now - 180 * 86400).run();
+        } catch { /* dùng ms */ }
+        try {
+          await env.DB.prepare('DELETE FROM trial_attempts WHERE at < ?')
+            .bind(nowS - 30 * 86400).run();
+        } catch { /* chưa migrate */ }
+        try {
+          await env.DB.prepare('DELETE FROM rate_limits WHERE window_at < ?')
+            .bind(nowS - 86400).run();
+        } catch { /* dùng ms hoặc chưa có */ }
+        // trial_quota mồ côi: user_id không còn trong users (user test đã xoá)
+        try {
+          await env.DB.prepare(
+            `DELETE FROM trial_quota
+             WHERE user_id NOT LIKE 'dev:%'
+               AND user_id NOT IN (SELECT id FROM users)`
+          ).run();
+        } catch { /* chưa migrate */ }
+
         // 5. Thông báo Telegram (chỉ chạy khi đã cấu hình, không chặn cron nếu lỗi)
         if (env.TG_BOT_TOKEN && env.TG_CHAT_ID) {
           try {

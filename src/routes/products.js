@@ -292,7 +292,12 @@ export async function adminAddKeys(env, request, productId) {
   if (lines.length > 3000) throw new ApiError(400, 'Tối đa 3000 key mỗi lần', 'VALIDATION');
 
   const now = Date.now();
-  const stmts = lines.map((secret) =>
+  // Mã hoá secret trước khi lưu (AES-GCM nếu có KEY_ENC).
+  // Trước đây lưu plaintext -> ai đọc DB là có toàn bộ mật khẩu sản phẩm.
+  const { sealSecret } = await import('../lib/secrets.js');
+  const sealed = await Promise.all(lines.map((s) => sealSecret(env, s)));
+
+  const stmts = sealed.map((secret) =>
     env.DB.prepare(
       'INSERT INTO product_keys (id, product_id, secret, note, status, created_at) VALUES (?,?,?,?,?,?)'
     ).bind(uuid(), productId, secret, note, 'available', now)

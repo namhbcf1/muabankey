@@ -1,21 +1,21 @@
--- ============================================================
--- Sản phẩm XAGrant — tool tăng tài nguyên XArena
+﻿-- ============================================================
+-- Sáº£n pháº©m XAGrant â€” tool tÄƒng tÃ i nguyÃªn XArena
 --
--- Tách hoàn toàn khỏi No Fog:
---   category riêng:  cat-xagrant  (slug: tool-xarena-grant)
---   prefix key riêng: XAGR  -> key dạng XAGR-XXXX-XXXX-XXXX
---   delivery_type = 'license'  (dùng chung cơ chế sinh key của shop)
+-- TÃ¡ch hoÃ n toÃ n khá»i No Fog:
+--   category riÃªng:  cat-xagrant  (slug: tool-xarena-grant)
+--   prefix key riÃªng: XAGR  -> key dáº¡ng XAGR-XXXX-XXXX-XXXX
+--   delivery_type = 'license'  (dÃ¹ng chung cÆ¡ cháº¿ sinh key cá»§a shop)
 --
--- Chạy:
+-- Cháº¡y:
 --   npx wrangler@4 d1 execute muabankey-db --remote --file=./db/seed-xagrant-products.sql --yes
 --
--- An toàn khi chạy lại: ON CONFLICT DO NOTHING.
+-- An toÃ n khi cháº¡y láº¡i: ON CONFLICT DO NOTHING.
 -- ============================================================
 
 INSERT INTO categories (id, slug, name, description, icon, sort_order, active, created_at) VALUES
-('cat-xagrant', 'tool-xarena-grant', 'Tool XArena — Tăng tài nguyên',
- 'Công cụ bơm tài nguyên (thịt/gỗ/đá/vàng) trong AoE XArena. Chạy bằng lệnh CMD, không cần đăng nhập.',
- '⚡', 8, 1, 1731200000000)
+('cat-xagrant', 'tool-xarena-grant', 'Tool XArena â€” TÄƒng tÃ i nguyÃªn',
+ 'CÃ´ng cá»¥ bÆ¡m tÃ i nguyÃªn (thá»‹t/gá»—/Ä‘Ã¡/vÃ ng) trong AoE XArena. Cháº¡y báº±ng lá»‡nh CMD, khÃ´ng cáº§n Ä‘Äƒng nháº­p.',
+ 'âš¡', 8, 1, 1731200000000)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO products
@@ -24,38 +24,39 @@ INSERT INTO products
    features, active, featured, sort_order, license_prefix, license_days, created_at, updated_at)
 VALUES
 ('p-xg-week', 'xarena-grant-tuan', 'cat-xagrant',
- 'XArena Grant — Gói Tuần',
- '7 ngày sử dụng, kích hoạt 1 máy, chạy bằng lệnh CMD.',
- 'License tool XArena Grant gói TUẦN (7 ngày). Bơm tài nguyên trong trận đang chơi: thịt, gỗ, đá, vàng. Chạy hoàn toàn bằng lệnh CMD — không cần đăng nhập tài khoản web, không cần cài app. Key gắn 1 máy (HWID), đổi máy 1 lần miễn phí.',
- '/img/license-xarena.svg', null, 70000, 150000,
- 'license', 0, 0, 5, 0, 7, '7 ngày',
- '["Bơm thịt / gỗ / đá / vàng","Chạy 100% bằng lệnh CMD","Không cần đăng nhập tài khoản","Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7"]',
+ 'XArena Grant â€” GÃ³i Tuáº§n',
+ '7 ngÃ y sá»­ dá»¥ng, kÃ­ch hoáº¡t 1 mÃ¡y, cháº¡y báº±ng lá»‡nh CMD.',
+ 'License tool XArena Grant gÃ³i TUáº¦N (7 ngÃ y). BÆ¡m tÃ i nguyÃªn trong tráº­n Ä‘ang chÆ¡i: thá»‹t, gá»—, Ä‘Ã¡, vÃ ng. Cháº¡y hoÃ n toÃ n báº±ng lá»‡nh CMD â€” khÃ´ng cáº§n Ä‘Äƒng nháº­p tÃ i khoáº£n web, khÃ´ng cáº§n cÃ i app. Key gáº¯n 1 mÃ¡y (HWID), Ä‘á»•i mÃ¡y 1 láº§n miá»…n phÃ­.',
+ '/img/license-xagrant.svg', null, 70000, 150000,
+ 'license', 0, 0, 5, 0, 7, '7 ngÃ y',
+ '["BÆ¡m thá»‹t / gá»— / Ä‘Ã¡ / vÃ ng","Cháº¡y 100% báº±ng lá»‡nh CMD","KhÃ´ng cáº§n Ä‘Äƒng nháº­p tÃ i khoáº£n","KÃ­ch hoáº¡t 1 mÃ¡y (HWID)","Äá»•i mÃ¡y 1 láº§n miá»…n phÃ­","Giao key tá»± Ä‘á»™ng 24/7"]',
  1, 0, 30, 'XAGR', 7, 1731200000000, 1731200000000),
 
 ('p-xg-month', 'xarena-grant-thang', 'cat-xagrant',
- 'XArena Grant — Gói Tháng',
- '30 ngày sử dụng, kích hoạt 1 máy, tiết kiệm 40%.',
- 'License tool XArena Grant gói THÁNG (30 ngày). Lựa chọn phổ biến nhất. Bơm tài nguyên không giới hạn số lần trong suốt thời hạn, chạy bằng lệnh CMD, kích hoạt theo máy.',
- '/img/license-xarena.svg', 'HOT', 180000, 300000,
- 'license', 0, 0, 5, 0, 30, '30 ngày',
- '["Bơm thịt / gỗ / đá / vàng","Chạy 100% bằng lệnh CMD","Không cần đăng nhập tài khoản","Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Giao key tự động 24/7"]',
+ 'XArena Grant â€” GÃ³i ThÃ¡ng',
+ '30 ngÃ y sá»­ dá»¥ng, kÃ­ch hoáº¡t 1 mÃ¡y, tiáº¿t kiá»‡m 40%.',
+ 'License tool XArena Grant gÃ³i THÃNG (30 ngÃ y). Lá»±a chá»n phá»• biáº¿n nháº¥t. BÆ¡m tÃ i nguyÃªn khÃ´ng giá»›i háº¡n sá»‘ láº§n trong suá»‘t thá»i háº¡n, cháº¡y báº±ng lá»‡nh CMD, kÃ­ch hoáº¡t theo mÃ¡y.',
+ '/img/license-xagrant.svg', 'HOT', 180000, 300000,
+ 'license', 0, 0, 5, 0, 30, '30 ngÃ y',
+ '["BÆ¡m thá»‹t / gá»— / Ä‘Ã¡ / vÃ ng","Cháº¡y 100% báº±ng lá»‡nh CMD","KhÃ´ng cáº§n Ä‘Äƒng nháº­p tÃ i khoáº£n","KÃ­ch hoáº¡t 1 mÃ¡y (HWID)","Äá»•i mÃ¡y 1 láº§n miá»…n phÃ­","Giao key tá»± Ä‘á»™ng 24/7"]',
  1, 1, 31, 'XAGR', 30, 1731200000000, 1731200000000),
 
 ('p-xg-year', 'xarena-grant-nam', 'cat-xagrant',
- 'XArena Grant — Gói Năm',
- '365 ngày, tiết kiệm 60% so với gói tháng.',
- 'License tool XArena Grant gói NĂM (365 ngày). Tiết kiệm nhất cho người dùng lâu dài. Bao gồm mọi bản cập nhật tool trong thời hạn.',
- '/img/license-xarena.svg', 'SALE', 590000, 1500000,
- 'license', 0, 0, 5, 0, 365, '365 ngày',
- '["Bơm thịt / gỗ / đá / vàng","Chạy 100% bằng lệnh CMD","Không cần đăng nhập tài khoản","Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Bao gồm cập nhật trong thời hạn"]',
+ 'XArena Grant â€” GÃ³i NÄƒm',
+ '365 ngÃ y, tiáº¿t kiá»‡m 60% so vá»›i gÃ³i thÃ¡ng.',
+ 'License tool XArena Grant gÃ³i NÄ‚M (365 ngÃ y). Tiáº¿t kiá»‡m nháº¥t cho ngÆ°á»i dÃ¹ng lÃ¢u dÃ i. Bao gá»“m má»i báº£n cáº­p nháº­t tool trong thá»i háº¡n.',
+ '/img/license-xagrant.svg', 'SALE', 590000, 1500000,
+ 'license', 0, 0, 5, 0, 365, '365 ngÃ y',
+ '["BÆ¡m thá»‹t / gá»— / Ä‘Ã¡ / vÃ ng","Cháº¡y 100% báº±ng lá»‡nh CMD","KhÃ´ng cáº§n Ä‘Äƒng nháº­p tÃ i khoáº£n","KÃ­ch hoáº¡t 1 mÃ¡y (HWID)","Äá»•i mÃ¡y 1 láº§n miá»…n phÃ­","Bao gá»“m cáº­p nháº­t trong thá»i háº¡n"]',
  1, 0, 32, 'XAGR', 365, 1731200000000, 1731200000000),
 
 ('p-xg-forever', 'xarena-grant-vinh-vien', 'cat-xagrant',
- 'XArena Grant — Vĩnh Viễn',
- 'Không giới hạn thời gian, trọn đời cho 1 máy.',
- 'License tool XArena Grant VĨNH VIỄN — không bao giờ hết hạn, gắn với 1 máy tính. Mua một lần dùng mãi mãi, bao gồm mọi bản cập nhật sau này.',
- '/img/license-xarena.svg', 'HOT', 1290000, 2900000,
- 'license', 0, 0, 5, 0, 365, 'Vĩnh viễn',
- '["Không giới hạn thời gian","Bơm thịt / gỗ / đá / vàng","Chạy 100% bằng lệnh CMD","Kích hoạt 1 máy (HWID)","Đổi máy 1 lần miễn phí","Bao gồm cập nhật sau này"]',
+ 'XArena Grant â€” VÄ©nh Viá»…n',
+ 'KhÃ´ng giá»›i háº¡n thá»i gian, trá»n Ä‘á»i cho 1 mÃ¡y.',
+ 'License tool XArena Grant VÄ¨NH VIá»„N â€” khÃ´ng bao giá» háº¿t háº¡n, gáº¯n vá»›i 1 mÃ¡y tÃ­nh. Mua má»™t láº§n dÃ¹ng mÃ£i mÃ£i, bao gá»“m má»i báº£n cáº­p nháº­t sau nÃ y.',
+ '/img/license-xagrant.svg', 'HOT', 1290000, 2900000,
+ 'license', 0, 0, 5, 0, 365, 'VÄ©nh viá»…n',
+ '["KhÃ´ng giá»›i háº¡n thá»i gian","BÆ¡m thá»‹t / gá»— / Ä‘Ã¡ / vÃ ng","Cháº¡y 100% báº±ng lá»‡nh CMD","KÃ­ch hoáº¡t 1 mÃ¡y (HWID)","Äá»•i mÃ¡y 1 láº§n miá»…n phÃ­","Bao gá»“m cáº­p nháº­t sau nÃ y"]',
  1, 1, 33, 'XAGR', 0, 1731200000000, 1731200000000)
 ON CONFLICT(id) DO NOTHING;
+

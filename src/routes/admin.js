@@ -23,8 +23,24 @@ export async function dashboard(env, request) {
     env.DB.prepare("SELECT COALESCE(SUM(total),0) AS v FROM orders WHERE status IN ('paid','delivered') AND created_at >= ?").bind(monthAgo).first(),
     env.DB.prepare('SELECT COUNT(*) AS v FROM orders').first(),
     env.DB.prepare('SELECT COUNT(*) AS v FROM orders WHERE created_at >= ?').bind(dayAgo).first(),
-    env.DB.prepare('SELECT COUNT(*) AS v FROM users').first(),
-    env.DB.prepare('SELECT COUNT(*) AS v FROM users WHERE created_at >= ?').bind(dayAgo).first(),
+    // Chỉ đếm KHÁCH THẬT: loại user test (@local từ đăng ký username,
+    // @test.vn từ e2e) và user hệ thống. Trước đây COUNT(*) báo 97 user
+    // trong khi chỉ 2 là thật -> metric sai.
+    env.DB.prepare(
+      `SELECT COUNT(*) AS v FROM users
+       WHERE email NOT LIKE '%@local'
+         AND email NOT LIKE '%@test.vn'
+         AND email NOT LIKE '%@example.com'
+         AND role != 'admin'`
+    ).first(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS v FROM users
+       WHERE created_at >= ?
+         AND email NOT LIKE '%@local'
+         AND email NOT LIKE '%@test.vn'
+         AND email NOT LIKE '%@example.com'
+         AND role != 'admin'`
+    ).bind(dayAgo).first(),
     env.DB.prepare("SELECT COUNT(*) AS v FROM orders WHERE status='pending'").first(),
     env.DB.prepare(
       `SELECT COUNT(*) AS v FROM products

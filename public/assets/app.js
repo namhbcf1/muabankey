@@ -76,7 +76,32 @@ function mountChrome(app) {
     bindAiWidget();
   }
 
+  /*
+   * Skip link + landmark <main>. Đặt một lần ở đây để mọi route đều có, thay
+   * vì sửa từng trang: người dùng bàn phím cần nhảy thẳng qua header
+   * (WCAG 2.4.1) và trình đọc màn hình cần landmark nội dung chính (1.3.1).
+   */
+  if (!document.getElementById('skip-link')) {
+    const skip = document.createElement('a');
+    skip.id = 'skip-link';
+    skip.className = 'skip-link';
+    skip.href = '#main-content';
+    skip.textContent = 'Bỏ qua điều hướng, tới nội dung chính';
+    document.body.insertBefore(skip, document.body.firstChild);
+  }
+
   void app;
+}
+
+/** Bọc nội dung trang trong <main> nếu trang chưa tự làm. */
+function ensureMain(app) {
+  if (app.querySelector('main#main-content')) return;
+  const main = document.createElement('main');
+  main.id = 'main-content';
+  main.tabIndex = -1;
+  // Chuyển toàn bộ con hiện có vào <main>, giữ nguyên thứ tự và event listener.
+  while (app.firstChild) main.appendChild(app.firstChild);
+  app.appendChild(main);
 }
 
 async function router() {

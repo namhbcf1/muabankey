@@ -48,3 +48,6 @@ _audit/
 # File chua mat khau THAT (base64 = plaintext) - KHONG commit
 db/seed-credentials.sql
 scripts/gen-credentials.mjs
+
+# Khoa ma hoa product_keys.secret - KHONG commit
+.key-enc.txt

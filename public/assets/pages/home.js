@@ -94,7 +94,7 @@ export function renderHome() {
       <div class="sec-head">
         <div>
           <h2 class="sec-title">Dùng thử miễn phí</h2>
-          <p class="sec-desc">Hai lựa chọn, mỗi loại <strong>10 lượt</strong> cho tài khoản của bạn</p>
+          <p class="sec-desc">Hai lựa chọn, mỗi loại <strong>10 lượt</strong> cho mỗi thiết bị của bạn</p>
         </div>
       </div>
 
@@ -109,7 +109,7 @@ export function renderHome() {
           <ul class="feature-list trial-feats">
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đủ chơi 1–2 trận để thử</span></li>
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / tài khoản</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / thiết bị</span></li>
           </ul>
           <div id="trial-1h-status" class="trial-status"></div>
           <button class="btn btn-gold btn-block" data-trial-kind="1h">
@@ -127,7 +127,7 @@ export function renderHome() {
           <ul class="feature-list trial-feats">
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đầy đủ 17 cổng, không giới hạn</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Chơi thoải mái nhiều ngày</span></li>
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / tài khoản</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / thiết bị</span></li>
           </ul>
           <div id="trial-3d-status" class="trial-status"></div>
           <button class="btn btn-primary btn-block" data-trial-kind="3d">

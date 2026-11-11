@@ -330,12 +330,16 @@ export async function payOrder(env, request, orderId) {
       ).bind(item.product_id, qty).all();
 
       const secrets = [];
+      // Giải mã secret (hỗ trợ cả dữ liệu cũ chưa mã hoá)
+      const { openSecret } = await import('../lib/secrets.js');
       for (const k of keys || []) {
         const up = await env.DB.prepare(
           `UPDATE product_keys SET status='sold', order_id=?, delivered_at=?
            WHERE id = ? AND status='available'`
         ).bind(orderId, now, k.id).run();
-        if (up.meta && up.meta.changes === 1) secrets.push(k.secret);
+        if (up.meta && up.meta.changes === 1) {
+          secrets.push(await openSecret(env, k.secret));
+        }
       }
 
       if (secrets.length < qty) {
