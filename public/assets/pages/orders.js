@@ -14,7 +14,14 @@ const STATUS_MAP = {
   paid: ['pill-blue', 'Đã thanh toán', 'card'],
   delivered: ['pill-green', 'Đã giao', 'checkCircle'],
   cancelled: ['pill-gray', 'Đã huỷ', 'ban'],
+  refunding: ['pill-yellow', 'Đang hoàn tiền', 'undo'],
   refunded: ['pill-red', 'Đã hoàn tiền', 'undo'],
+  /*
+   * `refund_stuck` do cron ghi khi đơn hoàn tiền bị treo giữa chừng. Thiếu
+   * nhãn thì statusPill rơi vào fallback và in nguyên chuỗi tiếng Anh
+   * "refund_stuck" cho khách đọc.
+   */
+  refund_stuck: ['pill-yellow', 'Hoàn tiền chờ xử lý', 'clock'],
 };
 
 /** Nhãn trạng thái có icon — dùng chung cho danh sách và thông báo trong dòng hàng. */

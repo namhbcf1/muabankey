@@ -178,7 +178,7 @@ export async function mountCheckout(root, query = {}) {
 
       <div>
         <div class="panel ck-summary">
-          <h2 class="panel-title">${icon('wallet', { size: 15 })} Thanh toán</h2>
+          <h2 class="panel-title">${icon('card', { size: 15 })} Thanh toán</h2>
 
           <div class="summary-row"><span>Tạm tính</span><span id="sum-subtotal">${fmtVnd(subtotal)}</span></div>
           <div class="summary-row" id="sum-discount-row" hidden>
@@ -187,25 +187,23 @@ export async function mountCheckout(root, query = {}) {
           <div class="summary-row total"><span>Tổng cộng</span><span class="val" id="sum-total">${fmtVnd(subtotal)}</span></div>
 
           <div class="ck-pay">
-          <div class="ck-pay-row">
-            <span class="ck-pay-label">${icon('card', { size: 13 })} Thanh toán</span>
-            <strong class="ck-pay-val">Chuyển khoản QR</strong>
+            <div class="ck-pay-row">
+              <span class="ck-pay-label">${icon('card', { size: 13 })} Hình thức</span>
+              <strong class="ck-pay-val">Chuyển khoản QR</strong>
+            </div>
+            <div class="ck-pay-note">
+              Quét mã QR bằng app ngân hàng. Số tiền và nội dung đã điền sẵn.
+              Hệ thống tự xác nhận và giao key ngay khi tiền vào.
+            </div>
           </div>
-          <div class="ck-pay-note">
-            Quét mã QR bằng app ngân hàng. Số tiền và nội dung đã điền sẵn.
-            Hệ thống tự xác nhận và giao key ngay khi tiền vào.
-          </div>
-        </div>
+
           <button class="btn btn-primary btn-lg btn-block" id="btn-place-order">
-            ${icon('lock', { size: 15 })}Xác nhận thanh toán
-          </button>
-          <button class="btn btn-ghost btn-block mt-1" id="btn-topup" hidden>
-            ${icon('plus', { size: 15 })}Nạp thêm tiền
+            ${icon('card', { size: 15 })}Tạo mã QR thanh toán
           </button>
 
           <div class="alert alert-info ck-secure">
             <span class="ico">${icon('shieldCheck', { size: 14 })}</span>
-            <span>Giao dịch được xử lý qua kết nối mã hoá. Key hiển thị ngay khi hệ thống xác nhận được tiền.</span>
+            <span>Tiền chuyển thẳng tới tài khoản shop. Key hiện ngay khi hệ thống xác nhận được tiền.</span>
           </div>
         </div>
       </div>
@@ -426,6 +424,14 @@ export function showQrPayment(host, data, created) {
       }
     };
   }
+  /*
+   * Trả hàm dọn dẹp cho router. Thiếu nó thì poll 4s và đồng hồ đếm ngược
+   * tiếp tục chạy sau khi khách rời trang, gọi API liên tục và giữ DOM cũ.
+   */
+  return () => {
+    clearInterval(pollTimer);
+    clearInterval(cdTimer);
+  };
 }
 
 function showSuccess(host, order, created) {

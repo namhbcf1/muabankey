@@ -147,12 +147,26 @@ async function router() {
   }
 
   app.innerHTML = matched.render(route.query || {}, param);
+  /*
+   * Bọc nội dung trong <main> NGAY sau khi render, trước mountChrome: skip
+   * link `#main-content` cần đích tồn tại, và trình đọc màn hình cần landmark
+   * nội dung chính (WCAG 1.3.1 + 2.4.1). Header/footer được render sau nên
+   * nằm ngoài <main> — đúng cấu trúc.
+   */
+  ensureMain(app);
   mountChrome(app);
   window.scrollTo({ top: 0, behavior: 'instant' });
 
+  /*
+   * Trang có thể trả về hàm dọn dẹp (vd checkout phải clear poll timer).
+   * Trước đây biến currentCleanup được khai báo và gọi nhưng KHÔNG trang nào
+   * gán, nên poll 4s tiếp tục chạy sau khi rời trang.
+   */
   try {
-    if (matched.param) await matched.mount(app, param, route.query || {});
-    else await matched.mount(app, route.query || {});
+    let cleanup;
+    if (matched.param) cleanup = await matched.mount(app, param, route.query || {});
+    else cleanup = await matched.mount(app, route.query || {});
+    if (typeof cleanup === 'function') currentCleanup = cleanup;
   } catch (e) {
     console.error('Mount error:', e);
     const contentHost = app.querySelector('.container') || app;
