@@ -16,7 +16,6 @@ const ADMIN_ENDPOINTS = [
   ['GET', '/api/admin/dashboard'],
   ['GET', '/api/admin/users'],
   ['GET', '/api/admin/orders'],
-  ['GET', '/api/admin/topups'],
   ['GET', '/api/admin/products'],
   ['GET', '/api/admin/licenses'],
   ['GET', '/api/admin/settings'],
@@ -29,7 +28,6 @@ const ADMIN_ENDPOINTS = [
   ['POST', '/api/admin/trial/reset'],
   ['POST', '/api/admin/trial/grant'],
   ['POST', '/api/admin/trial/ban'],
-  ['POST', '/api/admin/wallet/adjust'],
   ['POST', '/api/admin/settings'],
   ['GET', '/api/admin/telegram/status'],
 ];
