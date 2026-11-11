@@ -9,13 +9,23 @@
  * Chạy: node scripts/_verify-rollback-race.mjs [baseUrl]
  */
 import { execSync } from 'node:child_process';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8799';
 const DB = 'muabankey-db';
+const TMP = mkdtempSync(join(tmpdir(), 'rb-'));
 
+/**
+ * Chạy SQL qua file thay vì --command: tên sản phẩm có dấu nháy đơn sẽ làm
+ * hỏng chuỗi shell nếu nhồi trực tiếp vào tham số dòng lệnh.
+ */
 function sql(query) {
+  const f = join(TMP, `q${Math.random().toString(36).slice(2)}.sql`);
+  writeFileSync(f, query, 'utf8');
   const out = execSync(
-    `npx wrangler@4 d1 execute ${DB} --local --json --command ${JSON.stringify(query)} --yes`,
+    `npx wrangler@4 d1 execute ${DB} --local --json --file=${JSON.stringify(f)} --yes`,
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
   );
   const m = out.match(/\[[\s\S]*\]/);
@@ -82,15 +92,28 @@ console.log(`  đơn A=${A.code}  đơn B=${B.code}  (cả 2 cùng giành 1 key)
 const licBefore = sql(`SELECT COUNT(*) n FROM licenses`)[0].n;
 
 // ---------- Giao song song ----------
-console.log('\n1️⃣  Giao 2 đơn song song');
+/*
+ * Kiến trúc hiện tại KHÔNG còn POST /api/orders/:id/pay — tiền vào qua webhook
+ * ngân hàng rồi mới giao. Nên phải kích hoạt đúng đường thật: bắn webhook
+ * SePay cho 2 đơn cùng lúc, mỗi đơn chuyển đúng số tiền.
+ */
+console.log('\n1️⃣  Giao 2 đơn song song qua webhook SePay');
+
+const SECRET = 'local-test-secret-1234567890'; // khớp .dev.vars
 const deliver = async (o) => {
-  const r = await fetch(`${BASE}/api/orders/${o.oid}/pay`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: ck },
+  const r = await fetch(`${BASE}/api/webhooks/sepay`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Apikey ${SECRET}` },
+    body: JSON.stringify({
+      transferAmount: 270000,
+      content: o.code,
+      referenceCode: `RBF${o.code}`,
+    }),
   });
   return { code: o.code, status: r.status, body: await r.text() };
 };
 const results = await Promise.all([deliver(A), deliver(B)]);
-results.forEach((r) => console.log(`  ${r.code}: status=${r.status} ${r.body.slice(0, 110)}`));
+results.forEach((r) => console.log(`  ${r.code}: status=${r.status} ${r.body.slice(0, 120)}`));
 
 // ---------- Kiểm chứng ----------
 const st = (code) => sql(`SELECT status FROM orders WHERE code='${code}'`)[0]?.status;
@@ -106,20 +129,26 @@ ok('số license tạo khớp số đơn giao được', licDelta === deliveredC
   `tạo mới=${licDelta}, đơn delivered=${deliveredCount}`);
 
 // License mồ côi: tồn tại nhưng không gắn order đã delivered
-const orphan = sql(`
-  SELECT l.key FROM licenses l
-  WHERE l.created_at >= ${stamp}
-    AND l.key NOT IN (
-      SELECT json_extract(je.value,'$.key') FROM order_items oi, json_each(oi.delivered_keys) je
-      WHERE je.value IS NOT NULL
-    )
-`).filter((r) => r.key);
+/*
+ * `licenses.created_at` tính bằng GIÂY, không phải mili-giây như orders.
+ * So sánh nhầm đơn vị sẽ khiến query trả 0 dòng dù dữ liệu đúng.
+ */
+const stampSec = Math.floor(stamp / 1000) - 5;
 const liveOrphan = sql(`
   SELECT COUNT(*) n FROM licenses
-  WHERE created_at >= ${stamp} AND revoked = 0
+  WHERE created_at >= ${stampSec} AND revoked = 0
 `)[0].n;
 ok('KHÔNG có license sống mồ côi', liveOrphan === deliveredCount,
   `license sống=${liveOrphan}, cần=${deliveredCount}`);
+
+// License của đơn THẤT BẠI phải bị revoke
+const failedCode = sA === 'delivered' ? B.code : A.code;
+const revokedOfFailed = sql(`
+  SELECT COUNT(*) n FROM licenses
+  WHERE created_at >= ${stampSec} AND note LIKE '%${failedCode}%' AND revoked = 0
+`)[0].n;
+ok('license của đơn THẤT BẠI đã bị revoke', revokedOfFailed === 0,
+  `còn sống=${revokedOfFailed}`);
 
 const keysSold = sql(`SELECT COUNT(*) n FROM product_keys WHERE product_id='${KEY}' AND status='sold'`)[0].n;
 ok('key chỉ bán đúng 1 lần', keysSold <= 1, `sold=${keysSold}`);

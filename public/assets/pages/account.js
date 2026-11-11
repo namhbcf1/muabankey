@@ -131,9 +131,6 @@ export async function mountAccount(root) {
         <div class="panel">
           <h2 class="panel-title">${icon('sliders', { size: 15 })} Thao tác nhanh</h2>
           <div class="action-list">
-            <button class="action-item" data-go="/wallet">
-              ${icon('wallet', { size: 15 })} Nạp tiền vào ví ${icon('chevronRight', { size: 14, cls: 'chev' })}
-            </button>
             <button class="action-item" data-go="/orders">
               ${icon('package', { size: 15 })} Đơn hàng của tôi ${icon('chevronRight', { size: 14, cls: 'chev' })}
             </button>

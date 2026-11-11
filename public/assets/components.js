@@ -10,11 +10,9 @@ export function renderHeader() {
   const isActive = (p) => (p === '/' ? path === '/' : path.startsWith(p));
 
   const userArea = u
-         ${icon('wallet', { size: 14 })}
-       </button>
-       <button class="icon-btn" data-nav="/account" aria-label="Tài khoản">
-         <span style="font-size:11.5px;font-weight:600">${esc((u.fullName || u.email || 'U')[0].toUpperCase())}</span>
-       </button>
+    ? `<button class="icon-btn" data-nav="/account" aria-label="Tài khoản">
+        <span style="font-size:11.5px;font-weight:600">${esc((u.fullName || u.email || 'U')[0].toUpperCase())}</span>
+      </button>
        ${u.role === 'admin' || u.role === 'staff'
          ? `<button class="icon-btn" data-nav="/admin" aria-label="Quản trị" title="Quản trị">${icon('sliders', { size: 15 })}</button>`
          : ''}
@@ -105,7 +103,7 @@ export function bindHeader() {
 
   /*
    * Menu di động. Trước đây .nav bị ẩn dưới 900px mà không có phương án thay
-   * thế, nên trên điện thoại không có cách nào tới Đơn hàng / Nạp tiền / Hỗ trợ.
+   * thế, nên trên điện thoại không có cách nào tới Đơn hàng / Hỗ trợ.
    * Menu đóng khi chọn một mục, bấm ngoài, hoặc nhấn Escape.
    */
   const navToggle = document.getElementById('nav-toggle');

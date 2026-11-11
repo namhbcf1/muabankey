@@ -13,7 +13,7 @@ import { state } from '../state.js';
 const NAV = [
   ['dashboard', 'grid', 'Tổng quan'],
   ['orders', 'package', 'Đơn hàng'],
-  ['topups', 'coins', 'Nạp tiền'],
+  ['topups', 'coins', 'Chờ thanh toán'],
   ['products', 'bag', 'Sản phẩm'],
   ['keys', 'key', 'Kho key'],
   ['licenses', 'ticket', 'License'],
@@ -243,7 +243,7 @@ async function renderOrders(host) {
   await load();
 }
 
-/* ---------------- Topups (nạp tiền) ---------------- */
+/* ---------------- Đơn chờ thanh toán ---------------- */
 const TOPUP_STATUS = {
   pending: ['pill-yellow', 'Chờ duyệt', 'clock'],
   paid: ['pill-green', 'Đã nhận', 'check'],
@@ -1366,14 +1366,14 @@ async function renderSettings(host) {
       </form>
       <div class="alert alert-info mt-2 adm-alert-last">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Thông tin ngân hàng dùng để tạo mã VietQR cho khách nạp tiền. Cần khớp với tài khoản đã kết nối webhook.</span>
+        <span>Thông tin ngân hàng dùng để tạo mã VietQR cho từng đơn hàng. Cần khớp với tài khoản đã kết nối webhook.</span>
       </div>
 
       <div class="adm-section">
         <div class="panel-title adm-panel-title-sm">${icon('link', { size: 14 })} Kết nối webhook tự động</div>
         <p class="adm-p">
           Dán URL bên dưới vào dashboard dịch vụ để tiền tự vào ví khi khách chuyển khoản.
-          Không nối thì phải duyệt tay ở tab <strong>Nạp tiền</strong>.
+          Không nối thì phải duyệt tay ở tab <strong>Chờ thanh toán</strong>.
         </p>
 
         <div id="wh-status" class="adm-wh-status">Đang kiểm tra...</div>

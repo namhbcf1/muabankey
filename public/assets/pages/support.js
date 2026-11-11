@@ -7,10 +7,8 @@ const FAQS = [
    'Có. Tất cả key đều là key Retail/OEM chính hãng mua trực tiếp từ nhà phân phối ủy quyền. Bạn có thể kiểm tra tính hợp lệ bằng công cụ chính thức của Microsoft hoặc nhà cung cấp.'],
   ['Bao lâu thì tôi nhận được key sau khi thanh toán?',
    'Với sản phẩm giao tự động, key hiển thị ngay lập tức trong mục "Đơn hàng" (thường dưới 5 giây). Mọi sản phẩm còn hàng đều giao tự động ngay sau khi trừ ví (dưới 5 giây) hoặc Telegram.'],
-  ['Tôi nạp tiền nhưng chưa thấy tiền vào ví?',
-   'Hệ thống tự động cộng tiền sau 1-2 phút kể từ khi ngân hàng ghi nhận giao dịch. Nếu bạn chuyển sai nội dung, vui lòng liên hệ Telegram/Zalo kèm ảnh chụp giao dịch để được hỗ trợ.'],
   ['Key không kích hoạt được thì sao?',
-   'Trong thời hạn bảo hành (365 ngày với Windows/Office, 30 ngày với AI tools, đổi mới với streaming), chúng tôi đổi key mới hoàn toàn miễn phí. Nếu không còn hàng thay thế, bạn được hoàn 100% vào ví.'],
+   'Trong thời hạn bảo hành (365 ngày với Windows/Office, 30 ngày với AI tools, đổi mới với streaming), chúng tôi đổi key mới hoàn toàn miễn phí. Nếu không còn hàng thay thế, bạn được hoàn 100% qua chuyển khoản.'],
   ['Có được dùng key trên nhiều máy không?',
    'Key Windows/Office Retail bind vào tài khoản Microsoft của bạn nên có thể cài trên nhiều thiết bị cá nhân (thường giới hạn phụ thuộc license). Key tài khoản AI/Streaming chỉ dùng 1 thiết bị tại một thời điểm.'],
   ['Tôi có thể bán lại key cho người khác không?',
@@ -20,7 +18,7 @@ const FAQS = [
 /** Bốn bước mua hàng — tách ra ngoài để template dễ đọc. */
 const STEPS = [
   ['1', 'Tạo tài khoản', 'Đăng ký bằng tài khoản và mật khẩu. Xác nhận trong vài giây, không cần chờ duyệt.'],
-  ['2', 'Nạp tiền vào ví', 'Vào mục "Nạp tiền", chọn số tiền, quét mã VietQR bằng app ngân hàng. Tiền vào ví tự động.'],
+  ['2', 'Thanh toán đơn bằng QR', 'Bấm Mua ngay, quét mã QR bằng app ngân hàng. Số tiền và nội dung đã điền sẵn.'],
   ['3', 'Chọn sản phẩm', 'Thêm sản phẩm vào giỏ hàng hoặc bấm "Mua ngay". Kiểm tra tồn kho trước khi đặt.'],
   ['4', 'Thanh toán và nhận key', 'Bấm "Xác nhận thanh toán". Key hiển thị ngay và được lưu vĩnh viễn trong mục Đơn hàng.'],
 ];
@@ -109,7 +107,7 @@ export function renderSupport() {
               Chính sách hoàn tiền
             </h2>
             <div class="sp-body">
-              <p>Bạn được <strong class="text-green">hoàn 100% vào ví</strong> trong các trường hợp:</p>
+              <p>Bạn được <strong class="text-green">hoàn 100% qua chuyển khoản</strong> trong các trường hợp:</p>
               ${checkList(REFUND_ROWS.map(esc))}
               <p>
                 Tiền hoàn về ví trong vòng 1-2 giờ làm việc. Gửi yêu cầu qua Telegram/Zalo kèm mã đơn hàng.

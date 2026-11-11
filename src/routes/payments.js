@@ -549,16 +549,19 @@ export async function confirmOrderPaid(env, {
   }
 
   // L2: claim nguyên tử
-
+  /*
+   * BẮT BUỘC set `processing_started_at` cùng lúc với status='processing'.
+   * Cron dọn đơn kẹt (src/index.js) lọc theo `processing_started_at IS NOT NULL
+   * AND processing_started_at < ?`; thiếu mốc này thì đơn kẹt ở 'processing'
+   * (worker chết giữa chừng) sẽ KHÔNG BAO GIỜ được dọn — khách đã trả tiền
+   * nhưng đơn treo vĩnh viễn.
+   */
   const claim = await env.DB.prepare(
-
-    `UPDATE orders SET status = 'processing', paid_at = ?, confirmed_by = ?
-
+    `UPDATE orders SET status = 'processing', paid_at = ?, confirmed_by = ?,
+            processing_started_at = ?
      WHERE id = ? AND status IN ('pending','expired','processing','cancelled')`
-
   ).bind(now, source === 'sepay' || source === 'payos' ? source : (adminId || 'admin'),
-
-    order.id).run();
+    now, order.id).run();
 
   if (!claim.meta || claim.meta.changes !== 1) {
 

@@ -174,7 +174,7 @@ export function renderHome() {
         ${[
           ['bolt', 'Giao key tự động', 'Nhận key ngay sau khi thanh toán, không cần chờ đợi'],
           ['shieldCheck', 'Bảo hành 1 đổi 1', 'Key lỗi đổi mới ngay, hoàn tiền 100% nếu không khắc phục được'],
-          ['bank', 'Thanh toán VietQR', 'Nạp tiền tự động qua chuyển khoản, tiền vào ví trong 1–2 phút'],
+          ['bank', 'Thanh toán VietQR', 'Quét QR theo đơn, tự giao key 24/7'],
           ['lock', 'Bảo mật tuyệt đối', 'Mã hoá SSL 256-bit, key giao riêng tư từng khách hàng'],
         ].map(([ico, t, d]) => `
           <div class="card value-card">
