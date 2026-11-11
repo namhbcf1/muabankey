@@ -74,6 +74,21 @@ export async function apiTrialCommand(env, request) {
   }
   const label = kind === KIND_1H ? '1 giờ' : '3 ngày';
 
+  // Rate limit riêng cho endpoint này.
+  // Trước đây /api/trial/command KHÔNG có rate limit -> 200 request = 200 mã.
+  try {
+    const { rateLimit } = await import('../lib/ratelimit.js');
+    await rateLimit(env, `tcmd:${ip}`, 150, 3600);
+  } catch (e) {
+    if (e && e.code === 'RATE_LIMITED') {
+      return json({
+        ok: false, code: 'rate_limit',
+        msg: 'Bạn thao tác quá nhanh, thử lại sau ít phút',
+      }, 429);
+    }
+    throw e;
+  }
+
   // ---- Danh tính: ưu tiên tài khoản, fallback thiết bị ----
   let userId = null;
   let userLabel = null;
@@ -88,10 +103,32 @@ export async function apiTrialCommand(env, request) {
 
   // Nếu không đăng nhập: neo theo thiết bị (nếu biết) hoặc IP
   let ids = null;
-  const hasParts = (body.guid !== undefined || body.bios !== undefined
-    || body.cpu !== undefined || body.vol !== undefined);
+  const _p = [body.guid, body.bios, body.cpu, body.vol].map((x) =>
+    String(x === undefined || x === null ? '' : x).trim());
+  const _anySent = [body.guid, body.bios, body.cpu, body.vol].some(
+    (x) => x !== undefined && x !== null);
+  const _nonEmpty = _p.filter((x) => x.length > 0);
+
+  // Gửi parts nhưng TẤT CẢ rỗng -> từ chối.
+  // {guid:"",bios:"",cpu:"",vol:""} cho ra weak = sha256("w1|||") = HẰNG SỐ
+  // -> mọi khách dùng chung 1 license (lỗ hổng identity collision).
+  if (_anySent && _nonEmpty.length === 0) {
+    return json({
+      ok: false, code: 'bad_request',
+      msg: 'Thông tin máy rỗng — chạy tool trực tiếp, đừng gọi API tay',
+    }, 400);
+  }
+
+  const hasParts = _nonEmpty.length > 0;
   if (hasParts) {
-    ids = await deriveIds([body.guid, body.bios, body.cpu, body.vol]);
+    // Phải có ít nhất GUID hoặc BIOS/CPU thật sự, không chỉ volume serial
+    if (!_p[0] && !_p[1] && !_p[2]) {
+      return json({
+        ok: false, code: 'bad_request',
+        msg: 'Thiếu thông tin máy — chạy tool trực tiếp, đừng gọi API tay',
+      }, 400);
+    }
+    ids = await deriveIds(_p);
     if (looksVirtual(ids.bios, ids.cpu)) {
       return json({
         ok: false, code: 'trial_denied_device',
@@ -107,17 +144,21 @@ export async function apiTrialCommand(env, request) {
     //   2. weak HWID nếu có guid/bios
     //   3. IP — CHỈ khi không có gì khác (quán net sẽ chia nhau)
     let anchor;
-    if (ids && ids.weak) {
-      anchor = ids.weak;
-    } else if (body.device_id) {
+    if (body.device_id) {
       const did = String(body.device_id).trim().slice(0, 64);
       if (/^[a-zA-Z0-9_-]{8,64}$/.test(did)) {
-        // Băm để không lưu ID thô của trình duyệt
         deviceHash = (await sha256hex('d1|' + did)).slice(0, 32);
         anchor = deviceHash;
       }
     }
-    if (!anchor) anchor = 'ip:' + ip;
+    if (!anchor && ids && ids.weak) {
+      anchor = ids.weak;
+    }
+    if (!anchor) {
+      // Không có device_id và không có HWID -> dùng IP
+      // NHƯNG: quán net sẽ chia nhau 1 quota. Đánh dấu để hạ giới hạn an toàn hơn.
+      anchor = 'ip:' + ip;
+    }
     userId = 'dev:' + anchor;
     userLabel = 'thiết bị';
   }
@@ -268,10 +309,11 @@ async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quo
     kind,
     label,
     resumed,
-    left,
-    quota,
-    used,
-    unlimited: !!unlimited,
+    // Không trả "unlimited"/quota nội bộ ra cho khách:
+    // trước đây response công khai lộ quota:999999 và unlimited:true
+    // -> khách thấy "999999 lượt" (vô lý) và biết ai trong whitelist.
+    left: unlimited ? null : left,
+    quota: unlimited ? null : quota,
     command,
     oneLiner: `powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm ${base}/i/${key}.ps1?t=${token})"`,
     cmdUrl,

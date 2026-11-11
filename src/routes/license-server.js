@@ -377,12 +377,18 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
     const startedAt = now;
     const expiresAt = now + secs;
 
+    // Ghi HWID ngay lần check đầu tiên.
+    // Trước đây trial cấp qua web có hwid=NULL và KHÔNG BAO GIỜ được ghi
+    // -> máy nào gọi /api/check đầu tiên sẽ chiếm license vĩnh viễn,
+    // ai có mã TR- đều dùng được. Nay bind đúng như key trả phí.
     await env.DB.prepare(
-      'UPDATE trial_uses SET started_at = ?, expires_at = ? WHERE id = ? AND started_at IS NULL'
-    ).bind(startedAt, expiresAt, use.id).run();
+      `UPDATE trial_uses SET started_at = ?, expires_at = ?,
+              hwid = COALESCE(hwid, ?) WHERE id = ? AND started_at IS NULL`
+    ).bind(startedAt, expiresAt, hwid, use.id).run();
     await env.DB.prepare(
-      'UPDATE licenses SET activated_at = ?, expires_at = ? WHERE key = ?'
-    ).bind(startedAt, expiresAt, key).run();
+      `UPDATE licenses SET activated_at = ?, expires_at = ?,
+              hwid = COALESCE(hwid, ?) WHERE key = ?`
+    ).bind(startedAt, expiresAt, hwid, key).run();
 
     const fresh = await env.DB.prepare('SELECT * FROM trial_uses WHERE id = ?')
       .bind(use.id).first();

@@ -390,8 +390,8 @@ export async function mountHome(root) {
     };
 
     if (!state.user) {
-      setText('1h', '<span class="trial-state dim">Cần đăng nhập để dùng thử</span>');
-      setText('3d', '<span class="trial-state dim">Cần đăng nhập để dùng thử</span>');
+      setText('1h', '<span class="trial-state dim">Không cần đăng ký</span>');
+      setText('3d', '<span class="trial-state dim">Không cần đăng ký</span>');
       return;
     }
 

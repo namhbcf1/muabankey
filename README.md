@@ -39,8 +39,11 @@ Deploy lại để áp dụng: `npx wrangler deploy`
 
 | Vai trò | Đăng nhập | Mật khẩu |
 |---|---|---|
-| Admin | `namhbcf` hoặc `admin@muabankey.vn` | `namhbcf123` |
-| Demo | `demo` hoặc `demo@muabankey.vn` | `Demo@123456` |
+| Admin | xem `ADMIN_CREDENTIALS.txt` | xem `ADMIN_CREDENTIALS.txt` |
+| Demo | `demo` hoặc `demo@muabankey.vn` | xem `ADMIN_CREDENTIALS.txt` |
+
+> Mật khẩu **không ghi vào README** (file này được commit lên git).
+> Xem `ADMIN_CREDENTIALS.txt` trên máy — file đó đã nằm trong `.gitignore`.
 
 Đăng nhập được bằng **username hoặc email** — hệ thống tự nhận diện.
 

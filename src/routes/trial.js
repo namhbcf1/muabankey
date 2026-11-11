@@ -74,10 +74,21 @@ export async function apiTrialClaim(env, request) {
 
   // Tính HWID từ raw parts (server tự băm)
   let ids;
-  const hasParts = (body.guid !== undefined || body.bios !== undefined
-    || body.cpu !== undefined || body.vol !== undefined);
+  // Gửi parts nhưng tất cả RỖNG -> từ chối (tránh weak = sha256("w1|||") hằng số)
+  const _p1 = [body.guid, body.bios, body.cpu, body.vol].map((x) =>
+    String(x === undefined || x === null ? '' : x).trim());
+  const _sent1 = [body.guid, body.bios, body.cpu, body.vol].some(
+    (x) => x !== undefined && x !== null);
+  const _ne1 = _p1.filter((x) => x.length > 0);
+  if (_sent1 && _ne1.length === 0) {
+    return json({
+      ok: false, code: 'bad_request',
+      msg: 'Thông tin máy rỗng — chạy tool trực tiếp',
+    }, 400);
+  }
+  const hasParts = _ne1.length > 0;
   if (hasParts) {
-    ids = await deriveIds([body.guid, body.bios, body.cpu, body.vol]);
+    ids = await deriveIds(_p1);
   } else if (body.hwid) {
     const raw = String(body.hwid).trim().toLowerCase();
     if (!/^[0-9a-z]{16,128}$/.test(raw)) {
@@ -342,12 +353,22 @@ export async function apiTrialStart(env, request) {
   //     (bảo vệ bằng: license chưa bind thì chỉ bind được 1 lần,
   //      sau đó đổi máy phải có token)
   let ids;
-  const hasParts = (body.guid !== undefined || body.bios !== undefined
-    || body.cpu !== undefined || body.vol !== undefined);
+  const _p2 = [body.guid, body.bios, body.cpu, body.vol].map((x) =>
+    String(x === undefined || x === null ? '' : x).trim());
+  const _sent2 = [body.guid, body.bios, body.cpu, body.vol].some(
+    (x) => x !== undefined && x !== null);
+  const _ne2 = _p2.filter((x) => x.length > 0);
+  if (_sent2 && _ne2.length === 0) {
+    return json({
+      ok: false, code: 'bad_request',
+      msg: 'Thông tin máy rỗng — chạy tool trực tiếp',
+    }, 400);
+  }
+  const hasParts = _ne2.length > 0;
   const hasHwid = !!body.hwid;
 
   if (hasParts) {
-    ids = await deriveIds([body.guid, body.bios, body.cpu, body.vol]);
+    ids = await deriveIds(_p2);
   } else if (hasHwid) {
     const raw = String(body.hwid).trim().toLowerCase();
     if (!/^[0-9a-z]{16,128}$/.test(raw)) {

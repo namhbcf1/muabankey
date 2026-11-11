@@ -81,7 +81,9 @@ export async function checkWhitelist(env, { userId, hwid, weak, deviceId, ip } =
   if (hwid) checks.push(['hwid', hwid]);
   if (deviceId) checks.push(['device', deviceId]);
   if (userId && !String(userId).startsWith('dev:')) checks.push(['user', userId]);
-  if (ip && ip !== 'unknown') checks.push(['ip', ip]);
+  // KHÔNG dùng IP làm căn cứ whitelist: ai cùng NAT/WiFi/CGNAT với admin
+  // sẽ hưởng vô hạn (bỏ 5 lớp giới hạn). IP chỉ để tra cứu, không cấp quyền.
+  void ip;
 
   if (!checks.length) return { unlimited: false, matched: [] };
 

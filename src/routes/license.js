@@ -41,6 +41,19 @@ export function nowSec() {
  */
 export const MAX_LICENSE_BATCH = 100;
 
+/**
+ * Tiền tố key -> định danh sản phẩm (`licenses.pid`).
+ *
+ * Bắt buộc phải có: XAGrant từ chối mọi key không phải của nó, nên key bán ra
+ * từ shop phải mang đúng pid ngay lúc sinh. No Fog giữ pid NULL để tương thích
+ * dữ liệu cũ (client No Fog không đọc cột này).
+ */
+export const PREFIX_PID = { XAGR: 'xagrant' };
+
+export function pidForPrefix(prefix) {
+  return PREFIX_PID[String(prefix || '').toUpperCase()] || null;
+}
+
 export async function issueLicenses(env, {
   count = 1,
   prefix = 'AOE1',
@@ -48,6 +61,8 @@ export async function issueLicenses(env, {
   plan = 'aoe1',
   note = '',
   maxRebind = 1,
+  pid = null,
+  graceH = null,
 } = {}) {
   const requested = Number(count) || 1;
   // Không âm thầm cắt số lượng — khách trả tiền cho N thì phải nhận đủ N.
@@ -61,6 +76,8 @@ export async function issueLicenses(env, {
   const now = nowSec();
   // Cộng 1 ngày bonus để hạn không bị hụt so với nhãn gói
   const exp = forever ? 0 : now + (term + 1) * 86400;
+  const owner = pid || pidForPrefix(prefix);
+  const grace = graceH === null ? (owner === 'xagrant' ? 6 : 0) : Number(graceH) || 0;
   const made = [];
 
   for (let i = 0; i < n; i++) {
@@ -72,10 +89,10 @@ export async function issueLicenses(env, {
       key = newLicenseKey(prefix);
     }
     await env.DB.prepare(
-      `INSERT INTO licenses (key, plan, note, created_at, expires_at, max_rebind)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO licenses (key, plan, note, created_at, expires_at, max_rebind, pid, grace_h, app)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(key, String(plan).slice(0, 32), String(note).slice(0, 200),
-      now, exp, Number(maxRebind) || 1).run();
+      now, exp, Number(maxRebind) || 1, owner, grace, owner || '').run();
     made.push(key);
   }
   return made;
@@ -156,6 +173,7 @@ export async function deliverLicenseLine(env, { order, orderId, userId, product,
     plan: prefix.toLowerCase(),
     note: `Don ${order.code} - ${product.name}`.slice(0, 200),
     maxRebind: 1,
+    pid: pidForPrefix(prefix),
   });
   await recordIssue(env, {
     orderId,
@@ -201,6 +219,9 @@ export function shapeLicense(lic) {
     plan: lic.plan,
     note: lic.note,
     status,
+    // Tool sở hữu key: 'xagrant' | 'nofog'. UI dùng để chọn đúng endpoint
+    // cài đặt và đúng câu lệnh đổi máy.
+    tool: lic.pid || (String(lic.key || '').startsWith('XAGR-') ? 'xagrant' : 'nofog'),
     bound: !!lic.hwid,
     // resetPending: admin vừa reset, đang chờ khách đổi máy bằng token.
     // Admin UI dùng cờ này để hiện badge "Đang chờ đổi máy".
@@ -231,7 +252,8 @@ export async function myLicenses(env, request) {
             l.key AS l_key, l.plan AS l_plan, l.note AS l_note, l.hwid AS l_hwid,
             l.revoked AS l_revoked,
             l.expires_at AS l_expires_at, l.activated_at AS l_activated_at,
-            l.last_seen AS l_last_seen, l.rebinds AS l_rebinds, l.max_rebind AS l_max_rebind
+            l.last_seen AS l_last_seen, l.rebinds AS l_rebinds, l.max_rebind AS l_max_rebind,
+            l.pid AS l_pid
      FROM license_issues li
      LEFT JOIN products p ON p.id = li.product_id
      LEFT JOIN orders o ON o.id = li.order_id
@@ -252,6 +274,7 @@ export async function myLicenses(env, request) {
       last_seen: row.l_last_seen,
       rebinds: row.l_rebinds,
       max_rebind: row.l_max_rebind,
+      pid: row.l_pid,
     } : null;
     return {
       ...(shapeLicense(lic) || { key: row.license_key, status: 'unknown' }),
@@ -308,13 +331,20 @@ export async function rebindMyLicense(env, request, key) {
      VALUES (?,?,?,?,?,0)`
   ).bind(tokenHash, k, user.id, now, now + 1800).run();
 
+  const tool = lic.pid === 'xagrant' || String(k).startsWith('XAGR-')
+    ? 'xagrant' : 'nofog';
+  const exePath = tool === 'xagrant'
+    ? '"%ProgramFiles%\\XArena\\_re\\xagrant\\xa_grant.exe"'
+    : '"%ProgramFiles%\\XArena\\_re\\chayduoc\\xa_nofog_pro.exe"';
+
   return ok({
     key: k,
     token,
+    tool,
     expiresIn: 1800,
     rebindsLeft: (lic.max_rebind || 0) - (lic.rebinds || 0),
     // Lệnh chạy trên máy mới: client EXE tự gửi token
-    command: `"%ProgramFiles%\\XArena\\_re\\chayduoc\\xa_nofog_pro.exe" --rebind "${k}" "${token}"`,
+    command: `${exePath} --rebind "${k}" "${token}"`,
   });
 }
 
@@ -396,6 +426,7 @@ export async function adminIssueLicenses(env, request) {
 
   const keys = await issueLicenses(env, {
     count, prefix, days, plan: prefix.toLowerCase(), note, maxRebind,
+    pid: pidForPrefix(prefix),
   });
 
   // Ghi license_issues để khách thấy trong trang cá nhân

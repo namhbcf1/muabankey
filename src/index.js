@@ -21,6 +21,8 @@ import * as trialCmd from './routes/trial-command.js';
 import * as twl from './routes/trial-whitelist-admin.js';
 import * as stats from './routes/stats.js';
 import * as installer from './routes/installer.js';
+import * as xgServer from './routes/xa-grant-server.js';
+import * as xgInstaller from './routes/xa-grant-installer.js';
 
 const r = new Router();
 
@@ -69,6 +71,16 @@ r.post('/api/activate', licenseServer.apiActivate);
 r.post('/api/check', licenseServer.apiCheck);
 r.post('/api/rebind', licenseServer.apiRebind);
 r.get('/api/license/health', (env) => licenseServer.apiHealth(env));
+
+/* ---------- XAGrant: tool tăng tài nguyên (sản phẩm riêng) ---------- */
+r.post('/api/xg/activate', xgServer.xgActivate);
+r.post('/api/xg/check', xgServer.xgCheck);
+r.post('/api/xg/heartbeat', xgServer.xgHeartbeat);
+r.post('/api/xg/rebind', xgServer.xgRebind);
+r.post('/api/xg/violation', xgServer.xgViolation);
+r.get('/api/xg/health', (env) => xgServer.xgHealth(env));
+r.post('/api/licenses/:key/xg-install-token',
+  (env, req, p) => xgInstaller.issueXgInstallToken(env, req, p.key));
 
 /* ---------- Dùng thử 3 ngày ---------- */
 r.post('/api/trial/start', trial.apiTrialStart);
@@ -218,6 +230,10 @@ export default {
         await env.DB.prepare('DELETE FROM install_tokens WHERE expires_at < ?').bind(nowS).run();
         await env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now).run();
         await env.DB.prepare('DELETE FROM lic_attempts WHERE at < ?').bind(nowS - 7 * 86400).run();
+        // Nonce XAGrant chỉ sống 90 giây; xoá sau 1 giờ là quá đủ.
+        try {
+          await env.DB.prepare('DELETE FROM xg_nonce WHERE at < ?').bind(nowS - 3600).run();
+        } catch { /* chưa migrate CSDL */ }
 
         // 5. Thông báo Telegram (chỉ chạy khi đã cấu hình, không chặn cron nếu lỗi)
         if (env.TG_BOT_TOKEN && env.TG_CHAT_ID) {
@@ -291,6 +307,27 @@ export default {
           return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
         }
         return await installer.downloadExe(env, request);
+      }
+
+      // /xg/<KEY>.cmd | /xg/<KEY>.ps1 | /xg/<KEY>   (XAGrant, sản phẩm riêng)
+      const mXg = url.pathname.match(/^\/xg\/([A-Za-z0-9-]{6,64})(\.cmd|\.ps1)?$/);
+      if (mXg) {
+        const rawKey = mXg[1];
+        const ext = mXg[2] || '';
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
+        }
+        if (ext === '.cmd') return await xgInstaller.serveXgCmd(env, request, rawKey);
+        if (ext === '.ps1') return await xgInstaller.serveXgPs1(env, request, rawKey);
+        return await xgInstaller.xgInstallerCommand(env, request, rawKey);
+      }
+
+      // /download/xa_grant.exe
+      if (url.pathname === `/download/xa_grant.exe`) {
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
+        }
+        return await xgInstaller.downloadXgExe(env, request);
       }
     } catch (err) {
       if (err instanceof ApiError) {

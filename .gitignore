@@ -44,3 +44,7 @@ keys/
 # Audit tam
 _audit/
 
+
+# File chua mat khau THAT (base64 = plaintext) - KHONG commit
+db/seed-credentials.sql
+scripts/gen-credentials.mjs

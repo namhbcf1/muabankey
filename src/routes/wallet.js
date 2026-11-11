@@ -770,8 +770,15 @@ export async function sepayWebhook(env, request) {
   // Trước đây đánh dấu 'expired' và bỏ qua -> khách mất tiền, shop giữ.
   if (amountIn < topup.amount) {
     const credited = Math.floor(amountIn);
-    await env.DB.prepare("UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status != 'paid'")
-      .bind(ref, topup.id).run();
+    // Guard: chỉ cộng nếu thực sự chuyển được sang 'partial'.
+    // Thiếu guard -> webhook retry (SePay retry là bình thường) hoặc 2 webhook
+    // song song sẽ cộng tiền nhiều lần -> mất tiền thật.
+    const claimPartial = await env.DB.prepare(
+      "UPDATE topups SET status='partial', txn_ref = ? WHERE id = ? AND status != 'paid'"
+    ).bind(ref, topup.id).run();
+    if (!claimPartial.meta || claimPartial.meta.changes !== 1) {
+      return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
+    }
     await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
       .bind(credited, now, topup.user_id).run();
     const balP = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(topup.user_id).first();
@@ -791,8 +798,14 @@ export async function sepayWebhook(env, request) {
   const credited = topup.amount;
   const excess = Math.floor(amountIn) - topup.amount;
 
-  await env.DB.prepare("UPDATE topups SET status='paid', txn_ref = ?, paid_at = ? WHERE id = ? AND status != 'paid'")
-    .bind(ref, now, topup.id).run();
+  // Guard: chỉ cộng nếu thực sự chuyển được sang 'paid'.
+  // Thiếu guard -> webhook retry (SePay retry bình thường) cộng tiền nhiều lần.
+  const claimPaid = await env.DB.prepare(
+    "UPDATE topups SET status='paid', txn_ref = ?, paid_at = ? WHERE id = ? AND status != 'paid'"
+  ).bind(ref, now, topup.id).run();
+  if (!claimPaid.meta || claimPaid.meta.changes !== 1) {
+    return ok({ matched: true, duplicated: true, reason: 'RACE_ALREADY_PAID' });
+  }
   await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
     .bind(credited, now, topup.user_id).run();
 

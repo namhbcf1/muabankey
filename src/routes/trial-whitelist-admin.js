@@ -26,7 +26,13 @@ function normValue(scope, v) {
     return /^[0-9a-f]{16,64}$/.test(x) ? x : null;
   }
   if (scope === 'ip') {
-    return /^(\d{1,3}\.){3}\d{1,3}$/.test(s) ? s : null;
+    // Phải kiểm từng octet 0-255 (trước đây nhận cả 999.999.999.999)
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(s)) return null;
+    const ok = s.split('.').every((x) => {
+      const n = Number(x);
+      return Number.isInteger(n) && n >= 0 && n <= 255;
+    });
+    return ok ? s : null;
   }
   if (scope === 'user') {
     return s.length >= 1 && s.length <= 64 ? s : null;

@@ -29,7 +29,15 @@ export class Router {
       for (let i = 0; i < route.parts.length; i++) {
         const rp = route.parts[i];
         if (rp.startsWith(':')) {
-          params[rp.slice(1)] = decodeURIComponent(segs[i]);
+          // decodeURIComponent ném URIError với chuỗi % sai (%FF, %E0%A4%A).
+          // Trước đây không bắt -> ném ra ngoài r.match() -> Cloudflare 500
+          // (trang lỗi xấu, lộ hạ tầng) thay vì JSON 400.
+          try {
+            params[rp.slice(1)] = decodeURIComponent(segs[i]);
+          } catch {
+            matched = false;
+            break;
+          }
         } else if (rp !== segs[i]) {
           matched = false;
           break;
