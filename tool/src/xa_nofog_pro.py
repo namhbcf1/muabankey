@@ -1296,16 +1296,12 @@ def start_trial(kind=None, verbose=True):
 
     label = TRIAL_KINDS[kind]['label']
 
-    # ---- 1. BAT BUOC dang nhap truoc khi goi server ----
-    ck, uname = ensure_session(verbose=False)
-    if not ck:
-        if verbose:
-            print('  Dung thu can TAI KHOAN mien phi (chi ten + mat khau).')
-        ck, uname = ask_login(verbose)
-        if not ck:
-            return {'ok': False, 'code': 'login_cancelled',
-                    'msg': 'Chua dang nhap nen khong dung thu duoc.',
-                    'next': 'buy'}
+    # ---- 1. KHONG can dang nhap ----
+    # Dung /api/trial/command: server tu bam HWID tu raw parts, khong doi
+    # session. Truoc day goi /api/trial/start (bat buoc login) nen khach
+    # phai tao tai khoan chi de dung thu -> ray ra, mat khach.
+    ck = None
+    uname = None
 
     # FAIL CLOSED: server tu bam parts -> parts rong se ra HWID "toan rong"
     # giong nhau tren moi may loi => 1 tai khoan farm duoc vo han.
@@ -1332,18 +1328,16 @@ def start_trial(kind=None, verbose=True):
         'kind': kind, 'app': APP_NAME, 'ver': CLIENT_VERSION, 'idem_key': idem,
     }
 
-    r = _post('/api/trial/start', payload, timeout=HTTP_TIMEOUT, retries=1, cookie=ck)
+    r = _post('/api/trial/command', payload, timeout=HTTP_TIMEOUT, retries=1, cookie=ck)
 
     if not r.get('ok'):
         code = str(r.get('code') or '')
 
-        # Session chet -> xoa, thu lai 1 lan
+        # /api/trial/command khong can session -> login_required la loi la
         if code == 'login_required':
-            drop_session()
-            ck2, uname2 = ask_login(verbose)
-            if not ck2:
-                return {'ok': False, 'code': 'login_required',
-                        'msg': 'Can dang nhap de dung thu.', 'next': 'buy'}
+            return {'ok': False, 'code': 'login_required',
+                    'msg': 'Server doi dang nhap (loi cau hinh). Thu lai sau.',
+                    'next': 'retry'}
             r = _post('/api/trial/start', payload, timeout=HTTP_TIMEOUT,
                       retries=1, cookie=ck2)
             if not r.get('ok'):
@@ -1583,13 +1577,11 @@ def _anchor_paths():
         out.append((os.path.join(STATE_DIR, 'ts'), False))
     except Exception:
         pass
-    # Thu muc rieng cua Windows, ten khong lien quan den app
-    try:
-        d = os.path.join(os.environ.get('PROGRAMDATA', r'C:\ProgramData'),
-                         'Microsoft', 'Crypto', 'RSA')
-        out.append((os.path.join(d, 'upd.dat'), False))
-    except Exception:
-        pass
+    # Thu muc rieng cua Windows: BO.
+    # Truoc day ghi upd.dat vao thu muc khoa RSA cua Windows de nguy
+    # trang moc thoi gian. Day la hanh vi giong malware -> Windows
+    # Defender quarantine, antivirus bao nham, go cai dat co the xoa.
+    # Moc thoi gian da du: %LOCALAPPDATA% ts + HKCU + server now.
     return out
 
 
