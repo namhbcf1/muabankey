@@ -833,7 +833,7 @@ async function renderWhitelist(host) {
 
     host.innerHTML = `
       <div class="panel">
-        <div class="panel-title">⭐ Dùng thử vô hạn (${entries.length})</div>
+        <div class="panel-title">${icon('star', { size: 15 })} Dùng thử vô hạn (${entries.length})</div>
         <p class="sec-desc" style="margin-bottom:16px">
           Máy / tài khoản trong danh sách này <strong>không bị giới hạn số lượt</strong>.
           Dùng cho máy lập trình, test nội bộ. Khách thật không ảnh hưởng.
@@ -841,7 +841,7 @@ async function renderWhitelist(host) {
 
         <div class="flex gap-1 mb-2" style="flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" data-add>+ Thêm</button>
-          <button class="btn btn-ghost btn-sm" data-thisdev>⭐ Whitelist máy tôi đang dùng</button>
+          <button class="btn btn-ghost btn-sm" data-thisdev>${icon('star', { size: 13 })} Whitelist máy tôi đang dùng</button>
         </div>
 
         ${entries.length === 0 ? `
