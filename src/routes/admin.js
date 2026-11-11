@@ -233,7 +233,21 @@ export async function getSettings(env, request) {
 export async function saveSettings(env, request) {
   const admin = await requireAdmin(env, request);
   const body = await readJson(request);
-  const allowed = ['bank_name', 'bank_account', 'bank_owner', 'topup_min', 'topup_max', 'auto_deliver'];
+  // Cho phép lưu cả cấu hình trial.
+  // Trước đây chỉ 6 key -> admin không đổi được số lượt trial, phải sửa SQL tay.
+  const allowed = [
+    'bank_name', 'bank_account', 'bank_owner', 'topup_min', 'topup_max', 'auto_deliver',
+    // Trial
+    'trial_enabled',
+    'trial1h_enabled', 'trial1h_minutes', 'trial1h_limit',
+    'trial3d_enabled', 'trial3d_days', 'trial3d_limit',
+    'trial_max_per_ip', 'trial_max_per_net', 'trial_max_per_day',
+    'trial_device_acc_1h', 'trial_device_acc_3d',
+    'trial_hold_sec', 'trial_recheck_1h', 'trial_recheck_3d',
+    'trial_unlimited_quota',
+    // Giao diện
+    'site_name', 'site_tagline', 'support_zalo', 'support_telegram',
+  ];
   const now = Date.now();
   const stmts = [];
   for (const [k, v] of Object.entries(body)) {

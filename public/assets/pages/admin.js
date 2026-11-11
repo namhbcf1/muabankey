@@ -1310,6 +1310,41 @@ async function renderSettings(host) {
           <div class="field"><label class="label" for="st-max">Nạp tối đa (₫)</label>
             <input class="input" id="st-max" type="number" value="${esc(s.topup_max || '50000000')}"></div>
         </div>
+        <div class="panel-title" style="margin-top:26px;font-size:14px">Cấu hình dùng thử</div>
+
+        <div class="adm-form-row">
+          <div class="field"><label class="label" for="st-t1h-en">Gói 1 giờ</label>
+            <select class="select" id="st-t1h-en">
+              <option value="1" ${s.trial1h_enabled !== '0' ? 'selected' : ''}>Bật</option>
+              <option value="0" ${s.trial1h_enabled === '0' ? 'selected' : ''}>Tắt</option>
+            </select></div>
+          <div class="field"><label class="label" for="st-t1h-min">Số phút</label>
+            <input class="input" id="st-t1h-min" type="number" value="${esc(s.trial1h_minutes || '60')}"></div>
+          <div class="field"><label class="label" for="st-t1h-lim">Số lượt / thiết bị</label>
+            <input class="input" id="st-t1h-lim" type="number" value="${esc(s.trial1h_limit || '10')}"></div>
+        </div>
+
+        <div class="adm-form-row">
+          <div class="field"><label class="label" for="st-t3d-en">Gói 3 ngày</label>
+            <select class="select" id="st-t3d-en">
+              <option value="1" ${s.trial3d_enabled !== '0' ? 'selected' : ''}>Bật</option>
+              <option value="0" ${s.trial3d_enabled === '0' ? 'selected' : ''}>Tắt</option>
+            </select></div>
+          <div class="field"><label class="label" for="st-t3d-days">Số ngày</label>
+            <input class="input" id="st-t3d-days" type="number" value="${esc(s.trial3d_days || '3')}"></div>
+          <div class="field"><label class="label" for="st-t3d-lim">Số lượt / thiết bị</label>
+            <input class="input" id="st-t3d-lim" type="number" value="${esc(s.trial3d_limit || '10')}"></div>
+        </div>
+
+        <div class="adm-form-row">
+          <div class="field"><label class="label" for="st-t-ip">Lượt / IP / ngày</label>
+            <input class="input" id="st-t-ip" type="number" value="${esc(s.trial_max_per_ip || '100')}"></div>
+          <div class="field"><label class="label" for="st-t-net">Lượt / mạng / 30 ngày</label>
+            <input class="input" id="st-t-net" type="number" value="${esc(s.trial_max_per_net || '2000')}"></div>
+          <div class="field"><label class="label" for="st-t-day">Lượt / ngày toàn hệ thống</label>
+            <input class="input" id="st-t-day" type="number" value="${esc(s.trial_max_per_day || '5000')}"></div>
+        </div>
+
         <button class="btn btn-primary" type="submit">${icon('check', { size: 14 })} Lưu cài đặt</button>
       </form>
       <div class="alert alert-info mt-2 adm-alert-last">
@@ -1415,6 +1450,15 @@ async function renderSettings(host) {
           bank_owner: host.querySelector('#st-owner').value.trim(),
           topup_min: Number(host.querySelector('#st-min').value),
           topup_max: Number(host.querySelector('#st-max').value),
+          trial1h_enabled: host.querySelector('#st-t1h-en').value,
+          trial1h_minutes: Number(host.querySelector('#st-t1h-min').value),
+          trial1h_limit: Number(host.querySelector('#st-t1h-lim').value),
+          trial3d_enabled: host.querySelector('#st-t3d-en').value,
+          trial3d_days: Number(host.querySelector('#st-t3d-days').value),
+          trial3d_limit: Number(host.querySelector('#st-t3d-lim').value),
+          trial_max_per_ip: Number(host.querySelector('#st-t-ip').value),
+          trial_max_per_net: Number(host.querySelector('#st-t-net').value),
+          trial_max_per_day: Number(host.querySelector('#st-t-day').value),
         },
       });
       toast('Đã lưu cài đặt', 'success');
