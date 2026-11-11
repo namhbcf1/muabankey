@@ -282,7 +282,7 @@ export async function deliverOrderItems(env, order) {
         made.licenses.push(...keys);
 
         await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
-          .bind(JSON.stringify(keys), item.id).run();
+          .bind(await sealKeys(env, keys), item.id).run();
         made.items.push(item.id);
 
         await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')

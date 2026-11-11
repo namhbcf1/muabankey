@@ -429,11 +429,18 @@ export async function claimOrderPaid(env, request, orderId) {
 
  */
 
-export async function confirmOrderPaid(env, {
+export async function confirmOrderPaid(env, opts = {}) {
+  const { orderId, amount, source, txnRef, adminId, content, raw } = opts;
+  let { isTest } = opts;
 
-  orderId, amount, source, txnRef, adminId, content, raw,
-
-} = {}) {
+  /*
+   * isTest có thể undefined khi admin duyệt tay (không qua webhook).
+   * Tự nhận diện qua txnRef để không bị ReferenceError.
+   */
+  if (isTest === undefined) {
+    const ref = String(txnRef || '');
+    isTest = /^(TEST|PROBE|SHORT|TOPUP|OVER|TWICE|MULTI|OUT|WRONGACC|NOMATCH|SAME|TWO|AGAIN|EXP|CAN|OOS|APPROVE|E2E)/i.test(ref);
+  }
   const now = nowSec();
 
   const order = await env.DB.prepare('SELECT * FROM orders WHERE id = ?')

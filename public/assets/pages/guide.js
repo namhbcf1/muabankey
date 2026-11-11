@@ -99,11 +99,8 @@ export function renderGuide() {
         Liên hệ shop, gửi kèm ảnh chụp màn hình lỗi:
       </p>
       <div class="flex gap-1" style="flex-wrap:wrap">
-        <a class="btn btn-primary btn-sm" href="https://zalo.me/0836768597" target="_blank" rel="noopener">
-          Zalo 0836768597
-        </a>
-        <a class="btn btn-ghost btn-sm" href="https://t.me/muabankey" target="_blank" rel="noopener">
-          Telegram
+        <a class="btn btn-primary btn-sm" href="https://t.me/muabankey" target="_blank" rel="noopener">
+          Nhắn Telegram
         </a>
         <a class="btn btn-ghost btn-sm" href="#/support">Trang hỗ trợ</a>
       </div>

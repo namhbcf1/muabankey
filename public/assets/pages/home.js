@@ -364,7 +364,7 @@ function showTrialError(msg) {
     ${isDevice ? `
       <div class="alert alert-warn" style="margin-bottom:16px">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Cần hỗ trợ? Zalo <strong>0836768597</strong></span>
+        <span>Cần hỗ trợ? Nhắn <strong>Telegram</strong> để được trả lời nhanh nhất.</span>
       </div>` : ''}
     <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
       <button class="btn btn-ghost" data-close>Đóng</button>

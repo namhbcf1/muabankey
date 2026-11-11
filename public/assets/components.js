@@ -314,8 +314,7 @@ export function renderFooter() {
         <div class="footer-col">
           <h2 class="footer-h">Liên hệ</h2>
           <a href="https://t.me/muabankey" target="_blank" rel="noopener">${icon('send', { size: 13 })} Telegram</a>
-          <a href="https://zalo.me/0836768597" target="_blank" rel="noopener">${icon('messageCircle', { size: 13 })} Zalo</a>
-          <a href="mailto:support@muabankey.vn">${icon('mail', { size: 13 })} support@muabankey.vn</a>
+          <a href="#/support">${icon('help', { size: 13 })} Trung tâm hỗ trợ</a>
           <a href="#/account">${icon('user', { size: 13 })} Tài khoản</a>
         </div>
       </div>

@@ -110,7 +110,7 @@ export function renderSupport() {
               <p>Bạn được <strong class="text-green">hoàn 100% qua chuyển khoản</strong> trong các trường hợp:</p>
               ${checkList(REFUND_ROWS.map(esc))}
               <p>
-                Tiền hoàn về ví trong vòng 1-2 giờ làm việc. Gửi yêu cầu qua Telegram/Zalo kèm mã đơn hàng.
+                Tiền hoàn về trong vòng 1-2 giờ làm việc. Gửi yêu cầu qua Telegram kèm mã đơn hàng.
               </p>
             </div>
           </section>
@@ -144,19 +144,19 @@ export function renderSupport() {
             </a>
         <a class="btn btn-ghost btn-sm" href="#/huong-dan">Hướng dẫn cài đặt (SmartScreen)</a>
             <div class="sp-contact">
-              <a class="sp-contact-item" href="https://zalo.me/0836768597" target="_blank" rel="noopener">
-                <span class="ic-box">${icon('message', { size: 15 })}</span>
+              <a class="sp-contact-item" href="https://t.me/muabankey" target="_blank" rel="noopener">
+                <span class="ic-box">${icon('send', { size: 15 })}</span>
                 <span class="sp-contact-body">
-                  <span class="sp-contact-t">Zalo</span>
-                  <span class="sp-contact-d">0836 768 597</span>
+                  <span class="sp-contact-t">Telegram</span>
+                  <span class="sp-contact-d">Kênh hỗ trợ duy nhất</span>
                 </span>
                 ${icon('arrowUpRight', { size: 13, cls: 'sp-contact-go' })}
               </a>
-              <a class="sp-contact-item" href="mailto:support@muabankey.vn">
-                <span class="ic-box">${icon('mail', { size: 15 })}</span>
+              <a class="sp-contact-item" href="#/huong-dan">
+                <span class="ic-box">${icon('book', { size: 15 })}</span>
                 <span class="sp-contact-body">
-                  <span class="sp-contact-t">Email</span>
-                  <span class="sp-contact-d">support@muabankey.vn</span>
+                  <span class="sp-contact-t">Hướng dẫn</span>
+                  <span class="sp-contact-d">Cài đặt, SmartScreen, lỗi thường gặp</span>
                 </span>
                 ${icon('arrowUpRight', { size: 13, cls: 'sp-contact-go' })}
               </a>

@@ -47,8 +47,8 @@ export function renderLogin(query) {
     <form id="login-form" novalidate>
       <div class="field">
         <label class="label" for="lg-email">Tài khoản <span class="req" aria-hidden="true">*</span></label>
-        <input class="input" id="lg-email" type="text" name="email" autocomplete="username"
-          placeholder="Email hoặc tên đăng nhập" autocapitalize="none" spellcheck="false"
+        <input class="input" id="lg-email" type="text" name="username" autocomplete="username"
+          placeholder="Tên đăng nhập" autocapitalize="none" spellcheck="false"
           required aria-required="true">
       </div>
       <div class="field">
@@ -88,11 +88,11 @@ export function mountLogin(root, query) {
     btn.disabled = true;
     btn.textContent = 'Đang đăng nhập...';
     try {
-      const data = await api('/api/auth/login', { method: 'POST', body: { email: account, password } });
+      const data = await api('/api/auth/login', { method: 'POST', body: { username: account, password } });
       state.user = data.user;
       notify();
       await loadUser();
-      toast(`Chào mừng ${data.user.fullName || data.user.username || data.user.email}!`, 'success');
+      toast(`Chào mừng ${data.user.fullName || data.user.username}!`, 'success');
       const redirect = query.redirect || (data.user.role === 'admin' ? '/admin' : '/');
       navigate(redirect.startsWith('/') ? redirect : '/');
       window.dispatchEvent(new CustomEvent('app:refresh-header'));
