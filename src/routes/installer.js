@@ -505,6 +505,48 @@ $Url      = "\${Base}/download/$ExeName"
 $WantSha  = '${EXE_SHA256}'
 $WantSize = ${EXE_SIZE}
 
+# ---------------------------------------------------------------------------
+# BAM SHA-256 - TUONG THICH MOI WINDOWS
+#
+# Get-FileHash chi co tu PowerShell 4.0 (Windows 8.1+). Windows 7 mac dinh
+# co PowerShell 2.0 -> goi Get-FileHash se bao CommandNotFoundException.
+# Ham nay thu 3 cach: Get-FileHash -> certutil -> .NET SHA256.
+# certutil.exe co tu Windows XP nen gan nhu may nao cung co.
+# ---------------------------------------------------------------------------
+function Get-Sha256 {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return '' }
+
+  # Cach 1: Get-FileHash (PowerShell 4.0+)
+  $hasGFH = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+  if ($hasGFH) {
+    try {
+      return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
+    } catch { }
+  }
+
+  # Cach 2: certutil (Windows XP+) - loc dong chi chua hex 64 ky tu
+  try {
+    $out = & certutil.exe -hashfile "$Path" SHA256 2>$null
+    foreach ($line in $out) {
+      $t = ($line -replace '[^0-9A-Fa-f]', '')
+      if ($t.Length -eq 64) { return $t.ToUpper() }
+    }
+  } catch { }
+
+  # Cach 3: .NET (PowerShell 2.0+)
+  try {
+    $fs = [System.IO.File]::OpenRead($Path)
+    try {
+      $sha = [System.Security.Cryptography.SHA256]::Create()
+      try { $bytes = $sha.ComputeHash($fs) } finally { $sha.Dispose() }
+    } finally { $fs.Dispose() }
+    return ([System.BitConverter]::ToString($bytes) -replace '-', '')
+  } catch { }
+
+  return ''
+}
+
 function Step($m) { Write-Host "  $m" -ForegroundColor Cyan }
 function Good($m) { Write-Host "  [OK] $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "  [!] $m" -ForegroundColor Yellow }
@@ -570,7 +612,7 @@ if (Test-Path -LiteralPath $Exe) {
   # Luon bam lai SHA-256; certutil tren 13 MB chi mat ~30ms.
   $cacheSha = ''
   try {
-    $cacheSha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256 -ErrorAction Stop).Hash
+    $cacheSha = Get-Sha256 -Path $Exe
   } catch { $cacheSha = '' }
   if ($cacheSha -and ($cacheSha -eq $WantSha)) {
     Good 'Bo xu ly da co san va dung chu ky, bo qua tai.'
@@ -607,7 +649,7 @@ if ($needDownload) {
     Halt 7 'Khong tai duoc bo xu ly. Kiem tra mang roi chay lai.'
   }
 
-  $sha = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
+  $sha = Get-Sha256 -Path $tmp
   if ($sha -ine $WantSha) {
     Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     Halt 9 'FILE TAI VE KHONG DUNG CHU KY. Da huy cai dat.'
