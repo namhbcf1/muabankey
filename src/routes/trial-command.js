@@ -18,7 +18,7 @@ import { json } from '../lib/http.js';
 import {
   trialCfg, kindCfg, normKind, nowSec, trialKey,
   getQuota, consumeUse, refundUse, activeUse,
-  deviceAccountCount, countRecent, deriveIds, looksVirtual,
+  deviceAccountCount, countRecent, deriveIds, looksVirtual, checkWhitelist,
   KIND_1H, KIND_3D,
 } from '../lib/trial-quota.js';
 
@@ -100,6 +100,7 @@ export async function apiTrialCommand(env, request) {
     }
   }
 
+  let deviceHash = null;
   if (!userId) {
     // Web không đọc được phần cứng. Ưu tiên:
     //   1. device_id do browser sinh (localStorage) — mỗi máy riêng
@@ -112,7 +113,8 @@ export async function apiTrialCommand(env, request) {
       const did = String(body.device_id).trim().slice(0, 64);
       if (/^[a-zA-Z0-9_-]{8,64}$/.test(did)) {
         // Băm để không lưu ID thô của trình duyệt
-        anchor = (await sha256hex('d1|' + did)).slice(0, 32);
+        deviceHash = (await sha256hex('d1|' + did)).slice(0, 32);
+        anchor = deviceHash;
       }
     }
     if (!anchor) anchor = 'ip:' + ip;
@@ -120,19 +122,30 @@ export async function apiTrialCommand(env, request) {
     userLabel = 'thiết bị';
   }
 
+  // ---- WHITELIST: máy/tài khoản dev dùng vô hạn ----
+  const wl = await checkWhitelist(env, {
+    userId,
+    hwid: ids ? ids.hwid : null,
+    weak: ids ? ids.weak : null,
+    deviceId: deviceHash,
+    ip,
+  });
+
   // ---- Đang có trial cùng loại → resume, không trừ lượt ----
   const active = await activeUse(env, userId, kind);
   if (active) {
-    const q = await getQuota(env, userId, kind, kc.quota);
+    const q = wl.unlimited
+      ? { left: wl.quota, quota: wl.quota, used: 0 }
+      : await getQuota(env, userId, kind, kc.quota);
     return await issueCommand(env, request, {
       key: active.lic_key, kind, label, cfg, kc,
       left: q.left, quota: q.quota, used: q.used,
-      resumed: true, userLabel,
+      resumed: true, userLabel, unlimited: wl.unlimited,
     });
   }
 
-  // ---- Hạn mức IP / subnet / ngày ----
-  if (ip !== 'unknown') {
+  // ---- Hạn mức IP / subnet / ngày (BỎ QUA nếu whitelist) ----
+  if (!wl.unlimited && ip !== 'unknown') {
     const net = String(ip).split('.').slice(0, 3).join('.');
     const nIp = await countRecent(env, ip, net, nowSec() - 86400, { perIp: true });
     if (nIp >= cfg.maxPerIp) {
@@ -152,18 +165,21 @@ export async function apiTrialCommand(env, request) {
     }
   }
 
-  const nDay = await env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM trial_uses WHERE created_at > ?'
-  ).bind(nowSec() - 86400).first();
-  if ((nDay?.n || 0) >= cfg.maxPerDay) {
-    return json({
-      ok: false, code: 'trial_global_limit',
-      msg: 'Hệ thống đạt giới hạn dùng thử hôm nay, thử lại ngày mai.',
-    }, 429);
+  // ---- Hạn mức toàn hệ thống / ngày (BỎ QUA nếu whitelist) ----
+  if (!wl.unlimited) {
+    const nDay = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM trial_uses WHERE created_at > ?'
+    ).bind(nowSec() - 86400).first();
+    if ((nDay?.n || 0) >= cfg.maxPerDay) {
+      return json({
+        ok: false, code: 'trial_global_limit',
+        msg: 'Hệ thống đạt giới hạn dùng thử hôm nay, thử lại ngày mai.',
+      }, 429);
+    }
   }
 
-  // ---- Chống farm: 1 máy nhiều "tài khoản" ----
-  if (ids && ids.weak) {
+  // ---- Chống farm: 1 máy nhiều "tài khoản" (BỎ QUA nếu whitelist) ----
+  if (!wl.unlimited && ids && ids.weak) {
     const maxAcc = kind === KIND_1H ? cfg.deviceAccounts1h : cfg.deviceAccounts3d;
     const accCount = await deviceAccountCount(env, ids.weak, kind, userId);
     if (accCount >= maxAcc) {
@@ -175,14 +191,19 @@ export async function apiTrialCommand(env, request) {
     }
   }
 
-  // ---- Trừ lượt ----
-  const quota = await consumeUse(env, userId, kind, kc.quota);
-  if (!quota.ok) {
-    return json({
-      ok: false, code: 'trial_quota_exhausted',
-      msg: `Đã dùng hết ${quota.quota} lượt dùng thử ${label}. Mua key để tiếp tục.`,
-      used: quota.used, quota: quota.quota, left: 0,
-    }, 403);
+  // ---- Trừ lượt (BỎ QUA nếu whitelist) ----
+  let quota;
+  if (wl.unlimited) {
+    quota = { ok: true, used: 0, quota: wl.quota, left: wl.quota };
+  } else {
+    quota = await consumeUse(env, userId, kind, kc.quota);
+    if (!quota.ok) {
+      return json({
+        ok: false, code: 'trial_quota_exhausted',
+        msg: `Đã dùng hết ${quota.quota} lượt dùng thử ${label}. Mua key để tiếp tục.`,
+        used: quota.used, quota: quota.quota, left: 0,
+      }, 403);
+    }
   }
 
   // ---- Sinh mã + grant ----
@@ -219,12 +240,12 @@ export async function apiTrialCommand(env, request) {
   return await issueCommand(env, request, {
     key, kind, label, cfg, kc,
     left: quota.left, quota: quota.quota, used: quota.used,
-    resumed: false, userLabel,
+    resumed: false, userLabel, unlimited: wl.unlimited,
   });
 }
 
 /** Sinh token + lệnh CMD cho mã trial vừa cấp. */
-async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quota, used, resumed, userLabel }) {
+async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quota, used, resumed, userLabel, unlimited }) {
   const token = randomHex(24);
   const tokenHash = await sha256hex(token);
   const now = nowSec();
@@ -250,6 +271,7 @@ async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quo
     left,
     quota,
     used,
+    unlimited: !!unlimited,
     command,
     oneLiner: `powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm ${base}/i/${key}.ps1?t=${token})"`,
     cmdUrl,

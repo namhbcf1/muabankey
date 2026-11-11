@@ -67,6 +67,43 @@ export function kindCfg(cfg, kind) {
   return null;
 }
 
+/**
+ * Kiểm tra whitelist — máy/tài khoản/IP được dùng thử VÔ HẠN.
+ *
+ * Trả { unlimited: true, quota, matched: [{scope, value}] } nếu khớp,
+ * ngược lại { unlimited: false }.
+ *
+ * Dùng cho máy lập trình / test nội bộ. Không ảnh hưởng khách thật.
+ */
+export async function checkWhitelist(env, { userId, hwid, weak, deviceId, ip } = {}) {
+  const checks = [];
+  if (weak) checks.push(['weak', weak]);
+  if (hwid) checks.push(['hwid', hwid]);
+  if (deviceId) checks.push(['device', deviceId]);
+  if (userId && !String(userId).startsWith('dev:')) checks.push(['user', userId]);
+  if (ip && ip !== 'unknown') checks.push(['ip', ip]);
+
+  if (!checks.length) return { unlimited: false, matched: [] };
+
+  const matched = [];
+  for (const [scope, value] of checks) {
+    const row = await env.DB.prepare(
+      'SELECT note FROM trial_whitelist WHERE scope = ? AND value = ?'
+    ).bind(scope, value).first();
+    if (row) matched.push({ scope, value, note: row.note });
+  }
+
+  if (!matched.length) return { unlimited: false, matched: [] };
+
+  // Quota vô hạn: dùng số lớn thay vì NULL để mọi phép so sánh vẫn đúng
+  const row = await env.DB.prepare(
+    "SELECT value FROM settings WHERE key = 'trial_unlimited_quota'"
+  ).first();
+  const quota = Number(row?.value) || 999999;
+
+  return { unlimited: true, quota, matched };
+}
+
 export function normKind(v) {
   const s = String(v || '').trim().toLowerCase();
   if (s === '1h' || s === '1g' || s === 'hour') return KIND_1H;

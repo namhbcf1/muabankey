@@ -34,14 +34,20 @@ binding = "AI"
 [observability]
 enabled = true
 
-# Cron: dọn topup hết hạn, đơn treo, token hết hạn (mỗi 10 phút)
-[triggers]
-crons = ["*/10 * * * *"]
-
+# Biến môi trường KHÔNG bí mật.
+# Trước đây các biến này chỉ tồn tại trên Cloudflare (set qua dashboard/API)
+# nhưng KHÔNG khai báo trong wrangler.toml -> mỗi lần deploy, wrangler tạo
+# version mới thiếu chúng -> Cloudflare báo:
+#   "binding DB of type d1 failed to generate" [code 10021]
+# Khai báo ở đây để mọi lần deploy đều giữ đủ.
 [vars]
 ENV = "production"
+SESSION_TTL_DAYS = "30"
 SITE_NAME = "MuaBanKey"
 SITE_TAGLINE = "Bản quyền số - Giao key tự động 24/7"
 SUPPORT_TELEGRAM = "https://t.me/muabankey"
 SUPPORT_ZALO = "https://zalo.me/0836768597"
-SESSION_TTL_DAYS = "30"
+
+# Cron: dọn topup hết hạn, đơn treo, token hết hạn (mỗi 10 phút)
+[triggers]
+crons = ["*/10 * * * *"]

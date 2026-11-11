@@ -18,7 +18,7 @@
 import { json } from '../lib/http.js';
 import {
   trialCfg, kindCfg, normKind, nowSec, trialKey, sha256hex,
-  looksVirtual, deriveIds, getQuota, consumeUse, refundUse,
+  looksVirtual, deriveIds, getQuota, consumeUse, refundUse, checkWhitelist,
   activeUse, deviceAccountCount, countRecent, publicUse,
   KIND_1H, KIND_3D,
 } from '../lib/trial-quota.js';
@@ -91,8 +91,13 @@ export async function apiTrialClaim(env, request) {
     }, 400);
   }
 
-  // Máy ảo
-  if (ids.bios || ids.cpu) {
+  // WHITELIST: máy dev được bỏ qua mọi chặn
+  const wlClaim = await checkWhitelist(env, {
+    hwid: ids.hwid, weak: ids.weak, ip,
+  });
+
+  // Máy ảo (bỏ qua nếu whitelist)
+  if (!wlClaim.unlimited && (ids.bios || ids.cpu)) {
     if (looksVirtual(ids.bios, ids.cpu)) {
       return json({
         ok: false, code: 'trial_denied_device',

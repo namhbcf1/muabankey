@@ -18,6 +18,7 @@ import * as licenseServer from './routes/license-server.js';
 import * as trial from './routes/trial.js';
 import * as trialAdmin from './routes/trial-admin.js';
 import * as trialCmd from './routes/trial-command.js';
+import * as twl from './routes/trial-whitelist-admin.js';
 import * as stats from './routes/stats.js';
 import * as installer from './routes/installer.js';
 
@@ -114,6 +115,10 @@ r.get('/api/admin/trial/resets', trialAdmin.adminTrialResets);
 r.post('/api/admin/trial/reset', trialAdmin.adminTrialReset);
 r.post('/api/admin/trial/grant', trialAdmin.adminTrialGrant);
 r.post('/api/admin/trial/ban', trialAdmin.adminTrialBan);
+r.get('/api/admin/trial/whitelist', twl.adminWhitelistList);
+r.post('/api/admin/trial/whitelist', twl.adminWhitelistAdd);
+r.delete('/api/admin/trial/whitelist', twl.adminWhitelistRemove);
+r.post('/api/admin/trial/whitelist/this-device', twl.adminWhitelistThisDevice);
 r.get('/api/admin/telegram/status', wallet.adminTelegramStatus);
 r.post('/api/admin/telegram/config', wallet.adminTelegramConfig);
 r.post('/api/admin/telegram/test', wallet.adminTelegramTest);
