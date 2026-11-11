@@ -1,5 +1,5 @@
 /** Các component tái sử dụng: header, footer, cart drawer, AI chat. */
-import { state, notify, cartCount, cartSubtotal, updateCartQty, removeFromCart, clearCart, addToCart, loadUser, refreshBalance } from './state.js';
+import { state, notify, cartCount, cartSubtotal, updateCartQty, removeFromCart, clearCart, addToCart, loadUser } from './state.js';
 import { api, esc, fmtVnd, toast, navigate, copyText, confirmDialog, openModal } from './lib.js';
 import { icon } from './icons.js';
 
@@ -10,9 +10,7 @@ export function renderHeader() {
   const isActive = (p) => (p === '/' ? path === '/' : path.startsWith(p));
 
   const userArea = u
-    ? `<button class="balance-chip" data-nav="/wallet" title="Số dư ví" aria-label="Số dư ví, mở trang nạp tiền">
          ${icon('wallet', { size: 14 })}
-         <span id="balance-chip">${new Intl.NumberFormat('vi-VN').format(u.balance)}₫</span>
        </button>
        <button class="icon-btn" data-nav="/account" aria-label="Tài khoản">
          <span style="font-size:11.5px;font-weight:600">${esc((u.fullName || u.email || 'U')[0].toUpperCase())}</span>
@@ -39,7 +37,6 @@ export function renderHeader() {
         <a href="#/" class="nav-link ${isActive('/') ? 'active' : ''}">Trang chủ</a>
         <a href="#/products" class="nav-link ${isActive('/products') ? 'active' : ''}">Sản phẩm</a>
         <a href="#/orders" class="nav-link ${isActive('/orders') ? 'active' : ''}">Đơn hàng</a>
-        <a href="#/wallet" class="nav-link ${isActive('/wallet') ? 'active' : ''}">Nạp tiền</a>
         <a href="#/support" class="nav-link ${isActive('/support') ? 'active' : ''}">Hỗ trợ</a>
       </nav>
       <div class="search-mini">
@@ -59,7 +56,6 @@ export function renderHeader() {
         <a href="#/" class="mobile-nav-link ${isActive('/') ? 'active' : ''}">${icon('home', { size: 15 })} Trang chủ</a>
         <a href="#/products" class="mobile-nav-link ${isActive('/products') ? 'active' : ''}">${icon('grid', { size: 15 })} Sản phẩm</a>
         <a href="#/orders" class="mobile-nav-link ${isActive('/orders') ? 'active' : ''}">${icon('receipt', { size: 15 })} Đơn hàng</a>
-        <a href="#/wallet" class="mobile-nav-link ${isActive('/wallet') ? 'active' : ''}">${icon('wallet', { size: 15 })} Nạp tiền</a>
         <a href="#/support" class="mobile-nav-link ${isActive('/support') ? 'active' : ''}">${icon('help', { size: 15 })} Hỗ trợ</a>
       </nav>
     </div>
@@ -357,7 +353,7 @@ export function renderAiWidget() {
         <div class="ai-sugg">
           <button class="ai-sugg-item" data-q="Tôi cần mua Windows 11 bản quyền">Mua Windows 11 bản quyền ${icon('arrowRight', { size: 12 })}</button>
           <button class="ai-sugg-item" data-q="Gói AI nào tốt nhất cho công việc?">Gói AI tốt nhất cho công việc ${icon('arrowRight', { size: 12 })}</button>
-          <button class="ai-sugg-item" data-q="Hướng dẫn nạp tiền vào ví">Cách nạp tiền vào ví ${icon('arrowRight', { size: 12 })}</button>
+          <button class="ai-sugg-item" data-q="Cách thanh toán bằng QR">Cách thanh toán bằng QR ${icon('arrowRight', { size: 12 })}</button>
         </div>
       </div>
       <div class="ai-input-row">

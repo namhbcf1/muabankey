@@ -137,7 +137,7 @@ export async function getTopup(env, request, topupId) {
  *   4. Nối thành "key1=value1&key2=value2..."
  *   5. HMAC-SHA256(chuỗi, checksumKey) -> hex
  */
-async function payosSignature(data, checksumKey) {
+export async function payosSignature(data, checksumKey) {
   const keys = Object.keys(data).sort();
   const parts = [];
   for (const k of keys) {
@@ -172,7 +172,7 @@ async function payosSignature(data, checksumKey) {
 }
 
 /** Đọc checksum key: ưu tiên Worker secret, sau đó tới settings. */
-async function payosChecksumKey(env) {
+export async function payosChecksumKey(env) {
   if (env.PAYOS_CHECKSUM_KEY) return env.PAYOS_CHECKSUM_KEY;
   try {
     const row = await env.DB.prepare(
@@ -466,8 +466,8 @@ export async function telegramWebhook(env, request) {
           }
 
           const claim = await env.DB.prepare(
-            "UPDATE orders SET status='refunding' WHERE id = ? AND status IN ('paid','delivered')"
-          ).bind(o.id).run();
+            "UPDATE orders SET status='refunding', refund_started_at = ? WHERE id = ? AND status IN ('paid','delivered')"
+          ).bind(Date.now(), o.id).run();
           if (!claim.meta || claim.meta.changes !== 1) {
             return { ok: false, error: 'Đơn đã được xử lý bởi người khác' };
           }
@@ -475,38 +475,91 @@ export async function telegramWebhook(env, request) {
           const now = Date.now();
           const amount = o.total;
 
-          // Cộng tiền lại vào ví
-          await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-            .bind(amount, now, o.user_id).run();
-          const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
-            .bind(o.user_id).first();
+          /*
+           * ===== CHỐT SỔ HOÀN TIỀN — ĐƯỜNG TELEGRAM CŨNG PHẢI ĐI QUA ĐÂY =====
+           *
+           * VÌ SAO KHÔNG ĐƯỢC BỎ: đây chính là đường đã bị bỏ sót trước đây.
+           * C2 (race hoàn tiền) từng được vá ở đường web (adminRefund) nhưng
+           * bỏ quên nút bấm Telegram -> cùng một lỗ hổng vẫn khai thác được
+           * từ chat. Nếu thêm guard ở web mà không thêm ở đây thì bug tái
+           * diễn y nguyên.
+           *
+           * refund_ledger.order_id là PRIMARY KEY nên mỗi đơn chỉ có tối đa
+           * MỘT dòng, mãi mãi. INSERT thành công = lượt này được phép cộng
+           * tiền. INSERT trùng = đã cộng rồi (bởi web hoặc Telegram) -> dừng.
+           * Kiểm tra ở TẦNG DB, không dựa vào orders.status vì status có thể
+           * bị cron/sửa tay làm sai.
+           */
+          const claimToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          let ledgerOk = false;
+          try {
+            const led = await env.DB.prepare(
+              `INSERT INTO refund_ledger
+                 (order_id, amount, user_id, order_code, state, claim_token, source, actor, at)
+               VALUES (?, ?, ?, ?, 'pending', ?, 'telegram', ?, ?)`
+            ).bind(o.id, amount, o.user_id, o.code, claimToken, 'telegram', now).run();
+            ledgerOk = led.meta && led.meta.changes === 1;
+          } catch {
+            ledgerOk = false;
+          }
+          if (!ledgerOk) {
+            // Nhả đơn để admin còn thao tác được trên web nếu cần.
+            await env.DB.prepare(
+              "UPDATE orders SET status = ?, refund_started_at = NULL WHERE id = ? AND status = 'refunding'"
+            ).bind(o.status, o.id).run();
+            return {
+              ok: false,
+              error: 'Đơn này đã được ghi sổ hoàn tiền trước đó. Kiểm tra lại lịch sử.',
+            };
+          }
 
-          await env.DB.prepare(
-            `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
-             VALUES (?,?,'refund',?,?,'success',?,?,?)`
-          ).bind(uuid(), o.user_id, amount, bal.balance, o.code,
-            `Hoàn tiền đơn ${o.code} (qua Telegram)`, now).run();
-
-          // Thu hồi license đã giao cho đơn này
+          // ===== THU HỒI HÀNG ĐÃ GIAO (trước khi cộng tiền) =====
+          const revoked = { keys: 0, licenses: 0 };
           try {
             const lics = await env.DB.prepare(
-              `SELECT license_key FROM license_issues WHERE order_id = ?`
+              'SELECT license_key FROM license_issues WHERE order_id = ?'
             ).bind(o.id).all();
             for (const li of lics.results || []) {
               await env.DB.prepare('UPDATE licenses SET revoked = 1 WHERE key = ?')
                 .bind(li.license_key).run();
+              revoked.licenses++;
             }
           } catch { /* bảng có thể không có order_id */ }
 
-          // Thu hồi key đã giao
           try {
-            await env.DB.prepare(
-              "UPDATE product_keys SET status='available', order_id=NULL, delivered_at=NULL WHERE order_id = ?"
-            ).bind(o.id).run();
+            const sold = await env.DB.prepare(
+              "SELECT id FROM product_keys WHERE order_id = ? AND status = 'sold'"
+            ).bind(o.id).all();
+            for (const k of sold.results || []) {
+              await env.DB.prepare(
+                "UPDATE product_keys SET status='disabled' WHERE id = ?"
+              ).bind(k.id).run();
+              revoked.keys++;
+            }
           } catch { /* ignore */ }
 
-          await env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?")
-            .bind(o.id).run();
+          /*
+           * ===== CỘNG TIỀN + CHỐT SỔ TRONG MỘT TRANSACTION =====
+           * Cùng cấu trúc với adminRefund: cộng ví, ghi sổ cái, đánh dấu
+           * state='done' (ĐÃ cộng tiền), chốt đơn 'refunded'. Batch của D1
+           * là một transaction nên không có trạng thái "đã cộng mà sổ pending".
+           */
+          await env.DB.batch([
+            env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+              .bind(amount, now, o.user_id),
+            env.DB.prepare(
+              `INSERT INTO wallet_transactions
+                 (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+               VALUES (?,?,'refund',?,(SELECT balance FROM users WHERE id = ?),'success',?,?,?)`
+            ).bind(uuid(), o.user_id, amount, o.user_id, o.code,
+              `Hoàn tiền đơn ${o.code} (qua Telegram)`, now),
+            env.DB.prepare(
+              `UPDATE refund_ledger SET state = 'done', revoked = ?,
+                      claim_token = NULL, at = ?
+                WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
+            ).bind(revoked.keys + revoked.licenses, now, o.id, claimToken),
+            env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?").bind(o.id),
+          ]);
 
           return { ok: true, refunded: amount };
         } catch (e) {

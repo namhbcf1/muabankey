@@ -15,6 +15,8 @@
  * đổi HWID vẫn tiêu 1 trong 10 lượt của chính tài khoản đó.
  */
 
+import { ApiError } from './http.js';
+
 const KIND_1H = '1h';
 const KIND_3D = '3d';
 
@@ -148,8 +150,34 @@ export function looksVirtual(bios, cpu) {
 }
 
 /** Tính HWID đầy đủ + weak HWID từ raw parts client gửi. */
+/**
+ * Băm 4 thành phần phần cứng thành HWID.
+ *
+ * FAIL CLOSED khi không đủ dữ liệu: client cũ (hoặc bản bị sửa) gửi toàn chuỗi
+ * rỗng sẽ cho ra cùng một HWID `bea408e2…` trên mọi máy — một key bind 1 lần
+ * dùng được trên tất cả, và farm trial vô hạn. Client đã được vá, nhưng server
+ * phải tự bảo vệ vì không kiểm soát được bản client đang chạy.
+ *
+ * Ngưỡng khớp với client: cần >= 2 thành phần, HOẶC riêng MachineGuid (guid).
+ * GUID do Windows sinh riêng từng lần cài nên đủ phân biệt máy.
+ */
 export async function deriveIds(parts) {
   const [guid, bios, cpu, vol] = parts.map((x) => String(x || '').trim().slice(0, 200));
+  const filled = [guid, bios, cpu, vol].filter((v) => v.length > 0);
+  if (filled.length === 0) {
+    throw new ApiError(
+      400,
+      'Không đọc được thông tin phần cứng. Vui lòng liên hệ hỗ trợ.',
+      'HWID_UNAVAILABLE',
+    );
+  }
+  if (filled.length < 2 && !guid) {
+    throw new ApiError(
+      400,
+      'Không đủ thông tin phần cứng để định danh máy. Vui lòng liên hệ hỗ trợ.',
+      'HWID_UNAVAILABLE',
+    );
+  }
   const full = [guid, bios, cpu, vol].join('|');
   const weak = [guid, bios, cpu].join('|');
   return {

@@ -166,84 +166,48 @@ export async function createOrder(env, request) {
  * Thanh toán đơn bằng số dư ví và giao key ngay lập tức.
  * Toàn bộ key được reserve bằng UPDATE có điều kiện để tránh bán trùng.
  */
-export async function payOrder(env, request, orderId) {
-  const user = await requireUser(env, request);
-  await rateLimit(env, `pay:${user.id}`, 30, 300);
-
-  const order = await env.DB.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ? LIMIT 1')
-    .bind(orderId, user.id)
-    .first();
-  if (!order) throw new ApiError(404, 'Đơn hàng không tồn tại', 'NOT_FOUND');
-  if (order.status === 'delivered' || order.status === 'paid') {
-    throw new ApiError(409, 'Đơn hàng đã được thanh toán', 'ALREADY_PAID');
-  }
-  if (order.status === 'processing') {
-    throw new ApiError(409, 'Đơn hàng đang được xử lý, vui lòng chờ', 'PROCESSING');
-  }
-  if (order.status !== 'pending') throw new ApiError(409, 'Đơn hàng không ở trạng thái chờ thanh toán', 'BAD_STATE');
-
-  // ===== GIÀNH ĐƠN NGUYÊN TỬ =====
-  // Nhiều request đồng thời có thể cùng đọc status='pending' rồi cùng trừ tiền.
-  // UPDATE có điều kiện dưới đây đảm bảo CHỈ MỘT request chuyển được pending -> processing.
-  const claimAt = Date.now();
-  const claim = await env.DB.prepare(
-    `UPDATE orders SET status = 'processing', paid_at = ?, processing_started_at = ?
-     WHERE id = ? AND status = 'pending'`
-  ).bind(claimAt, claimAt, orderId).run();
-  if (!claim.meta || claim.meta.changes !== 1) {
-    throw new ApiError(409, 'Đơn hàng đã được thanh toán', 'ALREADY_PAID');
-  }
-
-  const fresh = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first();
-  if (!fresh || fresh.balance < order.total) {
-    // Nhả đơn về pending để khách nạp thêm rồi thử lại
-    await env.DB.prepare(
-      `UPDATE orders SET status = 'pending', paid_at = NULL WHERE id = ? AND status = 'processing'`
-    ).bind(orderId).run();
-    throw new ApiError(400, 'Số dư ví không đủ. Vui lòng nạp thêm tiền.', 'INSUFFICIENT_BALANCE', {
-      balance: fresh ? fresh.balance : 0,
-      required: order.total,
-      missing: order.total - (fresh ? fresh.balance : 0),
-    });
-  }
+/**
+ * Giao hàng cho đơn ĐÃ ĐƯỢC XÁC NHẬN THANH TOÁN.
+ *
+ * KHÔNG trừ ví (không còn ví). Chỉ:
+ *   1. Kiểm tra sản phẩm còn tồn tại + đủ hàng
+ *   2. Giữ key / cấp license / đánh dấu manual
+ *   3. Cập nhật order_items.delivered_keys
+ *
+ * Trả { pendingManual, delivered } — hàm gọi (payments.js) tự chốt status.
+ * Ném lỗi nếu không giao được -> payments.js đặt 'paid' + admin_note.
+ */
+export async function deliverOrderItems(env, order) {
+  const orderId = order.id;
+  const now = Date.now();
 
   const { results: items } = await env.DB.prepare(
     'SELECT * FROM order_items WHERE order_id = ?'
   ).bind(orderId).all();
 
-  // ===== KIỂM TRA SẢN PHẨM TỒN TẠI / ĐỦ HÀNG TRƯỚC KHI TRỪ TIỀN =====
-  // Trước đây trừ tiền xong mới kiểm tra -> sản phẩm bị xoá thì throw
-  // PRODUCT_GONE mà KHÔNG hoàn tiền, cũng không ghi sổ cái.
-  // Đã xảy ra thật: MBK-3KWKLR mất 123.000đ không dấu vết.
   const planned = [];
-  let allDelivered = true;
+  let pendingManual = false;
 
+  // ===== BƯỚC 1: KIỂM TRA TRƯỚC KHI GIỮ HÀNG =====
   for (const item of items || []) {
     const product = await env.DB.prepare(
       'SELECT id, name, delivery_type, license_prefix, license_days FROM products WHERE id = ?'
     ).bind(item.product_id).first();
 
     if (!product) {
-      // Chưa trừ tiền -> chỉ cần nhả đơn, không cần hoàn
-      await env.DB.prepare(
-        "UPDATE orders SET status='pending', paid_at=NULL, note = ? WHERE id = ? AND status='processing'"
-      ).bind(`Sản phẩm đã bị xoá: ${item.product_name}`, orderId).run();
-      await releaseCoupon(env, order.coupon_code, orderId);
-      throw new ApiError(409,
-        `Sản phẩm "${item.product_name}" không còn tồn tại. Chưa trừ tiền, vui lòng đặt lại đơn.`,
-        'PRODUCT_GONE');
+      throw new Error(`Sản phẩm "${item.product_name}" không còn tồn tại`);
     }
 
-    // Dòng đã giao ở lần trước (đơn bị trả về pending) -> không giao lại
+    // Dòng đã giao lần trước -> không giao lại
     const already = safeParse(item.delivered_keys);
     if (already.length > 0) {
-      if (product.delivery_type === 'manual') allDelivered = false;
+      if (product.delivery_type === 'manual') pendingManual = true;
       planned.push({ item, product, qty: item.quantity, kind: 'already', keys: already });
       continue;
     }
 
     if (product.delivery_type === 'manual') {
-      allDelivered = false;
+      pendingManual = true;
       planned.push({ item, product, qty: item.quantity, kind: 'manual' });
       continue;
     }
@@ -253,76 +217,86 @@ export async function payOrder(env, request, orderId) {
       continue;
     }
 
-    // Hàng key: kiểm tra tồn kho trước
+    // Hàng key: kiểm tra tồn kho
     const avail = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM product_keys WHERE product_id = ? AND status = 'available'"
     ).bind(item.product_id).first();
     if ((avail?.n || 0) < item.quantity) {
-      await env.DB.prepare(
-        "UPDATE orders SET status='pending', paid_at=NULL, note = ? WHERE id = ? AND status='processing'"
-      ).bind(`Hết hàng: ${item.product_name}`, orderId).run();
-      await releaseCoupon(env, order.coupon_code, orderId);
-      throw new ApiError(409,
-        `Sản phẩm "${item.product_name}" chỉ còn ${avail?.n || 0}. Chưa trừ tiền, vui lòng đặt lại đơn.`,
-        'OUT_OF_STOCK');
+      throw new Error(
+        `"${item.product_name}" không đủ hàng (cần ${item.quantity}, còn ${avail?.n || 0})`
+      );
     }
     planned.push({ item, product, qty: item.quantity, kind: 'key' });
   }
 
-  // ===== TRỪ TIỀN (sau khi đã chắc chắn giao được) =====
-  const debit = await env.DB.prepare(
-    'UPDATE users SET balance = balance - ?, updated_at = ? WHERE id = ? AND balance >= ?'
-  )
-    .bind(order.total, Date.now(), user.id, order.total)
-    .run();
-  if (!debit.meta || debit.meta.changes !== 1) {
-    await env.DB.prepare(
-      `UPDATE orders SET status = 'pending', paid_at = NULL WHERE id = ? AND status = 'processing'`
-    ).bind(orderId).run();
-    throw new ApiError(400, 'Số dư không đủ hoặc giao dịch đồng thời. Vui lòng thử lại.', 'CONFLICT');
-  }
-
-  // Từ đây tiền ĐÃ TRỪ. Mọi lỗi phải hoàn tiền + ghi sổ.
-  const now = Date.now();
+  // ===== BƯỚC 2: GIAO =====
   const delivered = [];
+  const { openSecret } = await import('../lib/secrets.js');
+
+  /*
+   * SỔ TÀI NGUYÊN ĐÃ GIAO TRONG CHÍNH REQUEST NÀY.
+   *
+   * VÌ SAO PHẢI GHI LẠI: vòng lặp dưới đây giao hàng LOẠT nhiều dòng. Dòng 1
+   * (license 180k) có thể đã sinh license THẬT vào bảng `licenses` rồi dòng 2
+   * (key kho 50k) mới thất bại. Không có sổ này thì khi catch chỉ còn biết
+   * "đơn lỗi", không biết đã kịp tạo những gì để mà thu hồi.
+   *
+   * Đây chính là C7 tái phát qua đường race (xem AUDIT-REPORT.md): đơn đã
+   * giao license, dòng sau fail -> hoàn tiền 100% nhưng license VẪN SỐNG và
+   * khách đọc được. Lặp vòng = license miễn phí vô hạn.
+   *
+   * Chỉ ghi những gì REQUEST NÀY tạo ra — KHÔNG đụng dòng đã giao ở lần
+   * trước (kind === 'already'), vì đó là hàng khách đã trả tiền từ trước.
+   */
+  const made = { licenses: [], keyIds: [], items: [], soldCount: [] };
 
   try {
-    // ===== BƯỚC 3: GIAO HÀNG =====
-    for (const plan of planned) {
-      const { item, product, qty, kind } = plan;
-
-      if (kind === 'manual') {
-        delivered.push({
-          productId: item.product_id, name: item.product_name, keys: [], manual: true,
-        });
-        continue;
-      }
+    for (const p of planned) {
+      const { item, product, qty, kind } = p;
 
       if (kind === 'already') {
         delivered.push({
           productId: item.product_id, name: item.product_name,
-          keys: plan.keys, license: product.delivery_type === 'license',
-          manual: false,
+          keys: p.keys, manual: false,
+        });
+        continue;
+      }
+
+      if (kind === 'manual') {
+        delivered.push({
+          productId: item.product_id, name: item.product_name,
+          keys: [], manual: true,
         });
         continue;
       }
 
       if (kind === 'license') {
-        const licKeys = await deliverLicenseLine(env, {
-          order, orderId, userId: user.id, product, quantity: qty,
+        // deliverLicenseLine tự sinh ĐÚNG `quantity` license trong 1 lần gọi
+        // và tự ghi license_issues. KHÔNG gọi trong vòng lặp: gọi N lần thì
+        // mỗi lần lại sinh thêm N key -> mua 2 nhận 4, và license_issues
+        // ghi trùng.
+        const { deliverLicenseLine } = await import('./license.js');
+        const keys = await deliverLicenseLine(env, {
+          order, orderId, userId: order.user_id, product, quantity: qty,
         });
+        made.licenses.push(...keys);
+
         await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
-          .bind(JSON.stringify(licKeys), item.id).run();
+          .bind(JSON.stringify(keys), item.id).run();
+        made.items.push(item.id);
+
         await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')
           .bind(qty, item.product_id).run();
+        made.soldCount.push({ productId: item.product_id, qty });
+
         delivered.push({
           productId: item.product_id, name: item.product_name,
-          keys: licKeys.map((k) => btoaSafe(k)), raw: licKeys, license: true,
+          keys, manual: false,
         });
         continue;
       }
 
-      // Lấy & giữ key hàng loạt
+      // kind === 'key'
       const { results: keys } = await env.DB.prepare(
         `SELECT id, secret FROM product_keys
          WHERE product_id = ? AND status = 'available'
@@ -330,87 +304,123 @@ export async function payOrder(env, request, orderId) {
       ).bind(item.product_id, qty).all();
 
       const secrets = [];
-      // Giải mã secret (hỗ trợ cả dữ liệu cũ chưa mã hoá)
-      const { openSecret } = await import('../lib/secrets.js');
       for (const k of keys || []) {
         const up = await env.DB.prepare(
-          `UPDATE product_keys SET status='sold', order_id=?, delivered_at=?
-           WHERE id = ? AND status='available'`
+          `UPDATE product_keys SET status = 'sold', order_id = ?, delivered_at = ?
+           WHERE id = ? AND status = 'available'`
         ).bind(orderId, now, k.id).run();
         if (up.meta && up.meta.changes === 1) {
+          // CHỈ ghi nhận khi UPDATE thật sự đổi được dòng: đây là key mà
+          // request này đã chiếm. Key bị request khác giành trước không
+          // được đưa vào sổ, nếu không rollback sẽ trả nhầm hàng của đơn khác.
+          made.keyIds.push(k.id);
           secrets.push(await openSecret(env, k.secret));
         }
       }
 
       if (secrets.length < qty) {
-        // Race hiếm: trả lại key đã giữ rồi throw -> catch bên ngoài hoàn tiền
-        for (const k of keys || []) {
+        // Race: trả key đã giữ về available rồi throw -> catch bên dưới
+        // vẫn chạy rollback cho các dòng TRƯỚC đó.
+        for (const kid of made.keyIds) {
           await env.DB.prepare(
-            `UPDATE product_keys SET status='available', order_id=NULL, delivered_at=NULL
+            `UPDATE product_keys SET status = 'available', order_id = NULL, delivered_at = NULL
              WHERE id = ? AND order_id = ?`
-          ).bind(k.id, orderId).run();
+          ).bind(kid, orderId).run();
         }
-        throw new ApiError(409, 'Có lỗi khi giữ hàng, đã hoàn tiền. Vui lòng thử lại.', 'CONFLICT');
+        throw new Error(`Giữ hàng thất bại cho "${item.product_name}", thử lại`);
       }
 
       await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
         .bind(JSON.stringify(secrets), item.id).run();
+      made.items.push(item.id);
+
       await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')
         .bind(qty, item.product_id).run();
-      delivered.push({ productId: item.product_id, name: item.product_name, keys: secrets, manual: false });
+      made.soldCount.push({ productId: item.product_id, qty });
+
+      delivered.push({
+        productId: item.product_id, name: item.product_name,
+        keys: secrets, manual: false,
+      });
       await syncStock(env, item.product_id);
     }
   } catch (err) {
-    // ===== GIAO HÀNG LỖI -> HOÀN TIỀN NGAY, GHI SỔ ĐẦY ĐỦ =====
-    // Đây là chỗ trước đây bỏ sót: throw mà không hoàn tiền.
-    await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-      .bind(order.total, Date.now(), user.id).run();
-    await env.DB.prepare(
-      "UPDATE orders SET status='pending', paid_at=NULL WHERE id = ? AND status='processing'"
-    ).bind(orderId).run();
-    await releaseCoupon(env, order.coupon_code, orderId);
-
-    // Ghi sổ hoàn tiền để sổ cái khớp (debit ở trên + credit ở đây = 0)
-    try {
-      const balNow = await env.DB.prepare('SELECT balance FROM users WHERE id = ?')
-        .bind(user.id).first();
-      await env.DB.prepare(
-        `INSERT INTO wallet_transactions
-           (id, user_id, type, amount, balance_after, status, reference, description, created_at)
-         VALUES (?,?,'refund',?,?,'success',?,?,?)`
-      ).bind(uuid(), user.id, order.total, balNow.balance, order.code,
-        `Hoàn tiền do lỗi giao hàng đơn ${order.code}`, Date.now()).run();
-    } catch { /* không để lỗi ghi sổ che lỗi gốc */ }
-
-    await audit(env, null, 'order.deliver_failed_refund', orderId, {
-      amount: order.total, error: err.message,
-    });
+    /*
+     * ===== GIAO HÀNG LỖI -> THU HỒI NGAY NHỮNG GÌ VỪA GIAO =====
+     *
+     * TUYỆT ĐỐI KHÔNG BỎ KHỐI NÀY. Không rollback thì khách được cả tiền
+     * (hoàn ở nơi gọi) lẫn license/key đã giao trước khi lỗi -> mất tiền thật
+     * và license sống vô hạn. Đây là lỗi đã từng xảy ra thật (C7).
+     *
+     * Rollback phải chạy TRƯỚC khi ném lỗi ra ngoài để nơi gọi (payments.js)
+     * không bao giờ thấy "giao lỗi" mà tài nguyên vẫn còn sống.
+     */
+    await rollbackDelivered(env, orderId, made);
     throw err;
   }
 
-  const finalStatus = allDelivered ? 'delivered' : 'paid';
-  await env.DB.prepare(
-    `UPDATE orders SET status = ?, paid_at = COALESCE(paid_at, ?), delivered_at = ?, ledger_written = 1 WHERE id = ?`
-  ).bind(finalStatus, now, allDelivered ? now : null, orderId).run();
+  return { pendingManual, delivered };
+}
 
-  const balRow = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(user.id).first();
-  await env.DB.prepare(
-    `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
-     VALUES (?,?,'purchase',?,?,'success',?,?,?)`
-  ).bind(uuid(), user.id, -order.total, balRow.balance, order.code, `Thanh toán đơn ${order.code}`, now).run();
+/**
+ * Thu hồi mọi tài nguyên mà MỘT request giao hàng vừa tạo ra.
+ *
+ * Nguyên tắc: chỉ hoàn tác đúng những gì có trong `made` (sổ do chính request
+ * này ghi). Không quét theo order_id để tránh thu hồi nhầm hàng đã giao
+ * thành công ở lần trước.
+ *
+ * Mỗi bước đều bọc try/catch riêng: một bước lỗi KHÔNG được chặn các bước
+ * còn lại, nếu không sẽ để lại tài nguyên sống sót.
+ */
+async function rollbackDelivered(env, orderId, made) {
+  const nowS = Math.floor(Date.now() / 1000);
 
-  await audit(env, user.id, 'order.pay', orderId, { total: order.total, status: finalStatus });
+  // 1. Thu hồi license vừa phát hành — dùng đúng cờ revoked mà adminRefund
+  //    và license-server dùng để chặn client, cộng 1 dòng lic_events làm
+  //    bằng chứng đối soát.
+  for (const key of made.licenses) {
+    try {
+      await env.DB.prepare('UPDATE licenses SET revoked = 1 WHERE key = ?').bind(key).run();
+      await env.DB.prepare(
+        'INSERT INTO lic_events (key, hwid, kind, detail, ip, at) VALUES (?,?,?,?,?,?)'
+      ).bind(key, null, 'revoke', 'giao hang loi - rollback', '', nowS).run();
+    } catch { /* không để lỗi thu hồi che lỗi gốc */ }
+  }
 
-  return ok({
-    order: {
-      id: orderId,
-      code: order.code,
-      status: finalStatus,
-      total: order.total,
-      delivered,
-    },
-    balance: balRow.balance,
-  });
+  // 2. Trả key kho về available. Dùng status='sold' + order_id làm điều kiện
+  //    để không "hồi sinh" một key mà người khác đã mua lại trong lúc này.
+  for (const kid of made.keyIds) {
+    try {
+      await env.DB.prepare(
+        `UPDATE product_keys
+            SET status = 'available', order_id = NULL, delivered_at = NULL
+          WHERE id = ? AND order_id = ? AND status = 'sold'`
+      ).bind(kid, orderId).run();
+    } catch { /* ignore */ }
+  }
+
+  // 3. Xoá delivered_keys của đúng các dòng vừa ghi. Giữ lại thì listOrders
+  //    vẫn trả key cho khách dù đơn không thành công.
+  for (const itemId of made.items) {
+    try {
+      await env.DB.prepare('UPDATE order_items SET delivered_keys = NULL WHERE id = ?')
+        .bind(itemId).run();
+    } catch { /* ignore */ }
+  }
+
+  // 4. Hoàn lại sold_count đã cộng.
+  for (const s of made.soldCount) {
+    try {
+      await env.DB.prepare(
+        'UPDATE products SET sold_count = MAX(0, sold_count - ?) WHERE id = ?'
+      ).bind(s.qty, s.productId).run();
+    } catch { /* ignore */ }
+  }
+
+  // 5. Đồng bộ tồn kho để stock_count khớp số key available thật.
+  for (const pid of new Set(made.soldCount.map((s) => s.productId))) {
+    try { await syncStock(env, pid); } catch { /* ignore */ }
+  }
 }
 
 export async function listOrders(env, request) {
@@ -447,17 +457,36 @@ export async function listOrders(env, request) {
     });
   }
 
-  const orders = rows.map((o) => ({
-    id: o.id,
-    code: o.code,
-    status: o.status,
-    subtotal: o.subtotal,
-    discount: o.discount,
-    total: o.total,
-    couponCode: o.coupon_code,
-    createdAt: o.created_at,
-    items: itemsByOrder.get(o.id) || [],
-  }));
+  const orders = rows.map((o) => {
+    /*
+     * ===== KHÔNG LỘ KEY CỦA ĐƠN CHƯA GIAO XONG =====
+     *
+     * `order_items.delivered_keys` là hàng ĐÃ GIAO THẬT (đã trừ tiền). Nhưng
+     * đơn có thể đang 'pending' (chưa trả đồng nào) hoặc 'paid'/'processing'
+     * (lỗi giữa chừng) mà một vài dòng đã kịp ghi keys. Trả nguyên `keys`
+     * cho mọi trạng thái nghĩa là khách đọc được license/key của đơn chưa
+     * trả tiền — đúng lỗ hổng đã bị khai thác (lấy license miễn phí vô hạn
+     * qua GET /api/orders).
+     *
+     * Chỉ đơn 'delivered' mới là "đã giao xong, tiền đã vào", lúc đó keys là
+     * của khách. Mọi trạng thái khác trả mảng rỗng để frontend hiện
+     * "Đang xử lý giao hàng" (nhánh sẵn có trong public/assets/pages/orders.js).
+     */
+    const keysVisible = o.status === 'delivered';
+    const items = itemsByOrder.get(o.id) || [];
+    return {
+      id: o.id,
+      code: o.code,
+      status: o.status,
+      subtotal: o.subtotal,
+      discount: o.discount,
+      total: o.total,
+      couponCode: o.coupon_code,
+      createdAt: o.created_at,
+      // keys đã lọc theo trạng thái ở trên (chỉ 'delivered' mới lộ key)
+      items: items.map((it) => ({ ...it, keys: keysVisible ? it.keys : [] })),
+    };
+  });
   return ok({ orders });
 }
 
@@ -471,6 +500,14 @@ export async function getOrder(env, request, orderId) {
   const { results: items } = await env.DB.prepare(
     'SELECT product_id, product_name, unit_price, quantity, line_total, delivered_keys FROM order_items WHERE order_id = ?'
   ).bind(o.id).all();
+
+  /*
+   * getOrder là đường ĐỌC CHI TIẾT một đơn — cũng phải áp cùng quy tắc với
+   * listOrders: chỉ đơn 'delivered' mới trả keys. Nếu chỉ vá listOrders thì
+   * kẻ tấn công đổi sang GET /api/orders/:id là lấy lại được key của đơn
+   * chưa thanh toán. Hai đường phải cùng một luật.
+   */
+  const keysVisible = o.status === 'delivered';
 
   return ok({
     order: {
@@ -488,7 +525,7 @@ export async function getOrder(env, request, orderId) {
         unitPrice: i.unit_price,
         quantity: i.quantity,
         lineTotal: i.line_total,
-        keys: safeParse(i.delivered_keys),
+        keys: keysVisible ? safeParse(i.delivered_keys) : [],
       })),
     },
   });
@@ -585,6 +622,38 @@ export async function adminRefund(env, request, orderId) {
     throw new ApiError(409, 'Đơn đã được hoàn tiền', 'BAD_STATE');
   }
 
+  /*
+   * ===== CHỐT SỔ HOÀN TIỀN (chống hoàn trùng ở tầng DB) =====
+   *
+   * Trạng thái đơn KHÔNG đủ tin cậy: worker có thể chết sau khi cộng tiền mà
+   * trước khi đặt 'refunded', và cron cũ đưa đơn kẹt về 'paid' → admin bấm
+   * Hoàn lần nữa. Đã xảy ra thật (MBK-L5W87H hoàn 70.000đ hai lần).
+   *
+   * refund_ledger.order_id là PRIMARY KEY nên mỗi đơn chỉ có tối đa MỘT dòng,
+   * mãi mãi. INSERT thành công = lượt này được phép cộng tiền. INSERT trùng =
+   * đã có lượt khác cộng rồi → dừng, không cộng nữa.
+   */
+  const claimToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  let ledgerOk = false;
+  try {
+    const led = await env.DB.prepare(
+      `INSERT INTO refund_ledger
+         (order_id, amount, user_id, order_code, state, claim_token, source, actor, at)
+       VALUES (?, ?, ?, ?, 'pending', ?, 'web', ?, ?)`
+    ).bind(orderId, o.total, o.user_id, o.code, claimToken, admin.id, Date.now()).run();
+    ledgerOk = led.meta && led.meta.changes === 1;
+  } catch {
+    // Trùng PRIMARY KEY = đơn này đã có lượt hoàn tiền khác. Không cộng nữa.
+    ledgerOk = false;
+  }
+  if (!ledgerOk) {
+    throw new ApiError(
+      409,
+      'Đơn này đã được ghi sổ hoàn tiền. Kiểm tra lại lịch sử trước khi thao tác.',
+      'ALREADY_REFUNDED',
+    );
+  }
+
   const now = Date.now();
 
   // ===== THU HỒI HÀNG ĐÃ GIAO =====
@@ -632,18 +701,44 @@ export async function adminRefund(env, request, orderId) {
     console.error('Refund revoke error:', e && e.message);
   }
 
-  await env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-    .bind(o.total, now, o.user_id).run();
-  await env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?").bind(orderId).run();
-  await releaseCoupon(env, o.coupon_code, orderId);
+  /*
+   * ===== CỘNG TIỀN + CHỐT SỔ TRONG MỘT TRANSACTION =====
+   *
+   * Bốn việc dưới đây PHẢI cùng thành công hoặc cùng không:
+   *   1. cộng lại số dư ví khách
+   *   2. ghi dòng 'refund' vào sổ cái (để SUM(wallet_transactions) = balance)
+   *   3. đánh dấu refund_ledger.state = 'done'  <- DẤU HIỆU "ĐÃ CỘNG TIỀN"
+   *   4. đặt đơn thành 'refunded'
+   *
+   * Vì sao state='done' là mấu chốt: worker chết giữa chừng là chuyện có
+   * thật (CPU limit 30s, phía trên đã await hàng loạt lệnh thu hồi
+   * key/license). Sổ ghi 'pending' = CHƯA cộng tiền, 'done' = ĐÃ cộng.
+   * Không có cột này thì cron và admin không thể phân biệt "đơn kẹt trước
+   * khi cộng" với "đơn kẹt sau khi cộng" — đoán sai một trong hai là mất
+   * tiền thật (hoàn thiếu hoặc hoàn hai lần).
+   *
+   * env.DB.batch chạy như một transaction của D1 nên không có cửa sổ nào
+   * để tiền đã cộng mà sổ vẫn 'pending'.
+   */
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
+      .bind(o.total, now, o.user_id),
+    env.DB.prepare(
+      `INSERT INTO wallet_transactions
+         (id, user_id, type, amount, balance_after, status, reference, description, created_at)
+       VALUES (?,?,'refund',?,(SELECT balance FROM users WHERE id = ?),'success',?,?,?)`
+    ).bind(uuid(), o.user_id, o.total, o.user_id, o.code,
+      `Hoàn tiền đơn ${o.code}${revoked.licenses ? ` (thu hồi ${revoked.licenses} license)` : ''}`,
+      now),
+    env.DB.prepare(
+      `UPDATE refund_ledger SET state = 'done', revoked = ?,
+              claim_token = NULL, at = ?
+        WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
+    ).bind(revoked.keys + revoked.licenses, now, orderId, claimToken),
+    env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?").bind(orderId),
+  ]);
 
-  const bal = await env.DB.prepare('SELECT balance FROM users WHERE id = ?').bind(o.user_id).first();
-  await env.DB.prepare(
-    `INSERT INTO wallet_transactions (id, user_id, type, amount, balance_after, status, reference, description, created_at)
-     VALUES (?,?,'refund',?,?,'success',?,?,?)`
-  ).bind(uuid(), o.user_id, o.total, bal.balance, o.code,
-    `Hoàn tiền đơn ${o.code}${revoked.licenses ? ` (thu hồi ${revoked.licenses} license)` : ''}`,
-    now).run();
+  await releaseCoupon(env, o.coupon_code, orderId);
 
   await audit(env, admin.id, 'order.refund', orderId, { total: o.total, revoked });
   return ok({ id: orderId, revoked });

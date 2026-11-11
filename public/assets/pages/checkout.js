@@ -1,7 +1,7 @@
 /** Trang thanh toán. */
 import { api, esc, fmtVnd, toast, navigate, loadingBlock, decodeKey, copyText, store, emptyBlock } from '../lib.js';
 import { icon } from '../icons.js';
-import { state, clearCart, refreshBalance, removeFromCart, saveCart } from '../state.js';
+import { state, clearCart, removeFromCart, saveCart } from '../state.js';
 
 export function renderCheckout() {
   return `
@@ -165,14 +165,16 @@ export async function mountCheckout(root, query = {}) {
           </div>
           <div class="summary-row total"><span>Tổng cộng</span><span class="val" id="sum-total">${fmtVnd(subtotal)}</span></div>
 
-          <div class="ck-wallet">
-            <div class="ck-wallet-row">
-              <span class="ck-wallet-label">${icon('wallet', { size: 13 })} Số dư ví</span>
-              <strong class="ck-wallet-val" id="wallet-balance">${fmtVnd(state.user.balance)}</strong>
-            </div>
-            <div class="ck-wallet-warn" id="balance-warning" role="status" hidden></div>
+          <div class="ck-pay">
+          <div class="ck-pay-row">
+            <span class="ck-pay-label">${icon('card', { size: 13 })} Thanh toán</span>
+            <strong class="ck-pay-val">Chuyển khoản QR</strong>
           </div>
-
+          <div class="ck-pay-note">
+            Quét mã QR bằng app ngân hàng. Số tiền và nội dung đã điền sẵn.
+            Hệ thống tự xác nhận và giao key ngay khi tiền vào.
+          </div>
+        </div>
           <button class="btn btn-primary btn-lg btn-block" id="btn-place-order">
             ${icon('lock', { size: 15 })}Xác nhận thanh toán
           </button>
@@ -203,37 +205,12 @@ export async function mountCheckout(root, query = {}) {
       dRow.hidden = true;
     }
     host.querySelector('#sum-total').textContent = fmtVnd(total);
-
-    const bal = state.user.balance;
-    const warn = host.querySelector('#balance-warning');
-    const topupBtn = host.querySelector('#btn-topup');
     const payBtnEl = host.querySelector('#btn-place-order');
-    /*
-     * Số dư thiếu thì khoá nút thay vì để khách bấm rồi nhận lỗi từ server.
-     * Server vẫn là nơi quyết định cuối cùng (giá có thể đổi giữa chừng), nên
-     * đây chỉ là lớp phản hồi sớm — không thay thế kiểm tra phía server.
-     */
-    if (bal < total) {
-      warn.hidden = false;
-      warn.textContent = `Thiếu ${fmtVnd(total - bal)}. Vui lòng nạp thêm tiền vào ví.`;
-      topupBtn.hidden = false;
-      if (payBtnEl) {
-        payBtnEl.disabled = true;
-        payBtnEl.setAttribute('aria-describedby', 'balance-warning');
-      }
-    } else {
-      warn.hidden = true;
-      topupBtn.hidden = true;
-      if (payBtnEl) {
-        payBtnEl.disabled = false;
-        payBtnEl.removeAttribute('aria-describedby');
-      }
-    }
+    if (payBtnEl) payBtnEl.disabled = false;
   }
 
   const payBtn = host.querySelector('#btn-place-order');
 
-  host.querySelector('#btn-topup').onclick = () => navigate('/wallet');
   updateTotals();
 
   payBtn.onclick = async () => {
@@ -249,29 +226,191 @@ export async function mountCheckout(root, query = {}) {
         },
       });
 
-      const payData = await api(`/api/orders/${orderData.order.id}/pay`, { method: 'POST' });
+      // Tạo đơn -> lấy QR thanh toán (KHÔNG trừ ví)
+      const qrData = await api(`/api/orders/${orderData.order.id}/qr`, { method: 'POST' });
       if (mode === 'buynow') { store.del('mbk_buynow'); } else { clearCart(); }
-      if (state.user) state.user.balance = payData.balance;
-      await refreshBalance();
 
-      showSuccess(host, payData.order, orderData.order);
+      showQrPayment(host, qrData, orderData.order);
     } catch (e) {
       toast(e.message, 'error', 5000);
-      if (e.code === 'INSUFFICIENT_BALANCE') {
-        updateTotals();
-        navigate('/wallet');
-      }
       payBtn.disabled = false;
-      payBtn.innerHTML = `${icon('lock', { size: 15 })}Xác nhận thanh toán`;
+      payBtn.innerHTML = `${icon('card', { size: 15 })}Tạo mã QR thanh toán`;
     }
   };
+}
+
+/**
+ * Màn hình QR thanh toán: số tiền + nội dung + đếm ngược + polling.
+ */
+function showQrPayment(host, data, created) {
+  const qr = data.qr || {};
+  const order = data.order || {};
+  const total = qr.amount || order.total || 0;
+  const memo = qr.memo || '';
+  const bank = qr.bank || {};
+  let left = qr.secondsLeft || (qr.expiresAt ? qr.expiresAt - Math.floor(Date.now() / 1000) : 1800);
+
+  host.innerHTML = `
+    <div class="panel" style="max-width:560px;margin:0 auto">
+      <div style="text-align:center;padding:8px 0 18px">
+        <div style="font-size:15px;font-weight:800;letter-spacing:-.02em;margin-bottom:6px">
+          Quét mã để thanh toán
+        </div>
+        <div style="font-size:12.5px;color:var(--text-mute)">
+          Mã đơn <strong class="mono">${esc(order.code || created?.code || '')}</strong>
+        </div>
+      </div>
+
+      <div style="text-align:center;margin-bottom:18px">
+        <img src="${esc(qr.url || '')}" alt="Mã QR thanh toán"
+          style="width:100%;max-width:280px;border-radius:12px;background:#fff;padding:10px"
+          data-qr-img>
+      </div>
+
+      <div style="background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);
+        border-radius:10px;padding:14px;margin-bottom:16px">
+        <div class="flex justify-between" style="margin-bottom:10px">
+          <span style="font-size:12px;color:var(--text-mute)">Số tiền</span>
+          <strong style="font-size:17px;color:#4ade80">${fmtVnd(total)}</strong>
+        </div>
+        <div class="flex justify-between" style="align-items:center">
+          <span style="font-size:12px;color:var(--text-mute)">Nội dung</span>
+          <div class="flex gap-1" style="align-items:center">
+            <strong class="mono" style="font-size:13px">${esc(memo)}</strong>
+            <button class="btn btn-ghost btn-sm" data-copy-memo title="Copy nội dung">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="font-size:12.5px;line-height:1.9;color:var(--text-dim);margin-bottom:16px">
+        <div><strong>Ngân hàng:</strong> ${esc(bank.name || '')}</div>
+        <div><strong>Số TK:</strong> <span class="mono">${esc(bank.account || '')}</span></div>
+        <div><strong>Chủ TK:</strong> ${esc(bank.owner || '')}</div>
+      </div>
+
+      <div class="alert alert-info" style="margin-bottom:14px">
+        <span class="ico">${icon('info', { size: 15 })}</span>
+        <span>
+          Quét QR bằng app ngân hàng — <strong>số tiền và nội dung đã điền sẵn</strong>.
+          Không sửa nội dung, nếu không hệ thống không khớp được đơn.
+        </span>
+      </div>
+
+      <div id="qr-status" style="text-align:center;padding:14px;border-radius:10px;
+        background:rgba(255,255,255,.04);margin-bottom:14px">
+        <div style="font-size:13px;font-weight:700;color:#fbbf24">
+          ⏳ Đang chờ thanh toán
+        </div>
+        <div style="font-size:12px;color:var(--text-mute);margin-top:6px">
+          Còn <strong id="qr-countdown">--:--</strong> · Tự động giao key khi tiền vào
+        </div>
+      </div>
+
+      <div class="flex gap-1" style="flex-wrap:wrap;justify-content:center">
+        <button class="btn btn-ghost btn-sm" data-claimed>
+          Tôi đã chuyển khoản
+        </button>
+        <a class="btn btn-ghost btn-sm" href="#/orders">Xem đơn hàng</a>
+      </div>
+    </div>
+  `;
+
+  // Copy nội dung
+  const copyBtn = host.querySelector('[data-copy-memo]');
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      const { copyText } = await import('../lib.js');
+      const okc = await copyText(memo);
+      toast(okc ? 'Đã copy nội dung' : 'Không copy được',
+        okc ? 'success' : 'error');
+    };
+  }
+
+  // Ảnh QR lỗi -> hiện hướng dẫn chuyển khoản tay
+  const img = host.querySelector('[data-qr-img]');
+  if (img) {
+    img.onerror = () => {
+      img.style.display = 'none';
+      const note = document.createElement('div');
+      note.className = 'alert alert-warn';
+      note.innerHTML = '<span class="ico">⚠️</span><span>Không tải được mã QR. '
+        + 'Bạn chuyển khoản tay theo thông tin bên dưới, giữ nguyên nội dung.</span>';
+      img.parentElement.appendChild(note);
+    };
+  }
+
+  const cdEl = host.querySelector('#qr-countdown');
+  const stEl = host.querySelector('#qr-status');
+  let pollTimer = null;
+  let cdTimer = null;
+  let stopped = false;
+
+  const tick = () => {
+    if (stopped) return;
+    if (left <= 0) {
+      cdEl.textContent = '00:00';
+      stEl.innerHTML = '<div style="font-size:13px;font-weight:700;color:#f87171">'
+        + '⌛ Mã QR hết hạn</div>'
+        + '<div style="font-size:12px;color:var(--text-mute);margin-top:6px">'
+        + 'Vẫn chuyển khoản được — hệ thống sẽ tự khớp. Hoặc <a href="#/orders">tạo lại mã</a>.</div>';
+      clearInterval(cdTimer);
+      return;
+    }
+    left--;
+    const m = Math.floor(left / 60);
+    const sec = left % 60;
+    cdEl.textContent = `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  };
+  cdTimer = setInterval(tick, 1000);
+  tick();
+
+  const poll = async () => {
+    if (stopped) return;
+    try {
+      const o = await api(`/api/orders/${order.id}`);
+      const st = o.order?.status;
+      if (st === 'delivered' || st === 'paid') {
+        stopped = true;
+        clearInterval(pollTimer);
+        clearInterval(cdTimer);
+        showSuccess(host, o.order, created);
+        return;
+      }
+      if (st === 'cancelled' || st === 'expired') {
+        stopped = true;
+        clearInterval(pollTimer);
+        clearInterval(cdTimer);
+        stEl.innerHTML = '<div style="font-size:13px;font-weight:700;color:#f87171">'
+          + 'Đơn đã đóng</div>';
+      }
+    } catch { /* mạng lỗi -> thử lại */ }
+  };
+  pollTimer = setInterval(poll, 4000);
+
+  // Nút "tôi đã chuyển khoản"
+  const claimBtn = host.querySelector('[data-claimed]');
+  if (claimBtn) {
+    claimBtn.onclick = async () => {
+      claimBtn.disabled = true;
+      try {
+        const r = await api(`/api/orders/${order.id}/claimed`, { method: 'POST' });
+        toast(r.msg || 'Đã ghi nhận, admin đang kiểm tra', 'success', 7000);
+        stEl.innerHTML = '<div style="font-size:13px;font-weight:700;color:#60a5fa">'
+          + '📨 Đã báo shop — đang kiểm tra</div>'
+          + '<div style="font-size:12px;color:var(--text-mute);margin-top:6px">'
+          + 'Key sẽ hiện tự động khi shop xác nhận.</div>';
+      } catch (e) {
+        toast(e.message, 'error');
+        claimBtn.disabled = false;
+      }
+    };
+  }
 }
 
 function showSuccess(host, order, created) {
   const paid = order.total != null ? order.total : (created ? created.total : 0);
   const sub = created ? created.subtotal : null;
   const disc = created ? created.discount : 0;
-  const balAfter = state.user ? state.user.balance : null;
 
   host.innerHTML = `
     <div class="panel ck-done">
@@ -285,9 +424,7 @@ function showSuccess(host, order, created) {
         <div class="ck-done-receipt">
           ${sub != null ? `<div class="ck-receipt-row"><span>Tạm tính</span><span>${fmtVnd(sub)}</span></div>` : ''}
           ${disc > 0 ? `<div class="ck-receipt-row text-green"><span>Giảm giá</span><span>−${fmtVnd(disc)}</span></div>` : ''}
-          <div class="ck-receipt-row ck-receipt-total"><span>Đã trừ</span><span>${fmtVnd(paid)}</span></div>
-          ${balAfter != null ? `<div class="ck-receipt-row ck-receipt-balance">
-            <span>Số dư còn lại</span><span>${fmtVnd(balAfter)}</span></div>` : ''}
+          <div class="ck-receipt-row ck-receipt-total"><span>Đã thanh toán</span><span>${fmtVnd(paid)}</span></div>
         </div>
 
         <p class="ck-done-note">

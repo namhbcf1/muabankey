@@ -225,14 +225,34 @@ set "FROMCACHE="
 rem Xoa file tam con sot tu lan chay truoc - tranh cai dat file hong
 del /f /q "%EXE%.new" >nul 2>&1
 
-if exist "%EXE%" (
-  for /f "usebackq delims=" %%H in (\`powershell -NoProfile -Command "if((Get-Item -LiteralPath '%EXE%' -EA SilentlyContinue).Length -eq %EXESIZE%){'OK'}"\`) do set "GOT=%%H"
-)
-if defined GOT (
-  set "FROMCACHE=1"
-  echo       Da co san, bo qua tai.
-)
+if not exist "%EXE%" goto :cache_done
+for /f "usebackq delims=" %%H in (\`powershell -NoProfile -Command "if((Get-Item -LiteralPath '%EXE%' -EA SilentlyContinue).Length -eq %EXESIZE%){'OK'}"\`) do set "GOT=%%H"
+if not defined GOT goto :cache_done
 
+rem File da co san: KICH THUOC khop KHONG chung minh duoc noi dung. Truoc day
+rem nhanh nay bo qua toan bo buoc kiem hash, nen chi can dat mot file 13.2 MB
+rem bat ky vao dung duong dan cai dat la no duoc chay bang quyen Administrator.
+rem LUON verify, ke ca khi lay tu cache.
+echo  [*] Kiem tra toan ven file da co san...
+call :hashfile "%EXE%"
+call :verifyhash
+if errorlevel 1 goto :cache_bad
+set "FROMCACHE=1"
+echo       Da co san, bo qua tai.
+goto :cache_done
+
+:cache_bad
+rem File cu sai chu ky -> xoa han roi tai lai tu dau (ben duoi).
+rem Khong dung "[!]" o day: script bat EnableDelayedExpansion nen dau "!" bi an.
+echo       File co san sai chu ky. Da xoa, tai lai tu dau...
+del /f /q "%EXE%" >nul 2>&1
+rem Khong xoa duoc (file dang bi giu) -> dung han. Neu chay tiep, move ben duoi
+rem se that bai trong im lang va file SAI van con nguyen o duong dan cai dat.
+if exist "%EXE%" goto :fail_abort
+set "GOT="
+set "FROMCACHE="
+
+:cache_done
 if not defined GOT (
   echo       Thu cach 1: curl...
   curl.exe -L --fail --retry 3 --retry-delay 2 -o "%EXE%.new" "%EXEURL%" 2>nul
@@ -262,16 +282,25 @@ if not defined GOT (
   exit /b 7
 )
 
-rem Kiem tra toan ven - BAT BUOC, sai la dung han
-if not defined FROMCACHE (
-  echo  [*] Kiem tra toan ven file...
-  set "ACTUALSHA="
-  for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%EXE%.new" SHA256 2^>nul') do call :sethash "%%H"
-  if defined ACTUALSHA set "ACTUALSHA=!ACTUALSHA: =!"
-  call :verifyhash
-)
-
+rem Kiem tra toan ven - BAT BUOC, sai la dung han.
+rem verifyhash CHI tra errorlevel; no khong the tu dung script chinh. Phai
+rem kiem errorlevel o day va goto :fail_abort, neu khong dong move ben duoi
+rem van ghi de EXE bang file sai roi chay no bang quyen Administrator.
+if defined FROMCACHE goto :verify_done
+echo  [*] Kiem tra toan ven file...
+call :hashfile "%EXE%.new"
+call :verifyhash
+if errorlevel 1 goto :fail_abort
 move /y "%EXE%.new" "%EXE%" >nul 2>&1
+:verify_done
+rem Chan cuoi: neu move that bai trong khi mot file CU van nam o %EXE% thi
+rem "if not exist" ben duoi se khong bat duoc, va script chay file chua verify.
+rem Vi vay kiem lai hash ngay tai duong dan cai dat truoc khi dung toi no.
+set "QUIETOK=1"
+call :hashfile "%EXE%"
+call :verifyhash
+set "QUIETOK="
+if errorlevel 1 goto :fail_abort
 if not exist "%EXE%" (
   echo  [X] Khong ghi duoc file vao %TARGET%
   pause
@@ -411,18 +440,36 @@ if defined ACTUALSHA exit /b 0
 set "ACTUALSHA=%~1"
 exit /b 0
 
+:hashfile
+rem Tinh SHA-256 cua file trong %~1 vao bien ACTUALSHA (rong neu doc loi).
+rem Tach rieng khoi :verifyhash de ca nhanh cache va nhanh tai deu dung chung.
+set "ACTUALSHA="
+for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%~1" SHA256 2^>nul') do call :sethash "%%H"
+if defined ACTUALSHA set "ACTUALSHA=!ACTUALSHA: =!"
+exit /b 0
+
 :verifyhash
+rem CHI bao ket qua qua errorlevel: 0 = khop, 1 = sai/khong doc duoc.
+rem KHONG duoc "exit /b 9" o day de roi tuong script da dung: "call" chi thoat
+rem khoi subroutine, script chinh van chay tiep. Noi goi PHAI kiem errorlevel
+rem roi goto :fail_abort.
 if not defined ACTUALSHA (
-  echo  [!] Khong doc duoc chu ky file. Bo qua kiem tra.
-  exit /b 0
+  rem Khong dung "[!]" trong echo: script bat EnableDelayedExpansion nen "!" bi an.
+  echo  [X] Khong doc duoc chu ky file.
+  exit /b 1
 )
 if /i "%ACTUALSHA%"=="%EXESHA%" (
-  echo  [OK] Chu ky file khop.
+  rem Lan kiem lai o chan cuoi dat QUIETOK de khong in trung thong bao.
+  if not defined QUIETOK echo  [OK] Chu ky file khop.
   exit /b 0
 )
 echo.
 echo  [X] FILE TAI VE KHONG DUNG CHU KY.
 echo      Co the do mang chap chon hoac bi can thiep.
+exit /b 1
+
+:fail_abort
+rem Diem dung DUY NHAT khi hash sai: khong move, khong chay EXE.
 echo      Da huy cai dat. Vui long chay lai file nay.
 del /f /q "%EXE%.new" >nul 2>&1
 pause
@@ -517,9 +564,26 @@ Good 'Da tao thu muc.'
 
 $needDownload = $true
 if (Test-Path -LiteralPath $Exe) {
-  if ((Get-Item -LiteralPath $Exe).Length -eq $WantSize) {
-    Good 'Bo xu ly da co san, bo qua tai.'
+  /*
+   * KHONG duoc chi so kich thuoc. Truoc day chi can dung $WantSize la
+   * "bo qua tai" -> dat mot binary tuy y dung 13.2 MB vao duong dan cai dat
+   * la duoc chay bang quyen Administrator ma khong bi phat hien.
+   * Luon bam lai SHA-256; certutil tren 13 MB chi mat ~30ms.
+   */
+  $cacheSha = ''
+  try {
+    $cacheSha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256 -ErrorAction Stop).Hash
+  } catch { $cacheSha = '' }
+  if ($cacheSha -and ($cacheSha -eq $WantSha)) {
+    Good 'Bo xu ly da co san va dung chu ky, bo qua tai.'
     $needDownload = $false
+  } else {
+    Step 'Bo xu ly cu sai chu ky - xoa va tai lai.'
+    Remove-Item -Force -LiteralPath $Exe -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Exe) {
+      Write-Host '  [X] Khong xoa duoc file cu (dang bi khoa). Huy cai dat.' -ForegroundColor Red
+      exit 9
+    }
   }
 }
 

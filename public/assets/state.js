@@ -124,15 +124,6 @@ export async function loadUser() {
   return state.user;
 }
 
-export async function refreshBalance() {
-  if (!state.user) return;
-  try {
-    const data = await api('/api/wallet');
-    state.user.balance = data.balance;
-    notify();
-    updateBalanceChip();
-  } catch { /* ignore */ }
-}
 
 export function updateBalanceChip() {
   // #balance-chip nằm trong nút ví ở header; chỉ cập nhật phần số, giữ nguyên icon.

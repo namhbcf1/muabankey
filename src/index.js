@@ -11,6 +11,7 @@ import * as auth from './routes/auth.js';
 import * as products from './routes/products.js';
 import * as orders from './routes/orders.js';
 import * as wallet from './routes/wallet.js';
+import * as payments from './routes/payments.js';
 import * as admin from './routes/admin.js';
 import * as ai from './routes/ai.js';
 import * as license from './routes/license.js';
@@ -55,14 +56,12 @@ r.post('/api/coupons/check', orders.checkCoupon);
 r.post('/api/orders', orders.createOrder);
 r.get('/api/orders', orders.listOrders);
 r.get('/api/orders/:id', (env, req, p) => orders.getOrder(env, req, p.id));
-r.post('/api/orders/:id/pay', (env, req, p) => orders.payOrder(env, req, p.id));
+r.post('/api/orders/:id/qr', (env, req, p) => payments.createOrderQr(env, req, p.id));
+r.post('/api/orders/:id/claimed', (env, req, p) => payments.claimOrderPaid(env, req, p.id));
 
 /* ---------- Wallet ---------- */
-r.get('/api/wallet', wallet.getWallet);
-r.post('/api/wallet/topup', wallet.createTopup);
-r.get('/api/wallet/topup/:id', (env, req, p) => wallet.getTopup(env, req, p.id));
-r.post('/api/webhooks/sepay', wallet.sepayWebhook);
-r.post('/api/webhooks/payos', wallet.payosWebhook);
+r.post('/api/webhooks/sepay', payments.sepayWebhook);
+r.post('/api/webhooks/payos', payments.payosWebhook);
 r.post('/api/telegram/webhook', wallet.telegramWebhook);
 r.get('/api/webhooks/health', (env) => wallet.webhookHealth(env));
 
@@ -119,7 +118,6 @@ r.delete('/api/admin/keys/:id', (env, req, p) => products.adminDeleteKey(env, re
 r.get('/api/admin/orders', orders.adminListOrders);
 r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManual(env, req, p.id));
 r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, req, p.id));
-r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
 r.post('/api/admin/settings/payos', wallet.adminSetPayosKey);
 r.get('/api/admin/trial/accounts', trialAdmin.adminTrialAccounts);
 r.get('/api/admin/trial/uses', trialAdmin.adminTrialUses);
@@ -181,8 +179,11 @@ export default {
            WHERE status='pending' AND created_at < ?`
         ).bind(now - 45 * 60 * 1000).all();
         for (const o of stale.results || []) {
+          // 'expired' KHÔNG phải 'cancelled': đơn còn nhận được tiền về muộn.
+          // 'cancelled' = huỷ hẳn, confirmOrderPaid sẽ từ chối -> tiền khách
+          // vào mà không ghi sổ, không giao key (mất tiền thật).
           const c = await env.DB.prepare(
-            "UPDATE orders SET status='cancelled' WHERE id = ? AND status='pending'"
+            "UPDATE orders SET status='expired' WHERE id = ? AND status='pending'"
           ).bind(o.id).run();
           if (!c.meta || c.meta.changes !== 1) continue;
           if (o.coupon_code && !o.coupon_released) {
@@ -201,18 +202,54 @@ export default {
         // Trước đây dùng created_at -> đơn tạo >10 phút trước bị "hồi sinh":
         //   refunding -> delivered -> admin refund lại -> hoàn tiền nhiều lần.
         // Đã xảy ra thật: MBK-L5W87H hoàn 70.000đ hai lần.
+        // 'processing' = TIỀN ĐÃ VÀO, đang giao. Trước đây đưa về 'pending'
+        // + paid_at=NULL -> khách thấy QR lần 2 và TRẢ TIỀN LẦN 2.
+        // Nay về 'paid' (đã có tiền, chờ admin giao tay).
         await env.DB.prepare(
-          `UPDATE orders SET status='pending', paid_at=NULL, processing_started_at=NULL
-           WHERE status='processing'
+          `UPDATE orders SET status = 'paid', processing_started_at = NULL
+           WHERE status = 'processing'
              AND processing_started_at IS NOT NULL
              AND processing_started_at < ?`
         ).bind(now - 10 * 60 * 1000).run();
 
-        // Đơn 'refunding' kẹt: KHÔNG đưa về 'delivered' (sẽ refund lại được).
-        // Đưa về 'paid' để admin xử lý lại tay, và ghi mốc đã reset.
+        /*
+         * ===== ĐƠN 'refunding' KẸT -> 'refund_stuck', TUYỆT ĐỐI KHÔNG về 'paid' =====
+         *
+         * 'refunding' là trạng thái đã GIÀNH ĐƯỢC đơn và ĐANG cộng tiền cho
+         * khách. Worker chết giữa chừng (CPU limit 30s, nhiều await thu hồi
+         * license/key) sẽ để đơn kẹt ở đây.
+         *
+         * Trước đây cron đưa về 'paid' -> admin thấy lại nút "Hoàn" -> bấm
+         * lần 2 -> hoàn tiền lần 2. ĐÃ XẢY RA THẬT: MBK-L5W87H hoàn
+         * 70.000đ hai lần. Đây là mất tiền thật, không phải rủi ro lý thuyết.
+         *
+         * Nay đưa sang 'refund_stuck' — trạng thái KHÔNG có nút Hoàn trong
+         * UI (public/assets/pages/admin.js chỉ hiện nút khi 'paid'/'delivered').
+         * Admin phải đối soát sổ (refund_ledger + wallet_transactions) rồi
+         * quyết định tay. Máy không được tự đoán "đã cộng tiền hay chưa".
+         *
+         * Vì sao KHÔNG tự kiểm refund_ledger ở đây: nếu ledger ghi
+         * state='done' thì tiền đã cộng (chốt 'refunded'); nếu 'pending' thì
+         * CHƯA cộng (an toàn để hoàn tiếp). Cron xử lý 2 nhánh này tách bạch
+         * bên dưới thay vì đoán.
+         */
+        // Nhánh A: sổ đã chốt 'done' -> tiền đã cộng xong, chỉ còn thiếu
+        // bước đặt trạng thái đơn. Chốt luôn, KHÔNG để admin bấm lại.
+        try {
+          await env.DB.prepare(
+            `UPDATE orders SET status = 'refunded'
+             WHERE status = 'refunding'
+               AND refund_started_at IS NOT NULL
+               AND refund_started_at < ?
+               AND id IN (SELECT order_id FROM refund_ledger WHERE state = 'done')`
+          ).bind(now - 10 * 60 * 1000).run();
+        } catch { /* chưa chạy migration refund_ledger */ }
+
+        // Nhánh B: sổ chưa chốt (hoặc không có sổ) -> KHÔNG tự cộng, KHÔNG
+        // hồi sinh về 'paid'. Đẩy sang 'refund_stuck' chờ admin đối soát.
         await env.DB.prepare(
-          `UPDATE orders SET status='paid', refund_started_at=NULL
-           WHERE status='refunding'
+          `UPDATE orders SET status = 'refund_stuck'
+           WHERE status = 'refunding'
              AND refund_started_at IS NOT NULL
              AND refund_started_at < ?`
         ).bind(now - 10 * 60 * 1000).run();

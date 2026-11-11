@@ -8,7 +8,9 @@ import { state } from '../state.js';
 
 // tone + nhãn + icon cho từng trạng thái đơn.
 const STATUS_MAP = {
-  pending: ['pill-yellow', 'Chờ thanh toán', 'clock'],
+  pending: ['pill-yellow', 'Chờ chuyển khoản', 'clock'],
+  expired: ['pill-gray', 'Hết hạn', 'clock'],
+  processing: ['pill-blue', 'Đang giao key', 'package'],
   paid: ['pill-blue', 'Đã thanh toán', 'card'],
   delivered: ['pill-green', 'Đã giao', 'checkCircle'],
   cancelled: ['pill-gray', 'Đã huỷ', 'ban'],
@@ -163,19 +165,9 @@ export async function mountOrders(root) {
     });
 
     host.querySelectorAll('[data-pay]').forEach((b) => {
-      b.onclick = async () => {
-        b.disabled = true;
-        b.textContent = 'Đang xử lý...';
-        try {
-          await api(`/api/orders/${b.dataset.pay}/pay`, { method: 'POST' });
-          toast('Thanh toán thành công!', 'success');
-          window.dispatchEvent(new CustomEvent('app:refresh-header'));
-          await mountOrders(root);
-        } catch (e) {
-          toast(e.message, 'error', 5000);
-          b.disabled = false;
-          b.innerHTML = `${icon('card', { size: 13 })} Thanh toán ngay`;
-        }
+      b.onclick = () => {
+        // Chuyển sang trang thanh toán QR của đơn (không trừ ví)
+        navigate(`/order/${b.dataset.pay}`);
       };
     });
   } catch (e) {

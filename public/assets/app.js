@@ -1,6 +1,6 @@
 /** MuaBanKey SPA — bộ định tuyến & khởi tạo. */
 import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks, bindScrollHints } from './lib.js';
-import { state, loadUser, loadCategories, refreshBalance } from './state.js';
+import { state, loadUser, loadCategories } from './state.js';
 import { icon } from './icons.js';
 import {
   renderHeader, bindHeader, renderFooter, renderAiWidget, bindAiWidget,
@@ -13,7 +13,6 @@ import { renderLogin, mountLogin, renderRegister, mountRegister } from './pages/
 import { renderCheckout, mountCheckout } from './pages/checkout.js';
 import { renderAccount, mountAccount } from './pages/account.js';
 import { renderOrders, mountOrders } from './pages/orders.js';
-import { renderWallet, mountWallet } from './pages/wallet.js';
 import { renderSupport, mountSupport } from './pages/support.js';
 import { renderLicenses, mountLicenses } from './pages/licenses.js';
 import { renderAdmin, mountAdmin } from './pages/admin.js';
@@ -28,7 +27,10 @@ const ROUTES = [
   { pattern: /^\/checkout$/, render: renderCheckout, mount: mountCheckout },
   { pattern: /^\/account$/, render: renderAccount, mount: mountAccount },
   { pattern: /^\/orders$/, render: renderOrders, mount: mountOrders },
-  { pattern: /^\/wallet$/, render: renderWallet, mount: mountWallet },
+  // /wallet bỏ (không nạp tiền). Chuyển sang đơn hàng.
+  { pattern: /^\/wallet$/, render: renderOrders, mount: mountOrders },
+  // Trang thanh toán QR theo đơn
+  { pattern: /^\/order\/([^/]+)$/, render: renderCheckout, mount: mountCheckout, param: true },
   { pattern: /^\/licenses$/, render: renderLicenses, mount: mountLicenses },
   { pattern: /^\/support$/, render: renderSupport, mount: mountSupport },
   { pattern: /^\/huong-dan$/, render: renderGuide, mount: mountGuide },
@@ -199,12 +201,10 @@ async function boot() {
 
   // Refresh số dư định kỳ (60s) khi đã đăng nhập
   setInterval(() => {
-    if (state.user && !document.hidden) refreshBalance();
   }, 60000);
 
   // Làm mới khi quay lại tab
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.user) refreshBalance();
   });
 }
 

@@ -353,6 +353,102 @@ def _hwid_parts():
     return [_machine_guid(), _bios_serial(), _cpu_brand(), _volume_serial()]
 
 
+class HwidUnavailable(RuntimeError):
+    """Khong doc duoc du thong tin phan cung de tinh HWID (FAIL CLOSED).
+
+    Truoc day compute_hwid() VAN bam khi ca 4 manh deu rong, nen moi may
+    khong doc duoc phan cung (WOW64 loi, winreg bi chan, may ao toi gian,
+    GetVolumeInformationW tra '') deu ra CUNG mot HWID:
+        bea408e2a8a8fa43220a6889cb502a3d   (weak: cc19d15b...)
+    Server chap nhan HWID dai 8..128 ky tu nen gia tri do HOP LE -> chi can
+    1 key bind 1 lan la dung duoc tren VO SO may loi, va farm trial vo han.
+    Gio raise de khong bao gio gui HWID "toan rong" len server.
+    """
+
+
+# So manh phan cung toi thieu de coi la "doc duoc may". Xem _hwid_parts_check.
+_HWID_MIN_PARTS = 2
+
+
+def _hwid_parts_check(parts):
+    """Bo manh phan cung nay co du manh de bam HWID khong? Tra (ok, ly_do).
+
+    NGUONG: can it nhat 2 manh khac rong, HOAC rieng MachineGuid (parts[0]).
+
+    Ly do chon nguong nay:
+      - 0 manh (ca 4 deu rong): moi may loi ra CUNG 1 HWID -> guard bat buoc.
+      - 1 manh khong phai MachineGuid: KHONG du doc nhat. CPU brand giong
+        nhau tren hang trieu may; BIOS serial cua vai board OEM la gia tri
+        trung ('Default string' da bi loc, nhung van con nhieu board trung
+        serial); volume serial bi clone khi nhan ban dia/VM -> nhieu may
+        khac nhau se ra cung HWID. Chan.
+      - 1 manh la MachineGuid: MachineGuid la GUID ngau nhien Windows sinh
+        rieng cho tung lan cai dat -> du doc nhat. Cho qua de KHONG chan nham
+        may chi bi chan o nhanh winreg khac (thuc te doc duoc MachineGuid thi
+        gan nhu luon doc duoc ca CPU brand -> se thanh >= 2 manh).
+      - >= 2 manh: may binh thuong (du 3-4 manh); may thieu BIOS serial van
+        con guid + cpu + vol = 3 manh -> khong bao gio bi chan oan.
+    """
+    vals = ['' if p is None else str(p).strip() for p in parts]
+    n = len([v for v in vals if v])
+    if n >= _HWID_MIN_PARTS:
+        return True, ''
+    if n == 1 and vals and vals[0]:
+        return True, ''
+    return False, 'chi doc duoc %d/%d manh phan cung' % (n, len(vals))
+
+
+def _hwid_digest(prefix, parts):
+    """sha256(prefix + '|' + '|'.join(parts))[:32] -- FAIL CLOSED.
+
+    Gia tri bam KHONG doi so voi truoc khi them guard: parts van duoc noi
+    NGUYEN BAN (khong strip) nen may binh thuong giu nguyen HWID cu.
+    """
+    ok, why = _hwid_parts_check(parts)
+    if not ok:
+        raise HwidUnavailable(why)
+    return hashlib.sha256(
+        (prefix + '|' + '|'.join(parts)).encode('utf-8')).hexdigest()[:32]
+
+
+def _hwid_parts_checked():
+    """Nhu _hwid_parts() nhung raise HwidUnavailable khi thieu manh."""
+    parts = _hwid_parts()
+    ok, why = _hwid_parts_check(parts)
+    if not ok:
+        raise HwidUnavailable(why)
+    return parts
+
+
+def _hwid_safe():
+    """compute_hwid() khong bao gio raise. Tra '' khi khong doc duoc may."""
+    try:
+        return compute_hwid()
+    except HwidUnavailable:
+        return ''
+
+
+def _print_hwid_fail():
+    """In huong dan khi khong doc duoc phan cung. Tra False."""
+    print('  ============================================================')
+    print('   KHONG DOC DUOC THONG TIN PHAN CUNG')
+    print('  ------------------------------------------------------------')
+    print('   Tool can doc thong tin phan cung (MachineGuid, serial BIOS,')
+    print('   ten CPU, serial o dia C:) de tao ma dinh danh may.')
+    print('   May cua ban khong doc duoc (hoac doc duoc qua it) nen khong')
+    print('   the xac minh ban quyen.')
+    print('')
+    print('   Cach xu ly:')
+    print('     1. Chuot phai exe -> "Run as administrator"')
+    print('     2. Tat tam thoi phan mem diet virus / chan registry')
+    print('     3. Neu dang chay trong may ao: chay tren may that')
+    print('     4. Khoi dong lai Windows roi chay lai tool')
+    print('')
+    print('   Van khong duoc? Nhan ho tro: %s' % BUY_URL)
+    print('  ============================================================')
+    return False
+
+
 def compute_hwid():
     """SHA-256 phan cung that. Khong dung ten may / MAC (doi qua de).
 
@@ -360,9 +456,11 @@ def compute_hwid():
       hwid = sha256('v1|' + guid|bios|cpu|vol)[:32]
     Trước đây client dùng sha256(guid|bios|cpu|vol) -> LỆCH với server,
     nên --status báo "HWID khớp: KHÔNG" và trial chết vì hwid_mismatch.
+
+    FAIL CLOSED: khong doc duoc du phan cung -> raise HwidUnavailable,
+    TUYET DOI khong tra hash cua chuoi rong (xem _hwid_parts_check).
     """
-    parts = _hwid_parts()
-    return hashlib.sha256(('v1|' + '|'.join(parts)).encode('utf-8')).hexdigest()[:32]
+    return _hwid_digest('v1', _hwid_parts())
 
 
 def compute_weak_hwid():
@@ -373,9 +471,12 @@ def compute_weak_hwid():
     xin duoc trial moi. Chuoi nay on dinh hon.
 
     Phải khớp server: weak = sha256('w1|' + guid|bios|cpu)[:32]
+
+    FAIL CLOSED: nguong tinh tren DUNG 3 manh dua vao hash (guid/bios/cpu),
+    vi du chi con 'cpu' thi weak HWID giong nhau tren hang trieu may.
     """
     parts = _hwid_parts()[:3]      # MachineGuid + BIOS serial + CPU brand
-    return hashlib.sha256(('w1|' + '|'.join(parts)).encode('utf-8')).hexdigest()[:32]
+    return _hwid_digest('w1', parts)
 
 
 # --------------------------------------------------------------- state ------
@@ -734,7 +835,13 @@ def rebind_key(key, token, verbose=True):
     if not key or not token:
         return False, 'can ca KEY va TOKEN'
 
-    hwid = compute_hwid()
+    try:
+        hwid = compute_hwid()
+    except HwidUnavailable as e:
+        # FAIL CLOSED: khong gui /api/rebind voi HWID rong.
+        if verbose:
+            _print_hwid_fail()
+        return False, 'khong doc duoc thong tin phan cung (%s)' % e
     if verbose:
         print('  Dang doi may...')
         print('  HWID may moi: %s' % mask_key(hwid))
@@ -790,7 +897,13 @@ def activate(key, verbose=True, token=None):
     server trả 403 rebind_token_required nếu không có token.
     Đường installer (--key) sau khi admin reset cũng cần token.
     """
-    hwid = compute_hwid()
+    try:
+        hwid = compute_hwid()
+    except HwidUnavailable as e:
+        # FAIL CLOSED: khong gui /api/activate voi HWID rong.
+        if verbose:
+            _print_hwid_fail()
+        return False, 'khong doc duoc thong tin phan cung (%s)' % e
     if verbose:
         print('  HWID: %s' % mask_key(hwid))
 
@@ -841,7 +954,16 @@ def check_online(st=None, verbose=True):
     key = st.get('key')
     if not key:
         return False, 'chua kich hoat'
-    hwid = st.get('hwid') or compute_hwid()
+    # State cu da luu HWID -> dung lai, khong can doc phan cung lai.
+    # Chua co -> phai tinh; that bai thi FAIL CLOSED, KHONG gui hwid rong.
+    hwid = st.get('hwid')
+    if not hwid:
+        try:
+            hwid = compute_hwid()
+        except HwidUnavailable as e:
+            if verbose:
+                _print_hwid_fail()
+            return False, 'code:hwid_unavailable|khong doc duoc thong tin phan cung (%s)' % e
     r = _post('/api/check', {'key': key, 'hwid': hwid, 'app': APP_NAME})
     if not r.get('ok'):
         code = r.get('code', '')
@@ -1185,7 +1307,17 @@ def start_trial(kind=None, verbose=True):
                     'msg': 'Chua dang nhap nen khong dung thu duoc.',
                     'next': 'buy'}
 
-    parts = _hwid_parts()
+    # FAIL CLOSED: server tu bam parts -> parts rong se ra HWID "toan rong"
+    # giong nhau tren moi may loi => 1 tai khoan farm duoc vo han.
+    try:
+        parts = _hwid_parts_checked()
+    except HwidUnavailable as e:
+        if verbose:
+            _print_hwid_fail()
+            print('  Khong bat duoc dung thu: khong doc duoc thong tin phan cung.')
+        return {'ok': False, 'code': 'hwid_unavailable',
+                'msg': 'Khong doc duoc thong tin phan cung cua may (%s).' % e,
+                'next': 'retry'}
     if verbose:
         print('  Dang bat dung thu %s...' % label)
 
@@ -1262,7 +1394,8 @@ def start_trial(kind=None, verbose=True):
     st.update({
         'key': key,
         # HWID DO SERVER TINH - khong dung compute_hwid() (se lech -> hwid_mismatch)
-        'hwid': str(r.get('hwid') or compute_hwid()),
+        # Fallback _hwid_safe(): '' thay vi raise, va khong bao gio la hash rong.
+        'hwid': str(r.get('hwid') or _hwid_safe()),
         'plan': 'trial',
         'is_trial': 1,
         'trial_kind': kind,
@@ -1358,6 +1491,11 @@ def trial_guard(verbose=True):
                 print('   mo https://xienhl.com de kiem tra trang thai.')
                 print('  ============================================================')
                 print('')
+            elif 'khong doc duoc thong tin phan cung' in msg:
+                # FAIL CLOSED giua phien: bao dung nguyen nhan, khong bao
+                # "mat mang" (gay hieu sai cho khach).
+                print('')
+                _print_hwid_fail()
             elif 'clock_tampered' in msg:
                 print('  [!] Dong ho may bi chinh lui -> dung.')
             elif is_trial(st):
@@ -1405,9 +1543,13 @@ def ensure_licensed(verbose=True):
     # Server tu choi dut khoat -> khong cho chay, du con grace.
     # Phai co rate_limit/bad_request: truoc day hai ma nay roi vao nhanh
     # grace -> tu bam het rate limit la duoc chay mu them 24 gio.
+    # 'hwid_unavailable': client khong tao duoc HWID -> cung la tu choi dut
+    # khoat, KHONG duoc roi xuong nhanh grace (truoc day se bao sai thanh
+    # "khong ket noi duoc server").
     if code in ('revoked', 'expired', 'hwid_mismatch', 'not_found',
                 'trial_expired', 'trial_only', 'trial_denied_device',
-                'rate_limit', 'bad_request', 'clock_tampered'):
+                'rate_limit', 'bad_request', 'clock_tampered',
+                'hwid_unavailable'):
         return False, msg.split('|', 1)[-1]
 
     # Loi mang / server -> dung grace neu con han cuc bo
@@ -2221,10 +2363,20 @@ def show_status():
     print('Loai      : %s' % ('DUNG THU ' + _tl if trial else 'BAN QUYEN'))
     print('Key       : %s' % mask_key(key))
 
-    hwid = compute_hwid()
-    stored = st.get('hwid') or ''
-    print('HWID may  : %s' % mask_key(hwid))
-    print('HWID khop : %s' % ('CO' if stored == hwid else 'KHONG'))
+    # --status phai in duoc thong tin du khong doc duoc phan cung: khong raise.
+    try:
+        hwid = compute_hwid()
+    except HwidUnavailable as e:
+        hwid = ''
+        stored = st.get('hwid') or ''
+        print('HWID may  : (KHONG DOC DUOC phan cung - %s)' % e)
+        print('HWID khop : KHONG (khong tao duoc HWID)')
+        if stored:
+            print('HWID luu  : %s' % mask_key(stored))
+    else:
+        stored = st.get('hwid') or ''
+        print('HWID may  : %s' % mask_key(hwid))
+        print('HWID khop : %s' % ('CO' if stored == hwid else 'KHONG'))
 
     ok, msg = ensure_licensed(verbose=False)
     print('Trang thai: %s' % ('HOAT DONG' if ok else 'KHONG (%s)' % msg))
@@ -2339,6 +2491,14 @@ def require_license(opts):
                 _warn_trial(load_state())
             return True
 
+        # FAIL CLOSED phai dung TRUOC nhanh is_trial: neu may khong doc duoc
+        # phan cung thi nguyen nhan la HWID, khong phai "het han".
+        if 'khong doc duoc thong tin phan cung' in msg:
+            # Bao ro, KHONG hoi key (nhap key cung khong kich hoat duoc vi
+            # thieu HWID de server gan).
+            print('')
+            _print_hwid_fail()
+            return False
         if is_trial(st):
             print('Ban dung thu da het han.')
             _offer_buy()
@@ -2507,7 +2667,15 @@ def run():
     # (web cap ma roi bao "chay tool"; truoc day tool KHONG co duong nhan)
     if opts.get('trial_key'):
         tk = opts['trial_key'].strip().upper()
-        parts = _hwid_parts()
+        # FAIL CLOSED: khong gui tam 4 manh rong len /api/trial/claim.
+        try:
+            parts = _hwid_parts_checked()
+        except HwidUnavailable as e:
+            print('')
+            _print_hwid_fail()
+            print('  Khong nhan duoc ma dung thu: khong doc duoc thong tin'
+                  ' phan cung (%s).' % e, file=sys.stderr)
+            return EXIT_NO_LICENSE
         r = _post('/api/trial/claim', {
             'key': tk,
             'guid': parts[0], 'bios': parts[1], 'cpu': parts[2], 'vol': parts[3],
@@ -2540,7 +2708,7 @@ def run():
         kc = TRIAL_KINDS.get(kind, TRIAL_KINDS['3d'])
         st.update({
             'key': tk,
-            'hwid': str(r.get('hwid') or compute_hwid()),
+            'hwid': str(r.get('hwid') or _hwid_safe()),
             'plan': 'trial',
             'is_trial': 1,
             'trial_kind': kind,
