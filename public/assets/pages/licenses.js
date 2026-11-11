@@ -102,7 +102,7 @@ export async function mountLicenses(root) {
 
           ${usable ? `
           <div id="zone-${esc(l.key)}" class="mt-2">
-            <button class="btn btn-primary btn-block" data-install="${esc(l.key)}">
+            <button class="btn btn-primary btn-block" data-install="${esc(l.key)}" data-tool="${esc(l.tool || 'nofog')}">
               ${icon('zap', { size: 14 })} Lấy lệnh cài đặt tự động
             </button>
           </div>` : `
@@ -155,12 +155,18 @@ export async function mountLicenses(root) {
   host.querySelectorAll('[data-install]').forEach((b) => {
     b.onclick = async () => {
       const key = b.dataset.install;
+      const tool = b.dataset.tool || 'nofog';
       b.disabled = true;
       b.textContent = 'Đang tạo lệnh...';
       try {
-        const r = await api(`/api/licenses/${encodeURIComponent(key)}/install-token`, { method: 'POST' });
+        // XAGrant có endpoint + bộ cài riêng (thư mục, EXE, shortcut khác hẳn)
+        const endpoint = tool === 'xagrant'
+          ? `/api/licenses/${encodeURIComponent(key)}/xg-install-token`
+          : `/api/licenses/${encodeURIComponent(key)}/install-token`;
+        const r = await api(endpoint, { method: 'POST' });
         const zone = host.querySelector(`#zone-${CSS.escape(key)}`);
         const one = r.oneLiner || r.cmd;
+        const isCmdOnly = tool === 'xagrant';
         zone.innerHTML = `
           <div class="install-box">
             <div class="install-eyebrow">${icon('zap', { size: 13 })} Cài đặt một lệnh — xong</div>
@@ -178,7 +184,9 @@ export async function mountLicenses(root) {
             </div>
             <p class="note mt-1">
               Lệnh có hiệu lực <strong>24 giờ</strong>. Mỗi lần lấy sẽ tạo lệnh mới.
-              Tool tự tải, tự cài, tự kích hoạt và tạo shortcut ngoài Desktop.
+              ${isCmdOnly
+                ? 'Tool tự tải, tự cài, tự kích hoạt và tạo shortcut CMD ngoài Desktop.'
+                : 'Tool tự tải, tự cài, tự kích hoạt và tạo shortcut ngoài Desktop.'}
             </p>
           </div>
           <details class="guide">
@@ -194,8 +202,14 @@ export async function mountLicenses(root) {
               </ol>
               <p>
                 Chờ khoảng 20 giây. Khi thấy <strong>“HOÀN TẤT”</strong> là xong —
-                shortcut <strong>XArena No Fog</strong> đã có ngoài Desktop.
+                shortcut <strong>${isCmdOnly ? 'XArena Grant' : 'XArena No Fog'}</strong>
+                đã có ngoài Desktop.
               </p>
+              ${isCmdOnly ? `<p>
+                Tool này chạy <strong>bằng cửa sổ CMD</strong> — mở shortcut là có sẵn
+                dòng lệnh, gõ <span class="mono">t 500</span> để thêm thịt,
+                <span class="mono">help</span> để xem mọi lệnh.
+              </p>` : ''}
             </div>
           </details>`;
 
@@ -223,10 +237,12 @@ export async function mountLicenses(root) {
       try {
         const r = await api(`/api/licenses/${encodeURIComponent(key)}/rebind`, { method: 'POST' });
 
-        // TRƯỚC ĐÂY chỉ hiện toast "Đã cấp quyền" -> token sinh ra rồi mất.
-        // Khách không có cách nào dùng được token => đổi máy không bao giờ xong.
+        // Server trả sẵn câu lệnh đúng với từng tool (No Fog / XAGrant).
+        // Trước đây frontend tự dựng chuỗi và hardcode tên EXE No Fog.
         const token = r.token || '';
-        const cmd = `xa_nofog_pro.exe --rebind ${key} ${token}`;
+        const cmd = r.command
+          || `xa_nofog_pro.exe --rebind ${key} ${token}`;
+        const isCmdTool = r.tool === 'xagrant';
 
         openModal(`
           <div class="modal-title">Mã đổi máy đã tạo</div>
@@ -249,8 +265,9 @@ export async function mountLicenses(root) {
 
           <div class="alert alert-info">
             <span class="ico">${icon('info', { size: 15 })}</span>
-            <span>Chưa cài tool trên máy mới? Tải file cài rồi chạy lệnh trên trong thư mục cài đặt,
-            hoặc dùng <strong>Đổi máy</strong> trong menu tool.</span>
+            <span>${isCmdTool
+              ? 'Chưa cài tool trên máy mới? Chạy lệnh trên trong cửa sổ <strong>CMD</strong> (Win+R → cmd).'
+              : 'Chưa cài tool trên máy mới? Tải file cài rồi chạy lệnh trên trong thư mục cài đặt, hoặc dùng <strong>Đổi máy</strong> trong menu tool.'}</span>
           </div>
 
           <div class="btn-row end">

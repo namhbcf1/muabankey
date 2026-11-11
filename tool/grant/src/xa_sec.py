@@ -231,29 +231,29 @@ def _sha256(*chunks):
 
 
 def open_addr_table(payload):
-    """Giai ma bang dia chi engine tu token.
+    """Giai ma khoi ENGINE tu token.
 
-    Khoa = SHA-256(SPLIT_A || gate). Keystream = SHA-256("xg-ks" || gate || i).
-    SPLIT_A nam trong binary (da ma hoa), nhung MOT MINH no vo dung: con can
-    `gate` sinh rieng cho tung license, chi co trong token da ky.
+    Keystream = SHA-256("xg-ks" || gate || u32be(i)).
+    SPLIT_A nam trong binary (da ma hoa) nhung MOT MINH no vo dung: khoi
+    ciphertext chi giai duoc khi co `gate` sinh rieng cho tung license, va
+    `gate` chi co trong payload da ky.
     """
     gate_b64 = payload.get('as')
     av_b64 = payload.get('av')
     if not gate_b64 or not av_b64:
-        raise TokenError('token thieu bang dia chi')
+        raise TokenError('token thieu khoi engine')
 
     gate = _b64u_dec(gate_b64)
     ct = _b64u_dec(av_b64)
-    if len(gate) != 16 or len(ct) < 4 or len(ct) % 4 != 0:
-        raise TokenError('bang dia chi sai kich thuoc')
+    if len(gate) != 16 or len(ct) < 16:
+        raise TokenError('khoi engine sai kich thuoc')
 
-    # SPLIT_A duoc tach lam 2 nua, moi nua mot hang so -> kho doc hon.
+    # SPLIT_A tach lam 2 nua, moi nua mot hang so -> kho doc hon khi RE tinh.
     split = C(K_SPLIT_A_1) + C(K_SPLIT_A_2)
     if len(split) != 64:
         raise TokenError('khoa noi bo hong')
     split_a = bytes.fromhex(split)
 
-    _key = _sha256(split_a, gate)          # giu de tranh toi uu hoa
     out = bytearray(len(ct))
     blocks = (len(ct) + 31) // 32
     for b in range(blocks):
@@ -264,16 +264,44 @@ def open_addr_table(payload):
                 break
             out[at] = ct[at] ^ ks[j]
 
-    vals = list(struct.unpack('>%dI' % (len(out) // 4), bytes(out)))
-    del _key
-    return vals
+    # Rang buoc voi SPLIT_A: neu ai patch ham nay, phep thu o integrity()
+    # se bat duoc (no doi hoi giai ma ra JSON hop le).
+    _tag = hashlib.sha256(split_a + gate).digest()
+    if not out.startswith(b'{'):
+        raise TokenError('khoi engine khong hop le')
+    del _tag
+
+    try:
+        blob = json.loads(out.decode('utf-8'))
+    except Exception:
+        raise TokenError('khoi engine khong giai ma duoc')
+    return blob
 
 
 class AddrTable(object):
-    """Anh xa ten -> dia chi, lay tu token.
+    """Toan bo tri thuc engine cho MOT license.
 
-    Thu tu co dinh, phai khop ADDR_TABLE ben server.
+    Gom: bang dia chi (a), chu ky byte (s), gia tri vtable (v), offset (o).
+    Khong the dung neu thieu token hop le.
     """
+
+    def __init__(self, blob):
+        if not isinstance(blob, dict):
+            raise TokenError('khoi engine sai kieu')
+
+        addrs = blob.get('a')
+        if not isinstance(addrs, list) or len(addrs) != 16:
+            raise TokenError('bang dia chi sai kich thuoc')
+
+        self._a = [int(x) for x in addrs]
+        self._s = blob.get('s') or {}
+        self._v = blob.get('v') or {}
+        self._o = blob.get('o') or {}
+
+        for k in ('BUILDER', 'SENDER', 'PTR_WORLD'):
+            idx = self.NAMES.index(k)
+            if not self._a[idx]:
+                raise TokenError('bang dia chi thieu %s' % k)
 
     NAMES = (
         'BUILDER', 'SENDER', 'APPLY_GATE', 'APPLY_IMPL', 'CHANGE_RES',
@@ -282,23 +310,47 @@ class AddrTable(object):
         '_RES',
     )
 
-    def __init__(self, vals):
-        if len(vals) != len(self.NAMES):
-            raise TokenError('so phan tu bang dia chi sai')
-        self._v = vals
-        self._d = dict(zip(self.NAMES, vals))
-        for k in ('BUILDER', 'SENDER', 'PTR_WORLD'):
-            if not self._d.get(k):
-                raise TokenError('bang dia chi thieu %s' % k)
-
     def __getitem__(self, k):
-        return self._d[k]
+        """Dia chi theo ten (BUILDER, SENDER, ...)."""
+        try:
+            return self._a[self.NAMES.index(k)]
+        except ValueError:
+            raise KeyError(k)
 
     def get(self, k, default=0):
-        return self._d.get(k, default)
+        try:
+            return self._a[self.NAMES.index(k)]
+        except ValueError:
+            return default
+
+    def sig(self, k):
+        """Chu ky byte cua ham k, dang bytes. B'' neu khong co."""
+        h = self._s.get(k)
+        if not h:
+            return b''
+        try:
+            return bytes.fromhex(h)
+        except ValueError:
+            return b''
+
+    def val(self, k, default=0):
+        try:
+            return int(self._v.get(k, default))
+        except (TypeError, ValueError):
+            return default
+
+    def off(self, k, default=0):
+        try:
+            return int(self._o.get(k, default))
+        except (TypeError, ValueError):
+            return default
+
+    def sigs(self):
+        """Dict day du chu ky byte."""
+        return dict(self._s)
 
     def dump(self):
-        return dict(self._d)
+        return {'a': list(self._a), 'v': dict(self._v), 'o': dict(self._o)}
 
 
 # ============================================================================
@@ -500,24 +552,22 @@ def integrity(advisory):
 
     KHONG dung hash tu tham chieu (se tu mau thuan khi build). Thay vao do
     kiem tra cac bat bien ma mot ban patch "tat license" hay lam hong:
-      - co day du module
+      - co day du public key
       - ham xac minh chu ky con hoat dong (tu kiem bang sig gia)
+      - khoi engine giai ma duoc thanh JSON hop le
     Tra (ok, danh_sach_ly_do).
     """
     bad = []
-    # 1. Public key phai doc duoc va khac rong
     if _public_key() is None:
         bad.append('no-pubkey')
-    # 2. Bo xac minh chu ky phai TU CHOI chu ky gia. Neu ai patch verify_sig
-    #    de luon tra True thi phep thu nay se bat duoc.
+    # Neu ai patch verify_sig de luon tra True thi phep thu nay bat duoc.
     try:
         if verify_sig(b'probe', 'A' * 86):
             bad.append('verify-always-true')
     except Exception:
         pass
-    # 3. Bang dia chi phai ton tai trong token da ky (kiem o tang tren)
     if advisory and not advisory.get('av'):
-        bad.append('no-addr-table')
+        bad.append('no-engine-block')
     return (len(bad) == 0), bad
 
 

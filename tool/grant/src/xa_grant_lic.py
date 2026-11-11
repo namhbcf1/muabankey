@@ -36,6 +36,11 @@ HTTP_TIMEOUT = 12
 CLOCK_SKEW = 7200      # giay lech toi da truoc khi coi la chinh lui dong ho
 
 
+def norm_key(k):
+    """Chuan hoa ma license: bo khoang trang, chu hoa."""
+    return ''.join(str(k or '').split()).upper()
+
+
 # ===========================================================================
 # 1. HWID
 # ===========================================================================
@@ -390,12 +395,19 @@ def cmd_line_of(pid):
         return None
 
 
-def parent_is_shell():
-    """True neu tien trinh cha la cmd.exe / powershell (chay tu CMD).
+_SHELLS = frozenset((
+    'cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe',
+    'windowsterminal.exe', 'wt.exe', 'openconsole.exe',
+    'bash.exe', 'wsl.exe', 'mintty.exe', 'wezterm-gui.exe',
+    'alacritty.exe', 'conemu64.exe', 'conemu.exe',
+))
 
-    Muc dich: chan truong hop khach tao shortcut tro thang vao EXE, hoac
-    double-click EXE. Tool nay chi chay tu cua so CMD/terminal.
-    """
+# Chi nhung tien trinh nay moi bi coi la "mo bang cach bam dup / shortcut".
+_BLOCKED = frozenset(('explorer.exe', 'userinit.exe', 'winlogon.exe'))
+
+
+def _parent_name():
+    """Ten file EXE cua tien trinh cha. '' neu khong doc duoc."""
     try:
         import ctypes
         import ctypes.wintypes as wt
@@ -417,49 +429,54 @@ def parent_is_shell():
         k32.Process32First.argtypes = [wt.HANDLE, ctypes.c_void_p]
         k32.Process32Next.argtypes = [wt.HANDLE, ctypes.c_void_p]
 
-        mypid = os.getpid()
-        ppid = 0
-        snap = k32.CreateToolhelp32Snapshot(0x2, 0)
-        if not snap or snap == ctypes.c_void_p(-1).value:
-            return True                      # khong xac dinh -> khong chan
-        try:
-            e = PE32()
-            e.dwSize = ctypes.sizeof(PE32)
-            if k32.Process32First(snap, ctypes.byref(e)):
+        def scan(want_pid=None, want_ppid_of=None):
+            """Tra (ppid_cua_want_pid, ten_cua_want_pid)."""
+            snap = k32.CreateToolhelp32Snapshot(0x2, 0)
+            if not snap or snap == ctypes.c_void_p(-1).value:
+                return 0, ''
+            ppid, name = 0, ''
+            try:
+                e = PE32()
+                e.dwSize = ctypes.sizeof(PE32)
+                if not k32.Process32First(snap, ctypes.byref(e)):
+                    return 0, ''
                 while True:
-                    if e.th32ProcessID == mypid:
+                    if want_ppid_of is not None and e.th32ProcessID == want_ppid_of:
                         ppid = e.th32ParentProcessID
                         break
+                    if want_pid is not None and e.th32ProcessID == want_pid:
+                        name = e.szExeFile.decode('latin1', 'replace')
+                        break
                     if not k32.Process32Next(snap, ctypes.byref(e)):
                         break
-        finally:
-            k32.CloseHandle(snap)
+            finally:
+                k32.CloseHandle(snap)
+            return ppid, name
 
+        ppid, _ = scan(want_ppid_of=os.getpid())
         if not ppid:
-            return True
-
-        name = ''
-        snap = k32.CreateToolhelp32Snapshot(0x2, 0)
-        if not snap or snap == ctypes.c_void_p(-1).value:
-            return True
-        try:
-            e = PE32()
-            e.dwSize = ctypes.sizeof(PE32)
-            if k32.Process32First(snap, ctypes.byref(e)):
-                while True:
-                    if e.th32ProcessID == ppid:
-                        name = e.szExeFile.decode('latin1', 'replace').lower()
-                        break
-                    if not k32.Process32Next(snap, ctypes.byref(e)):
-                        break
-        finally:
-            k32.CloseHandle(snap)
-
-        return name in ('cmd.exe', 'powershell.exe', 'pwsh.exe',
-                        'conhost.exe', 'windowsterminal.exe', 'wt.exe',
-                        'openconsole.exe')
+            return ''
+        _, nm = scan(want_pid=ppid)
+        return nm.lower()
     except Exception:
-        return True
+        return ''
+
+
+def launched_from_explorer():
+    """True chi khi tien trinh duoc mo bang double-click hoac shortcut.
+
+    Muc dich: buoc khach chay tool bang cua so CMD (dung yeu cau thiet ke).
+    KHONG chan cmd / powershell / Windows Terminal / WSL, va KHONG chan khi
+    khong xac dinh duoc tien trinh cha (tranh chan oan).
+
+    Mot shortcut tro vao EXE se co tien trinh cha la explorer.exe -> bi chan.
+    Mot shortcut mo cmd.exe /k xa.cmd thi cha la cmd.exe -> duoc phep, va do
+    la cach cai dat dung.
+    """
+    name = _parent_name()
+    if not name:
+        return False                     # khong ro -> cho qua
+    return name in _BLOCKED
 
 
 # ===========================================================================
@@ -498,6 +515,7 @@ class License(object):
             self.addr = xa_sec.AddrTable(xa_sec.open_addr_table(payload))
         except xa_sec.TokenError:
             return False
+        self._token = tok
         self.payload = payload
         self.key = payload.get('k') or ''
         self.hwid = payload.get('h') or ''
@@ -571,13 +589,16 @@ class License(object):
         return s is not None and s <= 0
 
     # -- goi server ------------------------------------------------------
-    def activate(self, key):
-        self.key = key
+    def activate(self, key, token=None):
+        self.key = norm_key(key)
         self.hwid = compute_hwid()
-        r = _post('/api/xg/activate', {
-            'key': key, 'hwid': self.hwid, 'app': APP,
+        body = {
+            'key': self.key, 'hwid': self.hwid, 'app': APP,
             'ver': VERSION, 'fp': fingerprint(),
-        })
+        }
+        if token:
+            body['token'] = token
+        r = _post('/api/xg/activate', body)
         self.apply(r)
         return r
 

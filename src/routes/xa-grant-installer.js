@@ -19,8 +19,8 @@ import { readLicense, normKey } from './license.js';
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\xagrant';
 const EXE_NAME = 'xa_grant.exe';
 /** Cập nhật sau mỗi lần build bằng tool/grant/build-grant.ps1. */
-const EXE_SHA256 = '0000000000000000000000000000000000000000000000000000000000000000';
-const EXE_SIZE = 0;
+const EXE_SHA256 = 'E1702D673E7B9767FD2E29B7316180FCC2F5AE26584B108BF3510368BEB6B783';
+const EXE_SIZE = 7557632;
 
 const PID = 'xagrant';
 
@@ -141,7 +141,7 @@ set "EXEURL=%BASE%/download/${EXE_NAME}"
 set "EXESHA=${exeSha}"
 set "EXESIZE=${exeSize}"
 set "TARGET=${installDir}"
-set "EXE=%TARGET%\\\\${EXE_NAME}"
+set "EXE=%TARGET%\\${EXE_NAME}"
 
 cls
 echo.
@@ -307,7 +307,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  $lnk=Join-Path $p 'XArena Grant.lnk';" ^
   "  $s=$w.CreateShortcut($lnk);" ^
   "  $s.TargetPath='%COMSPEC%';" ^
-  "  $s.Arguments='/k \\"%TARGET%\\\\xa.cmd\\"';" ^
+  "  $s.Arguments='/k \\"%TARGET%\\xa.cmd\\"';" ^
   "  $s.WorkingDirectory='%TARGET%';" ^
   "  $s.Description='XArena Grant - Ban quyen %KEY%';" ^
   "  $s.IconLocation='%EXE%,0';" ^
@@ -673,7 +673,10 @@ export async function downloadXgExe(env, request) {
   headers.set('ETag', obj.httpEtag);
   headers.set('X-Content-Type-Options', 'nosniff');
 
-  if (obj.range) {
+  // CHỈ trả 206 khi client THỰC SỰ xin Range. Miniflare (chạy local) luôn
+  // điền obj.range kể cả khi không xin, nên phải kiểm tra `range` trước:
+  // nếu không, mọi GET thường sẽ trả 206 kèm Content-Range sai ngữ nghĩa.
+  if (range && obj.range) {
     const offset = obj.range.offset || 0;
     const length = obj.range.length !== undefined ? obj.range.length : obj.size - offset;
     headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${obj.size}`);

@@ -60,13 +60,31 @@ function randomHex(n) {
  */
 export async function apiTrialCommand(env, request) {
   const ip = ipOf(request);
-  const body = await readBody(request) || {};
+
+  // Body PHẢI parse được. Trước đây body rỗng/JSON hỏng -> {} -> vẫn cấp key.
+  const raw = await readBody(request);
+  if (!raw) {
+    return json({
+      ok: false, code: 'bad_request',
+      msg: 'Dữ liệu gửi lên không hợp lệ',
+    }, 400);
+  }
+  const body = raw;
 
   const cfg = await trialCfg(env);
   if (!cfg.enabled) {
     return json({ ok: false, code: 'trial_disabled', msg: 'Dùng thử đang tạm đóng' }, 403);
   }
 
+  // kind PHẢI hợp lệ. Trước đây kind sai -> âm thầm dùng 3 ngày.
+  if (body.kind !== undefined && body.kind !== null) {
+    if (!normKind(body.kind)) {
+      return json({
+        ok: false, code: 'trial_kind_invalid',
+        msg: 'Gói dùng thử không hợp lệ (chỉ có: 1h, 3d)',
+      }, 400);
+    }
+  }
   const kind = normKind(body.kind) || KIND_3D;
   const kc = kindCfg(cfg, kind);
   if (!kc || !kc.enabled) {
@@ -139,16 +157,23 @@ export async function apiTrialCommand(env, request) {
 
   let deviceHash = null;
   if (!userId) {
-    // Web không đọc được phần cứng. Ưu tiên:
-    //   1. device_id do browser sinh (localStorage) — mỗi máy riêng
+    // Web không đọc được phần cứng. Neo danh tính theo thứ tự:
+    //   1. device_id (localStorage) — NHƯNG phải gắn với IP
     //   2. weak HWID nếu có guid/bios
-    //   3. IP — CHỈ khi không có gì khác (quán net sẽ chia nhau)
+    //   3. IP
+    //
+    // QUAN TRỌNG: trước đây device_id đứng một mình -> khách xoá localStorage
+    // hoặc gửi chuỗi ngẫu nhiên là "máy mới" -> 10 lượt mới. Test thật:
+    // 15+ mã trong 1 phiên. Nay ghép device_id với IP nên đổi device_id
+    // vẫn bị chặn bởi trần IP/ngày.
     let anchor;
     if (body.device_id) {
       const did = String(body.device_id).trim().slice(0, 64);
       if (/^[a-zA-Z0-9_-]{8,64}$/.test(did)) {
         deviceHash = (await sha256hex('d1|' + did)).slice(0, 32);
-        anchor = deviceHash;
+        // Ghép IP để không thể xoay device_id vô hạn trên cùng kết nối
+        anchor = (await sha256hex('di|' + did + '|' + ip)).slice(0, 32);
+        deviceHash = anchor;
       }
     }
     if (!anchor && ids && ids.weak) {
@@ -156,7 +181,6 @@ export async function apiTrialCommand(env, request) {
     }
     if (!anchor) {
       // Không có device_id và không có HWID -> dùng IP
-      // NHƯNG: quán net sẽ chia nhau 1 quota. Đánh dấu để hạ giới hạn an toàn hơn.
       anchor = 'ip:' + ip;
     }
     userId = 'dev:' + anchor;

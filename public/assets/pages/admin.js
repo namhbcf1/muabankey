@@ -778,7 +778,24 @@ async function renderLicenses(host) {
       </div>`;
 
     const qInput = host.querySelector('#lc-q');
-    qInput.onkeydown = (e) => { if (e.key === 'Enter') { q = qInput.value.trim(); load(); } };
+    // Lọc ngay khi gõ (debounce 400ms) — giống tab Dùng thử.
+  // Trước đây chỉ chạy khi nhấn Enter -> gõ chữ bảng không đổi, tưởng hỏng.
+  let qTimer = null;
+  qInput.oninput = () => {
+    clearTimeout(qTimer);
+    qTimer = setTimeout(() => {
+      q = qInput.value.trim();
+      load();
+    }, 400);
+  };
+  // Enter lọc ngay không cần chờ
+  qInput.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      clearTimeout(qTimer);
+      q = qInput.value.trim();
+      load();
+    }
+  };
 
     host.querySelector('#lc-create').onclick = async () => {
       const body = {

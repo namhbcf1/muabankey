@@ -107,7 +107,11 @@ export async function checkWhitelist(env, { userId, hwid, weak, deviceId, ip } =
 }
 
 export function normKind(v) {
-  const s = String(v || '').trim().toLowerCase();
+  // Chỉ chấp nhận string. Array/Object bị String() ép thành "1h"/"[object Object]"
+  // -> kind=["1h"] lọt qua validate. Chặn ở đây.
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
   if (s === '1h' || s === '1g' || s === 'hour') return KIND_1H;
   if (s === '3d' || s === '3n' || s === 'day' || s === '3day') return KIND_3D;
   return null;

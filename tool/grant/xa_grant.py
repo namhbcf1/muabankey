@@ -1,48 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""xa_grant.py -- Goi ham engine 0x42BDE0 (ChangeResource builder) tu ngoai.
+"""xa_grant.exe -- XArena Grant: bom tai nguyen trong AoE XArena.
 
-TAT CA DIA CHI DUOI DAY DA DUOC VERIFY BANG BYTE THAT trong
-C:\\Program Files\\XArena\\Game\\AoE-HD\\EMPIRESX.EXE (ImageBase 0x400000,
-DllCharacteristics = 0 => ASLR TAT, DEP TAT).
-
-SIGNATURE THAT CUA 0x42BDE0  (re-derived, xem bao cao)
-------------------------------------------------------
-    __thiscall void Builder_42BDE0(int32 player, uint8 resSlot, float amount)
-    ret 0xC  -> 12 byte tham so stack = 3 tham so
-    ecx = sender object = [[ctx+0x3C]+0x58]
-
-    Bang chung arg1 la DWORD: no duoc doc lai bang `8b 4c 24 10` (mov ecx,
-    DWORD) va ghi `89 48 04` (mov DWORD [eax+4], ecx) -- tuc ghi ca 4 byte.
-    Bang chung arg2 la BYTE: `8a 54 24 14` (mov dl, BYTE) roi `88 50 02`.
-    Bang chung arg1 la CHI SO NGUOI CHOI chu khong phai con tro: ham anh em
-    0x42BD90 co cung prologue va dung `cmp WORD [esp+4], 0xFFFF` lam sentinel
-    "khong co doi tuong". Du lieu that truyen vao la `[ctx+0x4A]` (int16),
-    xem 0x45F4E6 va 0x45F533.
-
-    Record 8 byte duoc tao (alloc 0x528450(8,1) -> vung da ZEROED):
-        +0  0x05                (loai record, c6 00 05 @0x42BDFE)
-        +1  (uint8)player       (88 48 01, cl <- [esp+0x10] @0x42BDEC)
-        +2  (uint8)resSlot      (88 50 02, dl <- [esp+0x14] @0x42BDF0)
-        +3  0x00                (khong ghi -> alloc da zero)
-        +4  float32 amount      (89 48 04, ecx <- [esp+0x10] @0x42BDFA)
-
-    Giai thich diem "nhin nhu doc [esp+0x10] hai lan":
-    0x42BDF4 co `83 c4 08` = add esp,8. Truoc do esp thap hon 8.
-    => 0x42BDEC/0x42BDF0 doc [esp+0x10]/[esp+0x14] = slot1/slot2 (arg1/arg2)
-    0x42BDFA doc [esp+0x10] SAU khi add = slot3 (arg3). Hai tham so KHAC NHAU.
+CHI CHAY BANG CMD. Khong co giao dien, khong co tai khoan, khong co app.
 
 DUNG
 ----
-    python xa_grant.py --check
-    python xa_grant.py --grant F 5000 --dry-run
-    python xa_grant.py --grant F 5000 --i-understand-this-may-desync
-    python xa_grant.py --selftest        # khong can game, khong can admin
+    xa_grant.exe --key XAGR-XXXX-XXXX-XXXX     kich hoat license
+    xa_grant.exe                               vao che do tuong tac
+    xa_grant.exe --status                      xem trang thai license
+    xa_grant.exe --rebind KEY TOKEN            doi may
+    xa_grant.exe --deactivate                  xoa license tren may nay
+    xa_grant.exe --selftest                    kiem tra noi bo (khong can game)
+
+TRONG CHE DO TUONG TAC:
+
+    who                    xem ban la ai trong tran
+    check                  xem tai nguyen hien tai
+    t 500  v 1000          +thit / +vang
+    g 1000 d 200           +go / +da
+    full 5000              +5000 ca bon loai
+    quit                   thoat
 
 CAN: Administrator + game dang chay + da vao tran that.
+
+GHI CHU KY THUAT
+----------------
+Tool nay KHONG chua dia chi engine nao. Bang dia chi duoc server ky va ma
+hoa theo tung license; chi giai ma duoc khi chu ky ECDSA P-256 hop le. Xem
+xa_sec.py va xa_grant_lic.py.
 """
 import ctypes
 import ctypes.wintypes as wt
+import os
 import re
 import struct
 import sys
@@ -54,27 +44,47 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (_HERE, os.path.join(_HERE, 'src')):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import xa_sec                                     # noqa: E402
+import xa_grant_lic as XL                          # noqa: E402
+
 # ----------------------------------------------------------------------------
-# Dia chi da verify bang byte
+# DIA CHI ENGINE -- KHONG con hang so nao trong file nay
+#
+# Truoc day cac dia chi (0x42BDE0, 0x54EE90, ...) nam thang o day. Nay chung
+# chi ton tai duoi dang CIPHERTEXT trong token da ky ECDSA cua server, va chi
+# duoc giai ma khi license hop le:
+#
+#     tok = /api/xg/activate  ->  payload.av (ciphertext) + payload.as (gate)
+#     AddrTable(open_addr_table(payload))  ->  BUILDER, SENDER, ...
+#
+# Hau qua: go binary ra doc cung khong biet tool goi vao dau. Patch "bo kiem
+# tra license" -> khong co bang dia chi -> tool khong lam gi duoc.
 # ----------------------------------------------------------------------------
 PREFERRED_BASE = 0x400000
 DLLCHAR_OFF = 0x46                      # DllCharacteristics trong PE optional header
 
-BUILDER        = 0x42BDE0               # 56 6A 08 8B F1 6A 01 E8 ... C2 0C 00
-SENDER         = 0x42BA60               # 53 8B 5C 24 08 56 57 ...
-APPLY_GATE     = 0x41F160               # 8B 44 24 08 ... C2 08 00
-APPLY_IMPL     = 0x41F180               # 56 8B F1 8B 86 E4 10 00 00 ...
-CHANGE_RES     = 0x45F510               # doi so virtual, slot +0xB0
-VTABLE         = 0x54EC90               # vtable cua SENDER (do live 2026-11-10)
-WRAPPER_VTABLE = 0x54EE68               # vtable cua player wrapper (slot 1,2)
-                                        # slot 0 dung 0x54EF98, cung co +0x78
+BUILDER        = 0
+SENDER         = 0
+APPLY_GATE     = 0
+APPLY_IMPL     = 0
+CHANGE_RES     = 0
+VTABLE         = 0
+WRAPPER_VTABLE = 0
+PTR_WORLD      = 0
+ALLOC_ADDR     = 0
+VT_SLOT_VAL    = 0
+WRAP_CR_VAL    = 0
 
-PTR_WORLD      = 0x585E88               # con tro world (giong xa_measure.py)
-OFF_CTX        = 0x3C                   # ctx = [[0x585E88] + 0x3C]
-OFF_PLAYERIDX  = 0x4A                   # int16 player index (0x45F4E6, 0x45F533)
+OFF_CTX        = 0x3C                   # ctx = [[PTR_WORLD] + 0x3C]
+OFF_PLAYERIDX  = 0x4A                   # int16 player index
 OFF_SENDER     = 0x58                   # sender = [ctx + 0x58]
-OFF_APPLY      = 0x14                   # apply = [sender + 0x14]   (0x42BA78)
-OFF_ONLINE     = 0x10E4                 # co online: [apply + 0x10E4] (0x41F183)
+OFF_APPLY      = 0x14                   # apply = [sender + 0x14]
+OFF_ONLINE     = 0x10E4                 # co online: [apply + 0x10E4]
 
 # chuoi tai nguyen cua xa_measure.py (de validate da vao tran)
 OFF_MANAGER, OFF_SLOTS, OFF_WRAPARRAY, OFF_PLAYER = 0x3F4, 0x3C, 0x40, 0x50
@@ -138,20 +148,26 @@ RES_OFF = {'F': 0x00, 'W': 0x04, 'S': 0x08, 'G': 0x0C}
 RES_SLOT = {'F': 0, 'W': 1, 'S': 2, 'G': 3}
 RES_NAME = {'F': 'food', 'W': 'wood', 'S': 'stone', 'G': 'gold'}
 
-# Byte "nhan dang build" -- phai khop truoc khi lam bat cu thu gi
-SIG = {
-    # SUA 2026-11-10: ban truoc ghi 'BEF' '16A01E8' -> thieu so 8.
-    # Byte that tai 0x42BDE3 la `8B F1` (mov esi,ecx), khong phai BE F1.
-    # Disasm: 0x42BDE0 push esi / 0x42BDE1 push 8 / 0x42BDE3 mov esi,ecx
-    #         0x42BDE5 push 1 / 0x42BDE7 call 0x528450 (alloc)
-    BUILDER:    bytes.fromhex('566A088BF16A01E8'),
-    SENDER:     bytes.fromhex('538B5C240856578B7C24148BF1'),
-    APPLY_GATE: bytes.fromhex('8B4424088B542404'),
-    APPLY_IMPL: bytes.fromhex('568BF18B86E410000085C0'),
-    CHANGE_RES: bytes.fromhex('8B54240483FAFF742C'),
-}
-VT_SLOT_OFF = 0x08                       # [sender_vtable+0x08] = 0x4EA700
-VT_SLOT_VAL = 0x4EA700                   # dispatch record (do live)
+# Byte "nhan dang build" -- KHONG co signature co dinh trong file.
+#
+# Truoc day file nay chua 5 chuoi byte cua engine (56 6A 08 8B F1 6A 01 E8 ...)
+# -> chi can mo EXE bang hex editor la biet chinh xac tool goi vao dau.
+#
+# Nay: chuoi byte duoc LAY TU TOKEN da ky (muc 's' trong khoi engine) va doi
+# chieu voi bo nho tien trinh. Khong co license -> khong co ca chu ky lan
+# dia chi.
+VT_SLOT_OFF = 0x08
+WRAP_CR_OFF = 0x78
+
+
+class NoLicense(Exception):
+    """Chua co license hop le. Khong duoc cham vao game."""
+
+
+# Bang tri thuc engine, chi ton tai sau khi license duoc xac minh.
+# (load_engine dinh nghia o duoi, sau require_license.)
+ADDR = None
+
 
 PROCESS_NAMES = ('EMPIRESX.EXE', 'EMPIRESX_HD.EXE', 'EMPIRESX_HDR.EXE')
 PROCESS_ALL_ACCESS = 0x1F0FFF
@@ -709,7 +725,11 @@ def resolve_chain(h, so=None):
 
 
 def verify_build(h, base):
-    """Kiem tra byte tung dia chi + DllCharacteristics. Khong ghi gi."""
+    """Kiem tra byte tung dia chi + DllCharacteristics. Khong ghi gi.
+
+    Chu ky byte lay tu bang engine da giai ma tu token, KHONG phai hang so
+    trong file. Khong co license -> khong co gi de doi chieu -> tu choi.
+    """
     dllch = rd(h, base + DLLCHAR_OFF, 2)
     if dllch is None:
         raise GrantError('khong doc duoc PE header')
@@ -719,26 +739,201 @@ def verify_build(h, base):
     log('build', 'DllCharacteristics=0x%04X (ASLR %s, DEP %s)'
         % (dllch, 'OFF' if not dllch & 0x40 else 'ON',
            'OFF' if not dllch & 0x100 else 'ON'))
-    for va, sig in sorted(SIG.items()):
+
+    if ADDR is None:
+        raise GrantError('chua nap bang engine. TU CHOI.')
+    sigs = ADDR.sigs()
+    if not sigs:
+        raise GrantError('token khong co chu ky build. TU CHOI.')
+
+    for name, hx in sorted(sigs.items()):
+        try:
+            sig = bytes.fromhex(hx)
+        except ValueError:
+            raise GrantError('chu ky %s hong' % name)
+        va = ADDR.get(name)
+        if not va:
+            raise GrantError('thieu dia chi cho %s' % name)
         got = rd(h, va, len(sig))
         if got != sig:
             raise GrantError('byte tai 0x%08X khong khop.\n  mong doi: %s\n  thuc te : %s'
                              % (va, sig.hex().upper(),
                                 got.hex().upper() if got else 'UNREADABLE'))
         log('build', 'byte khop %-32s' % sig.hex().upper(), va)
+
     vt = u32(h, VTABLE + VT_SLOT_OFF)
     if vt != VT_SLOT_VAL:
         raise GrantError('vtable 0x%08X +0x%X = 0x%08X != 0x%08X'
                          % (VTABLE, VT_SLOT_OFF, vt or 0, VT_SLOT_VAL))
     log('build', 'sender vtable[+0x%X] = 0x%08X khop' % (VT_SLOT_OFF, vt),
         VTABLE + VT_SLOT_OFF)
-    # vtable cua player wrapper (0x54EE68 / 0x54EF98) phai co ChangeResource
-    wrp_vt = u32(h, WRAPPER_VTABLE + 0x78)
-    if wrp_vt != 0x4F9040:
-        raise GrantError('wrapper vtable 0x%08X +0x78 = 0x%08X != 0x4F9040'
-                         % (WRAPPER_VTABLE, wrp_vt or 0))
-    log('build', 'wrapper vtable[+0x78] = 0x%08X (ChangeResource) khop' % wrp_vt,
-        WRAPPER_VTABLE + 0x78)
+    # vtable cua player wrapper phai co ChangeResource o +0x78
+    wrp_vt = u32(h, WRAPPER_VTABLE + WRAP_CR_OFF)
+    if wrp_vt != WRAP_CR_VAL:
+        raise GrantError('wrapper vtable 0x%08X +0x%X = 0x%08X != 0x%08X'
+                         % (WRAPPER_VTABLE, WRAP_CR_OFF, wrp_vt or 0,
+                            WRAP_CR_VAL))
+    log('build', 'wrapper vtable[+0x%X] = 0x%08X (ChangeResource) khop' % (WRAP_CR_OFF, wrp_vt),
+        WRAPPER_VTABLE + WRAP_CR_OFF)
+
+
+# ----------------------------------------------------------------------------
+# LICENSE -- chot chan trung tam
+# ----------------------------------------------------------------------------
+_LIC_CACHE = []
+
+
+def _lic_banner(msg, code=None):
+    print()
+    print('=' * 70)
+    print(msg)
+    if code:
+        print()
+        print('  Ma loi: %s' % code)
+    print('=' * 70)
+    print()
+    print('  Mua license tai: %s' % XL.api_base())
+    print('  Ho tro: %s/#/support' % XL.api_base())
+
+
+def require_license(verbose=True, skip_env_check=False):
+    """Nap + xac minh license. Nem NoLicense neu khong dung.
+
+    Day la diem duy nhat duoc phep tao ra bang dia chi engine.
+    """
+    if _LIC_CACHE:
+        return _LIC_CACHE[0]
+
+    if not skip_env_check:
+        ok_env, reasons, _ = xa_sec.scan_environment()
+        if not ok_env:
+            raise NoLicense('moi truong phan tich: %s' % ','.join(reasons))
+
+    lic = XL.License()
+    if not lic.load_local():
+        if verbose:
+            _lic_banner('CHUA KICH HOAT. Chay: xa_grant.exe --key <MA>', 'no_license')
+        raise NoLicense('chua co license tren may nay')
+
+    # Kiem tra toan ven state + hang so
+    ok_i, bad_i = xa_sec.integrity(lic.payload)
+    if not ok_i:
+        if verbose:
+            _lic_banner('PHAT HIEN CAN THIEP VAO TOOL: %s' % ','.join(bad_i),
+                        'tampered')
+        try:
+            lic.report_violation(','.join(bad_i))
+        except Exception:
+            pass
+        raise NoLicense('integrity: %s' % ','.join(bad_i))
+
+    # Xac minh lai phan cung
+    try:
+        hw = XL.compute_hwid()
+    except Exception as e:
+        if verbose:
+            _lic_banner('Khong doc duoc HWID: %s' % e, 'hwid_error')
+        raise NoLicense('hwid')
+
+    if hw != lic.hwid:
+        if verbose:
+            _lic_banner(
+                'LICENSE KHONG KHOP MAY NAY.\n'
+                '  License dang gan cho mot may khac.\n'
+                '  Vao muc "License cua toi" tren web, bam "Doi may".',
+                'hwid_mismatch')
+        raise NoLicense('hwid mismatch')
+    lic.hwid = hw
+
+    # Han dung (theo dong ho da neo vao server)
+    if lic.expired():
+        if verbose:
+            _lic_banner('LICENSE DA HET HAN.', 'expired')
+        raise NoLicense('expired')
+
+    if lic.clock.tampered:
+        if verbose:
+            _lic_banner('DONG HO MAY BI CHINH LUI.', 'clock_tampered')
+        raise NoLicense('clock_tampered')
+
+    # Phai hoi server de lay token moi (co bang engine). Bat buoc online.
+    mono_now = time.monotonic()
+    if mono_now >= lic.next_check:
+        try:
+            lic.check()
+        except XL.DenyError as e:
+            if e.code in ('not_found', 'revoked', 'expired', 'hwid_mismatch',
+                          'trial_only', 'session_invalid', 'wrong_product'):
+                if verbose:
+                    _lic_banner('LICENSE BI TU CHOI: %s' % (e.msg or e.code),
+                                e.code)
+                raise NoLicense(e.code)
+            # Loi tam thoi (rate limit, 5xx) -> cho phep dung grace
+            if not _grace_ok(lic):
+                if verbose:
+                    _lic_banner('Khong kiem tra duoc license: %s' % (e.msg or e.code),
+                                e.code)
+                raise NoLicense('deny:' + e.code)
+        except XL.NetError as e:
+            if not _grace_ok(lic):
+                if verbose:
+                    _lic_banner(
+                        'KHONG KET NOI DUOC SERVER.\n'
+                        '  Tool can mang de xac minh ban quyen.\n'
+                        '  Chi tiet: %s' % e, 'network')
+                raise NoLicense('network')
+
+    # Cat lai bang moi nhat + nap engine
+    if lic.addr is None:
+        raise NoLicense('khong co bang engine')
+
+    _LIC_CACHE.append(lic)
+    return lic
+
+
+def _grace_ok(lic):
+    """Con trong cua so offline grace khong?"""
+    g = int(lic.grace_h or 0)
+    if g <= 0:
+        return False
+    last = getattr(lic, '_last_ok_mono', None)
+    if last is None:
+        # Dung moc trong state (giay) -> doi sang monotonic
+        try:
+            age = time.time() - float(lic.clock.mono and 0 or 0)
+        except Exception:
+            age = 0
+        return True
+    return (time.monotonic() - last) < g * 3600
+
+
+def load_engine():
+    """Nap bang dia chi tu license. Nem NoLicense neu chua kich hoat."""
+    global ADDR, BUILDER, SENDER, APPLY_GATE, APPLY_IMPL, CHANGE_RES
+    global VTABLE, WRAPPER_VTABLE, PTR_WORLD, ALLOC_ADDR
+    global VT_SLOT_VAL, WRAP_CR_VAL, OFF_CTX, OFF_PLAYERIDX
+    global OFF_SENDER, OFF_APPLY, OFF_ONLINE
+
+    lic = require_license(verbose=False)
+    ADDR = lic.addr
+
+    BUILDER = ADDR['BUILDER']
+    SENDER = ADDR['SENDER']
+    APPLY_GATE = ADDR['APPLY_GATE']
+    APPLY_IMPL = ADDR['APPLY_IMPL']
+    CHANGE_RES = ADDR['CHANGE_RES']
+    VTABLE = ADDR['VTABLE']
+    WRAPPER_VTABLE = ADDR['WRAP_VTABLE']
+    PTR_WORLD = ADDR['PTR_WORLD']
+    ALLOC_ADDR = ADDR['ALLOC']
+    VT_SLOT_VAL = ADDR.val('vt_slot')
+    WRAP_CR_VAL = ADDR.val('wrap_cr')
+    OFF_CTX = ADDR.off('ctx', 0x3C)
+    OFF_PLAYERIDX = ADDR.off('playeridx', 0x4A)
+    OFF_SENDER = ADDR.off('sender', 0x58)
+    OFF_APPLY = ADDR.off('apply', 0x14)
+    OFF_ONLINE = ADDR.off('online', 0x10E4)
+    return lic
 
 
 # ----------------------------------------------------------------------------
@@ -1646,17 +1841,28 @@ def interactive():
     print('  XA GRANT -- CHE DO TUONG TAC')
     print('=' * 72)
     print()
+
+    # License TRUOC, admin SAU (giong thu tu cua ban No Fog).
+    try:
+        load_engine()
+    except NoLicense as e:
+        return XL.EXIT_NO_LICENSE
+    except Exception as e:
+        print('  LOI LICENSE: %s: %s' % (type(e).__name__, e))
+        return XL.EXIT_NO_LICENSE
+
+    print('  License: OK')
     _interactive_help()
 
     if not is_admin():
         print('  !! CAN QUYEN ADMINISTRATOR.')
-        print('  Chuot phai file xa_grant.exe > Run as administrator.')
+        print('  Chuot phai Command Prompt > Run as administrator.')
         print()
         try:
             input('  Enter de thoat...')
         except Exception:
             pass
-        return 5
+        return XL.EXIT_NOT_ADMIN
 
     h = None
     pid = None
@@ -1766,14 +1972,143 @@ def interactive():
         # lap lai vong ngoai
 
 
+def cmd_activate(key, token=None):
+    """--key KEY [--token T] : kich hoat license tren may nay."""
+    k = XL.norm_key(key)
+    if not k:
+        print('Thieu ma license.')
+        return XL.EXIT_USAGE
+
+    print('=' * 70)
+    print('  XA GRANT -- KICH HOAT')
+    print('=' * 70)
+    print()
+    print('  Ma license : %s' % k)
+
+    lic = XL.License()
+    try:
+        hw = XL.compute_hwid()
+    except Exception as e:
+        print('  [X] Khong doc duoc HWID: %s' % e)
+        return XL.EXIT_USAGE
+    print('  May (HWID) : %s' % hw[:16] + '...')
+    print()
+    print('  Dang lien he server...')
+
+    try:
+        lic.activate(k, token)
+    except XL.DenyError as e:
+        print()
+        print('  [X] KICH HOAT THAT BAI: %s' % (e.msg or e.code))
+        if e.code == 'rebind_token_required':
+            print()
+            print('      Ma nay da dung tren may khac.')
+            print('      Vao web, muc "License cua toi", bam "Doi may",')
+            print('      roi chay lai file cai dat.')
+        elif e.code == 'hwid_mismatch':
+            print()
+            print('      Ma da gan voi may khac. Bam "Doi may" tren web.')
+        return XL.EXIT_NO_LICENSE
+    except XL.NetError as e:
+        print()
+        print('  [X] Khong ket noi duoc server: %s' % e)
+        print('      Kiem tra mang roi chay lai.')
+        return XL.EXIT_NETWORK
+
+    print()
+    print('  [OK] KICH HOAT THANH CONG')
+    print()
+    print('  Goi      : %s' % lic.payload.get('p'))
+    if lic.expires_at:
+        import datetime
+        try:
+            exp = datetime.datetime.fromtimestamp(lic.expires_at)
+            print('  Het han  : %s' % exp.strftime('%d/%m/%Y %H:%M'))
+        except (ValueError, OSError, OverflowError):
+            print('  Het han  : %s' % lic.expires_at)
+    else:
+        print('  Het han  : Vinh vien')
+    print()
+    print('  Chay tool:  xa_grant.exe')
+    print()
+    return XL.EXIT_OK
+
+
+def cmd_status():
+    """--status : xem trang thai license, khong cham vao game."""
+    print('=' * 70)
+    print('  XA GRANT -- TRANG THAI')
+    print('=' * 70)
+    print()
+    try:
+        lic = require_license(verbose=True)
+    except NoLicense as e:
+        print('  Trang thai: CHUA DUNG DUOC (%s)' % e)
+        return XL.EXIT_NO_LICENSE
+    except Exception as e:
+        print('  [X] %s: %s' % (type(e).__name__, e))
+        return XL.EXIT_NO_LICENSE
+
+    print('  Ma license : %s' % lic.key)
+    print('  May (HWID) : %s' % lic.hwid)
+    print('  Goi        : %s' % lic.payload.get('p'))
+    if lic.expires_at:
+        import datetime
+        try:
+            exp = datetime.datetime.fromtimestamp(lic.expires_at)
+            print('  Het han    : %s' % exp.strftime('%d/%m/%Y %H:%M'))
+            left = lic.secs_left()
+            if left is not None:
+                print('  Con lai    : %.1f gio' % (left / 3600.0))
+        except (ValueError, OSError, OverflowError):
+            print('  Het han    : %s' % lic.expires_at)
+    else:
+        print('  Het han    : Vinh vien')
+    print('  Che do     : CMD')
+    print('  Bang engine: %d dia chi (da xac minh chu ky)'
+          % len(lic.addr.dump()['a']))
+    print()
+    return XL.EXIT_OK
+
+
+def cmd_rebind(key, token):
+    """--rebind KEY TOKEN : doi sang may nay."""
+    k = XL.norm_key(key)
+    print('=' * 70)
+    print('  XA GRANT -- DOI MAY')
+    print('=' * 70)
+    print()
+    lic = XL.License()
+    try:
+        r = lic.rebind(k, token)
+    except XL.DenyError as e:
+        print('  [X] That bai: %s' % (e.msg or e.code))
+        return XL.EXIT_NO_LICENSE
+    except XL.NetError as e:
+        print('  [X] Loi mang: %s' % e)
+        return XL.EXIT_NETWORK
+    print('  [OK] Da doi may. Con %s luot doi may.' % r.get('rebinds_left'))
+    print()
+    print('  Kich hoat lai:  xa_grant.exe --key %s' % k)
+    print()
+    return XL.EXIT_OK
+
+
+def cmd_deactivate():
+    """--deactivate : xoa license tren may nay."""
+    ok = XL.clear_state()
+    print()
+    print('  %s' % ('Da xoa license tren may nay.' if ok else 'Khong co gi de xoa.'))
+    print('  Key van con hieu luc — chay lai file cai dat de kich hoat lai.')
+    print()
+    return XL.EXIT_OK
+
+
 def main():
     args = sys.argv[1:]
 
     # ------------------------------------------------------------------
     # MAC DINH: CHAY CHE DO TUONG TAC
-    #
-    # Bam dup file EXE (khong tham so) -> vao thang che do tuong tac,
-    # KHONG in help roi thoat. Truoc day no in help roi tat, gay kho hieu.
     # ------------------------------------------------------------------
     if not args:
         return interactive()
@@ -1784,6 +2119,9 @@ def main():
             input('\nEnter de thoat...')
         except Exception:
             pass
+        return 0
+    if '--version' in args or '-v' in args:
+        print('XArena Grant %s' % XL.VERSION)
         return 0
     if '--selftest' in args:
         r = selftest()
@@ -1796,34 +2134,68 @@ def main():
     if '--interactive' in args or '-i' in args:
         return interactive()
 
+    # ---- Cac lenh license (KHONG can game, KHONG can admin) ----
+    if '--key' in args:
+        i = args.index('--key')
+        if i + 1 >= len(args):
+            print('Dung: --key XAGR-XXXX-XXXX-XXXX')
+            return XL.EXIT_USAGE
+        tok = None
+        if '--token' in args:
+            j = args.index('--token')
+            if j + 1 < len(args):
+                tok = args[j + 1]
+        return cmd_activate(args[i + 1], tok)
+
+    if '--status' in args:
+        return cmd_status()
+
+    if '--rebind' in args:
+        i = args.index('--rebind')
+        if i + 2 >= len(args):
+            print('Dung: --rebind KEY TOKEN')
+            return XL.EXIT_USAGE
+        return cmd_rebind(args[i + 1], args[i + 2])
+
+    if '--deactivate' in args:
+        return cmd_deactivate()
+
+    # ---- Lenh cham vao game: BAT BUOC license hop le ----
     gate = GATE_FLAG in args
     dry_run = '--dry-run' in args
     mode = '--check' if '--check' in args else ('--grant' if '--grant' in args else None)
     if mode is None:
-        print('Can --check hoac --grant. Xem --help.')
-        return 2
+        print('Lenh khong hop le. Xem --help.')
+        return XL.EXIT_USAGE
 
-    # ---- CONG AN TOAN CUNG, kiem tra DAU TIEN, truoc ca admin/OpenProcess ----
-    # Nam o day (khong chi trong do_grant) de khong the vo tinh di qua.
     if mode == '--grant' and not gate:
         print('=' * 70)
         print('TU CHOI: thieu %s' % GATE_FLAG)
         print('=' * 70)
-        print('Cong cu nay goi thang 0x%08X trong engine, bo qua logic game' % BUILDER)
-        print('binh thuong. Record duoc dua vao stream action nhu mot lenh that,')
-        print('nhung peer KHONG co buoc tuong ung -> lech checksum -> co the')
-        print('out-of-sync hoac bi kick.')
+        print('Cong cu nay goi thang vao engine, bo qua logic game binh thuong.')
+        print('Record duoc dua vao stream action nhu mot lenh that, nhung peer')
+        print('KHONG co buoc tuong ung -> lech checksum -> co the out-of-sync')
+        print('hoac bi kick.')
         print()
         print('Neu ban chap nhan:')
-        print('  python xa_grant.py --grant %s %s %s'
-              % (mode == '--grant' and 'F' or 'F', '5000', GATE_FLAG))
+        print('  xa_grant.exe --grant F 5000 %s' % GATE_FLAG)
         print('Xem truoc khong rui ro:')
-        print('  python xa_grant.py --grant F 5000 --dry-run')
-        return 3
+        print('  xa_grant.exe --grant F 5000 --dry-run')
+        return XL.EXIT_NO_LICENSE
+
+    # ---- LICENSE TRUOC, ADMIN SAU ----
+    try:
+        load_engine()
+    except NoLicense as e:
+        return XL.EXIT_NO_LICENSE
+    except Exception as e:
+        print('  LOI LICENSE: %s: %s' % (type(e).__name__, e))
+        return XL.EXIT_NO_LICENSE
 
     if not is_admin():
         print('CAN QUYEN ADMINISTRATOR. Chuot phai Command Prompt -> Run as administrator.')
-        return 5
+        return XL.EXIT_NOT_ADMIN
+
     procs = find_game()
     if not procs:
         print('Khong tim thay EMPIRESX.EXE. Mo game va vao tran truoc.')
@@ -1843,38 +2215,69 @@ def main():
         pos = args.index('--grant')
         rest = [a for a in args[pos + 1:] if not a.startswith('--')]
         if len(rest) < 2:
-            print('Dung: --grant SLOT AMOUNT [--for N]   (vd: --grant F 5000)')
-            print('  --for N  grant cho nguoi choi so N (1..8). Bo trong = chinh minh.')
-            return 2
-        # --for N
-        so = None
-        if '--for' in args:
-            k = args.index('--for')
-            if k + 1 >= len(args):
-                print('--for can so 1..8')
-                return 2
-            try:
-                so = int(args[k + 1])
-            except ValueError:
-                print('--for phai la so 1..8, nhan %r' % args[k + 1])
-                return 2
-            if not (1 <= so <= 8):
-                print('--for phai 1..8')
-                return 2
-        return do_grant(h, base, rest[0].upper(), rest[1], dry_run, gate, so)
+            print('Dung: --grant SLOT AMOUNT   (vd: --grant F 5000)')
+            print('  SLOT: F/W/S/G. Chi grant cho chinh minh.')
+            return XL.EXIT_USAGE
+        return do_grant(h, base, rest[0].upper(), rest[1], dry_run, gate, None)
     except GrantError as e:
         print()
         print('=' * 70)
         print('TU CHOI: %s' % e)
         print('=' * 70)
         print('Khong co gi duoc ghi vao hoac goi trong process.')
-        return 3
+        return XL.EXIT_NO_LICENSE
     finally:
         k32.CloseHandle(h)
 
 
 if __name__ == '__main__':
+    # ------------------------------------------------------------------
+    # CONG LICENSE -- chay TRUOC moi thu khac.
+    #
+    # Thu tu bat buoc:
+    #   1. Quet moi truong (debugger/VM/Frida). Vi pham -> bao server + dung.
+    #   2. Kiem tra dang chay tu CMD (khong cho tao shortcut tro thang EXE).
+    #   3. Nap license tu state; neu khong co -> tu choi.
+    #   4. Goi server lay token moi (co bang dia chi engine da ky).
+    #   5. Chi khi do moi cho phep cham vao game.
+    #
+    # Khong co buoc nao bi bo qua du goi bang duong nao (--check, --grant,
+    # che do tuong tac, hay goi ham truc tiep).
+    # ------------------------------------------------------------------
+    _rc = 0
     try:
+        ok_env, reasons, _detail = xa_sec.scan_environment()
+        if not ok_env:
+            _LIC = require_license(verbose=True, skip_env_check=True)
+            if _LIC:
+                _LIC.report_violation(','.join(reasons))
+            print()
+            print('=' * 70)
+            print('TU CHOI: phat hien moi truong phan tich (%s)' % ','.join(reasons))
+            print('=' * 70)
+            print('Tool khong chay khi:')
+            print('  - co debugger dang gan')
+            print('  - dang chay trong may ao')
+            print('  - co Frida')
+            print('  - thoi gian thuc thi bat thuong')
+            print()
+            print('Hay tat het cong cu go loi roi chay lai.')
+            sys.exit(XL.EXIT_TAMPERED)
+
+        if XL.launched_from_explorer() and not ('--rebind' in sys.argv
+                                                or '--deactivate' in sys.argv):
+            print('=' * 70)
+            print('TOOL NAY CHI CHAY BANG CMD')
+            print('=' * 70)
+            print('Ban vua mo file EXE bang cach bam dup hoac qua shortcut.')
+            print('Mo Command Prompt (Win+R -> cmd) roi go:')
+            print('    xa_grant.exe' if len(sys.argv) == 1
+                  else '    xa_grant.exe ' + ' '.join(sys.argv[1:]))
+            print()
+            print('Shortcut "XArena Grant" ngoai Desktop cua bo cai dat da mo')
+            print('san cua so CMD — dung shortcut do.')
+            sys.exit(XL.EXIT_USAGE)
+
         _rc = main()
     except SystemExit:
         raise

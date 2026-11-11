@@ -66,9 +66,12 @@ function signJwk(env) {
 }
 
 /**
- * SPLIT_A — nửa khoá giải mã bảng địa chỉ. Nửa còn lại là `gate` sinh ngẫu
- * nhiên cho TỪNG license, chỉ có trong token đã ký.
- * Giá trị này cũng được nhúng (dạng đã mã hoá) trong xa_sec.py.
+ * SPLIT_A — muối bổ sung khi suy khoá. Không PHẢI là bí mật duy nhất: nửa
+ * còn lại là `gate` sinh ngẫu nhiên cho TỪNG license, chỉ có trong token đã
+ * ký. Dù lộ giá trị này, người không có token vẫn không giải mã được khối
+ * ENGINE, vì `gate` không đoán được.
+ *
+ * Client dùng cùng giá trị để sinh keystream: ks = SHA-256("xg-ks"||gate||i).
  */
 const SPLIT_A_HEX =
   '9c41f7d2a0b53e6c1d88ff0427ab9e53c67d0b21a45e8f93d2c47b0e6a19f8d3';
@@ -86,25 +89,46 @@ const RATE_WINDOW = 3600;
 /** Số vi phạm anti-debug thì tự thu hồi license. */
 const VIOLATION_BUDGET = 8;
 
-/** Bảng địa chỉ engine, thứ tự cố định — xem ADDR_INDEX trong xa_sec.py. */
-const ADDR_TABLE = [
-  0x42bde0, //  0 BUILDER      builder record ChangeResource
-  0x42ba60, //  1 SENDER       sender::dispatch(rec, len)
-  0x41f160, //  2 APPLY_GATE   apply-gate (ret 8)
-  0x41f180, //  3 APPLY_IMPL   apply implementation
-  0x45f510, //  4 CHANGE_RES   change resource (virtual slot +0xB0)
-  0x54ec90, //  5 VTABLE       sender vtable
-  0x54ee68, //  6 WRAP_VTABLE  player wrapper vtable
-  0x585e88, //  7 PTR_WORLD    global world pointer
-  0x528450, //  8 ALLOC        operator new / alloc
-  0x4ea700, //  9 VT_SLOT_VAL  dispatch record value
-  0x4f9040, // 10 WRAP_CR      wrapper vtable [+0x78]
-  0x422cc0, // 11 GAME_PKT     shared packet send
-  0x41f0a0, // 12 LOCAL_APPLY  apply local packet
-  0x42bd90, // 13 BUILDER_SIB  sibling builder (ref)
-  0x428710, // 13b RING_COPY  copy payload into ring
-  0x00000000, // 15 RESERVED
-];
+/**
+ * Bảng địa chỉ engine + chữ ký byte, thứ tự CO DINH — xem xa_sec.py.
+ *
+ * Đây là TOÀN BỘ tri thức reverse-engineering của tool. Không một byte nào
+ * trong đây xuất hiện dạng plaintext trong EXE: chúng được mã hoá bằng khoá
+ * suy ra từ `gate` riêng của từng license, mà `gate` chỉ có trong token đã
+ * ký bằng khoá riêng của server.
+ */
+const ENGINE = {
+  a: [
+    0x42bde0, //  0 BUILDER       builder record ChangeResource
+    0x42ba60, //  1 SENDER        sender::dispatch(rec, len)
+    0x41f160, //  2 APPLY_GATE    apply-gate (ret 8)
+    0x41f180, //  3 APPLY_IMPL    apply implementation
+    0x45f510, //  4 CHANGE_RES    change resource (virtual slot +0xB0)
+    0x54ec90, //  5 VTABLE        sender vtable
+    0x54ee68, //  6 WRAP_VTABLE   player wrapper vtable
+    0x585e88, //  7 PTR_WORLD     global world pointer
+    0x528450, //  8 ALLOC         allocator
+    0x4ea700, //  9 VT_SLOT_VAL   dispatch record value
+    0x4f9040, // 10 WRAP_CR       wrapper vtable [+0x78]
+    0x422cc0, // 11 GAME_PKT      shared packet send
+    0x41f0a0, // 12 LOCAL_APPLY   apply local packet
+    0x42bd90, // 13 BUILDER_SIB   sibling builder
+    0x428710, // 14 RING_COPY     copy payload into ring
+    0x000000, // 15 RESERVED
+  ],
+  // Chữ ký byte để xác nhận đúng phiên bản EMPIRESX.EXE trước khi gọi.
+  s: {
+    BUILDER: '566a088bf16a01e8',
+    SENDER: '538b5c240856578b7c24148bf1',
+    APPLY_GATE: '8b4424088b542404',
+    APPLY_IMPL: '568bf18b86e410000085c0',
+    CHANGE_RES: '8b54240483faff742c',
+  },
+  // Giá trị kỳ vọng tại các ô vtable.
+  v: { vt_slot: 0x4ea700, wrap_cr: 0x4f9040, vt_off: 0x08, wrap_off: 0x78 },
+  // Hằng số cấu trúc.
+  o: { ctx: 0x3c, playeridx: 0x4a, sender: 0x58, apply: 0x14, online: 0x10e4 },
+};
 
 /* ------------------------------------------------------------------ */
 /* Tiện ích                                                           */
@@ -184,38 +208,32 @@ async function signKey(env) {
 }
 
 /**
- * Mã hoá bảng địa chỉ engine cho MỘT license cụ thể.
+ * Mã hoá khối ENGINE cho MỘT license cụ thể.
  *
- *   key      = SHA-256(SPLIT_A || gate)                  32 byte
- *   ks(i)    = SHA-256("xg-ks" || gate || u32be(i))       32 byte mỗi khối
+ *   ks(i)    = SHA-256("xg-ks" || gate || u32be(i))   32 byte mỗi khối
  *   cipher   = plaintext XOR ks
  *
- * Đây là stream cipher dựng trên SHA-256 (PRF): an toàn khi khoá bí mật và
- * mỗi license dùng `gate` riêng. Cố ý không dùng AES để client Python không
- * phải phụ thuộc thư viện mã hoá mật mã nào (giảm bề mặt tấn công + build nhẹ).
+ * Đây là stream cipher dựng trên SHA-256 (PRF), an toàn khi `gate` bí mật và
+ * khác nhau cho từng license. Cố ý không dùng AES để client Python không phải
+ * phụ thuộc thư viện mã hoá nào (giảm bề mặt tấn công, build nhẹ).
+ *
+ * `gate` do server sinh ngẫu nhiên và chỉ có trong token đã ký, nên dù có
+ * toàn bộ source client thì cũng không giải mã được khối này.
  */
-async function sealAddrTable(gateHex) {
+async function sealEngine(gateHex) {
   const gate = hexToBytes(gateHex);
-  const keyBytes = await sha256(await concat(hexToBytes(SPLIT_A_HEX), gate));
-
-  const plain = new Uint8Array(ADDR_TABLE.length * 4);
-  ADDR_TABLE.forEach((va, i) => plain.set(u32be(va >>> 0), i * 4));
+  const plain = enc.encode(JSON.stringify(ENGINE));
 
   const ct = new Uint8Array(plain.length);
   const blocks = Math.ceil(plain.length / 32);
   for (let b = 0; b < blocks; b++) {
-    const ks = await sha256(await concat(
-      enc.encode('xg-ks'), gate, u32be(b)
-    ));
+    const ks = await sha256(await concat(enc.encode('xg-ks'), gate, u32be(b)));
     for (let j = 0; j < 32; j++) {
       const at = b * 32 + j;
       if (at >= plain.length) break;
       ct[at] = plain[at] ^ ks[j];
     }
   }
-  // keyBytes không còn dùng: giữ tham chiếu để tránh bị tối ưu mất, nhưng
-  // bản thân kết quả trả về chỉ gồm ciphertext + gate (không có key).
-  void keyBytes;
   return { av: b64u(ct), as: b64u(gate) };
 }
 
@@ -346,7 +364,7 @@ async function issueSession(env, lic, key, hwid, ip, fp, ua) {
       (ua || '').slice(0, 180), (fp || '').slice(0, 120), now, now),
   ]);
 
-  const sealed = await sealAddrTable(lic.gate);
+  const sealed = await sealEngine(lic.gate);
   const payload = {
     k: key,
     h: hwid,
