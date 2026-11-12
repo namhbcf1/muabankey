@@ -32,7 +32,7 @@ JWK_PATH = os.path.join(ROOT, 'secrets', 'xn-sign-jwk.json')
 # Gia tri nhung vao binary. SUA O DAY, khong sua xa_nofog_const.py.
 VALUES = {
     S.K_API_BASE: 'https://xienhl.com',
-    S.K_APP_NAME: 'XArena No Fog',
+    S.K_APP_NAME: 'XARENA MAP SÁNG',
     S.K_UA: 'XArenaNoFog/1.5.0',
     S.K_MUTEX: r'Global\XArenaNoFogPro',
     S.K_REG_KEY: r'Software\Microsoft\Windows\CurrentVersion\XASupport',

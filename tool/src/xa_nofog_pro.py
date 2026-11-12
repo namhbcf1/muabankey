@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""XArena No Fog Pro -- MOT FILE DUY NHAT: license + no-fog + thuong tru.
+"""XARENA MAP SÁNG Pro -- MOT FILE DUY NHAT: license + no-fog + thuong tru.
 
     xa_nofog_pro.exe                # thuong tru: doi game, va 1 lan/game
     xa_nofog_pro.exe --once         # va 1 lan neu game dang mo, roi thoat
@@ -27,7 +27,7 @@
 
 Cai dat:
   --install (--cai-dat) chep chinh EXE vao
-  C:\\Program Files\\XArena\\_re\\chayduoc\\, tao shortcut "XArena No Fog"
+  C:\\Program Files\\XArena\\_re\\chayduoc\\, tao shortcut "XARENA MAP SÁNG"
   tren Desktop, bat RUNASADMIN de Windows tu xin quyen admin moi lan chay,
   va ghi breadcrumb %PROGRAMDATA%\\XArena\\install.json de lan cai lai
   KHONG tu cap lai dung thu cho khach da tra tien.
@@ -258,8 +258,8 @@ INSTALL_LICENSE_COPY = 'license.dat'
 # Dau vet CHI tool nay tao ra trong INSTALL_ROOT. Dung de tu choi xoa
 # thu muc la cua nguoi khac.
 INSTALL_OWNED = ('_re', INSTALL_JSON)
-SHORTCUT_NAME = str(_c('SHORTCUT_NAME', 'XArena No Fog.lnk'))
-TASK_NAME = str(_c('TASK_NAME', 'XArena No Fog'))
+SHORTCUT_NAME = str(_c('SHORTCUT_NAME', 'XARENA MAP SÁNG.lnk'))
+TASK_NAME = str(_c('TASK_NAME', 'XARENA MAP SÁNG'))
 DOWNLOAD_URL = str(_c('DOWNLOAD_URL', 'https://xienhl.com/tai-ve'))
 # AppCompatFlags Layers: gia tri nay lam Windows tu xin quyen admin
 # khi chay truc tiep EXE trong Program Files.
@@ -2035,6 +2035,7 @@ def _load_sites(st=None, verbose=False):
       1. Chu ky ECDSA tren token  -- sai thi dung han
       2. `payload.a` phai la 'xa-nofog'
       3. Giai ma khoi bang cong bang `gate` trong payload
+      4. Token phai cap cho DUNG MAY NAY va con han  (bind_token_to_machine)
     """
     global SITES
 
@@ -2043,6 +2044,15 @@ def _load_sites(st=None, verbose=False):
     tok = (st or {}).get('xn_token') or ''
 
     r = NF.verify_token_local(tok, app='xa-nofog')
+    if not r.get('ok'):
+        SITES = None
+        return False, r.get('msg') or ('loi token: %s' % r.get('code'))
+
+    # Rang buoc may + han dung.
+    # Truoc day chi kiem chu ky, nen copy lic.bin sang may khac van chay:
+    # token ky cho may A nhung khong ai so payload['h'] voi hwid may B.
+    # Gio so o day — lop chan re nhat cho kich ban "chep file license".
+    r = NF.bind_token_to_machine(r, hwid=st.get('hwid'))
     if not r.get('ok'):
         SITES = None
         return False, r.get('msg') or ('loi token: %s' % r.get('code'))
@@ -2574,7 +2584,7 @@ lnk.TargetPath = "{target}"
 lnk.Arguments = "{arguments}"
 lnk.WorkingDirectory = "{workdir}"
 lnk.IconLocation = "{icon}"
-lnk.Description = "XArena No Fog - Bo va suong mu AoE"
+lnk.Description = "XARENA MAP SÁNG - Bo va suong mu AoE"
 lnk.WindowStyle = {window}
 lnk.Save
 '''
@@ -2746,7 +2756,7 @@ def _has_runasadmin(exe_path):
 _TASK_XML = '''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>XArena No Fog - Bo va suong mu AoE</Description>
+    <Description>XARENA MAP SÁNG - Bo va suong mu AoE</Description>
     <URI>\\{task}</URI>
   </RegistrationInfo>
   <Triggers/>
@@ -3340,7 +3350,7 @@ def run_uninstall(opts=None):
         print('  [X] KHONG GO CAI DAT', file=sys.stderr)
         print('      "%s" thuoc game Arena.vn (thay %s).'
               % (INSTALL_ROOT, why), file=sys.stderr)
-        print('      Day khong phai thu muc cua XArena No Fog -- khong dung vao.',
+        print('      Day khong phai thu muc cua XARENA MAP SÁNG -- khong dung vao.',
               file=sys.stderr)
         return 1
 
@@ -3448,7 +3458,7 @@ def run_uninstall(opts=None):
             foreign = _foreign_files_in_root()[:8]
             print('')
             print('   [X] KHONG xoa %s' % INSTALL_ROOT)
-            print('       Thu muc nay khong phai cua XArena No Fog.')
+            print('       Thu muc nay khong phai cua XARENA MAP SÁNG.')
             if foreign:
                 print('       No chua: %s%s'
                       % (', '.join(foreign),
@@ -3731,7 +3741,7 @@ def _secure_dialog():
 
     result = {'key': None}
     root = tk.Tk()
-    root.title('XArena No Fog')
+    root.title('XARENA MAP SÁNG')
     root.attributes('-topmost', True)
     root.resizable(False, False)
     try:
@@ -4134,7 +4144,7 @@ def _ask_yes_no(prompt, default=False, on_no_tty=None):
         return False if on_no_tty is None else bool(on_no_tty)
 
 
-_HELP_FALLBACK = """XArena No Fog Pro -- huong dan nhanh
+_HELP_FALLBACK = """XARENA MAP SÁNG Pro -- huong dan nhanh
 
     xa_nofog_pro.exe                 thuong tru: doi game, va 1 lan/game
     xa_nofog_pro.exe --once          va 1 lan neu game dang mo, roi thoat
@@ -4444,11 +4454,11 @@ def run():
         return EXIT_ALREADY_RUNNING
 
     if opts['restore']:
-        print('XArena No Fog -- tra byte goc (%d cong)' % len(sites))
+        print('XARENA MAP SÁNG -- tra byte goc (%d cong)' % len(sites))
     elif opts['dump']:
-        print('XArena No Fog -- dump trang thai')
+        print('XARENA MAP SÁNG -- dump trang thai')
     elif watch_mode:
-        print('XArena No Fog -- watch 0.5s (%d cong)' % len(sites))
+        print('XARENA MAP SÁNG -- watch 0.5s (%d cong)' % len(sites))
     elif resident_mode:
         _st0 = load_state()
         _fmt = '%H:%M:%S %d/%m/%Y'

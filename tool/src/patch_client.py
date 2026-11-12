@@ -74,7 +74,7 @@ E('api-base',
 API_BASE = str(_c('API_BASE', NF.C(NF.K_API_BASE))).rstrip('/')""")
 
 E('app-name',
-  """APP_NAME = str(_c('APP_NAME', 'XArena No Fog'))""",
+  """APP_NAME = str(_c('APP_NAME', 'XARENA MAP SÁNG'))""",
   """APP_NAME = str(_c('APP_NAME', NF.C(NF.K_APP_NAME)))""")
 
 E('process-names',

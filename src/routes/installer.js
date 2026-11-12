@@ -44,12 +44,12 @@ const INSTALL_DIR = 'C:\\Program Files\\XArenaNoFog\\_re\\chayduoc';
  * cho va rat de lech -> khach tai dung file nhung so sanh hash sai.
  */
 export const EXE_NAME = 'xa_nofog_pro.exe';
-export const EXE_SHA256 = 'D42E1B23ECF9E2CEB8D56BBCDB02CB2E05168C8C757E502E4C9CB0819953EBC2';
-export const EXE_SIZE = 9104896;
+export const EXE_SHA256 = '9981FAEC343DA9EB6CACAF73A4DBEF726B40E409E1EDD50A2E7214738E79C097';
+export const EXE_SIZE = 9105408;
 /** Phien ban phat hanh dang phuc vu. Doi o day la trang /tai-ve tu cap nhat. */
-export const EXE_VERSION = '1.4.2.0';
+export const EXE_VERSION = '1.5.0.0';
 /** Ten hien thi cua san pham. */
-export const APP_NAME = 'XArena No Fog';
+export const APP_NAME = 'XARENA MAP SÁNG';
 
 function siteBase(request) {
   const u = new URL(request.url);
@@ -125,7 +125,7 @@ async function requireUsableLicense(env, key) {
   // chiếm mất lượt bind HWID của key XAGR.
   if (isOtherProduct(lic)) {
     throw new ApiError(403,
-      'Mã này là của sản phẩm khác (không phải XArena No Fog)', 'WRONG_PRODUCT');
+      'Mã này là của sản phẩm khác (không phải XARENA MAP SÁNG)', 'WRONG_PRODUCT');
   }
 
   // Lớp phòng thủ cuối: key nhúng vào .cmd/.ps1 chạy quyền ADMIN
@@ -198,7 +198,7 @@ function buildCmd({ key, base, exeSha, exeSize, installDir, token }) {
   return `@echo off
 setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
-title XArena No Fog - Cai dat tu dong
+title XARENA MAP SÁNG - Cai dat tu dong
 color 0B
 
 set "KEY=${key}"
@@ -213,7 +213,7 @@ set "EXE=%TARGET%\\${EXE_NAME}"
 cls
 echo.
 echo  ============================================================
-echo    XArena No Fog - Bo cai dat tu dong
+echo    XARENA MAP SÁNG - Bo cai dat tu dong
 echo    Ma license: %KEY%
 echo  ============================================================
 echo.
@@ -409,17 +409,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$w=New-Object -ComObject WScript.Shell;" ^
   "$paths=@([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'));" ^
   "foreach($p in $paths){" ^
-  "  $lnk=Join-Path $p 'XArena No Fog.lnk';" ^
+  "  $lnk=Join-Path $p 'XARENA MAP SÁNG.lnk';" ^
   "  $s=$w.CreateShortcut($lnk);" ^
   "  $s.TargetPath='%EXE%';" ^
   "  $s.WorkingDirectory='%TARGET%';" ^
-  "  $s.Description='XArena No Fog - Ban quyen %KEY%';" ^
+  "  $s.Description='XARENA MAP SÁNG - Ban quyen %KEY%';" ^
   "  $s.IconLocation='%EXE%,0';" ^
   "  $s.Save();" ^
   "}" 2>nul
 
 set "LNOK="
-powershell -NoProfile -Command "if(Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) 'XArena No Fog.lnk')){exit 0}else{exit 1}"
+powershell -NoProfile -Command "if(Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) 'XARENA MAP SÁNG.lnk')){exit 0}else{exit 1}"
 if not errorlevel 1 (
   echo  [OK] Da tao shortcut ngoai Desktop.
 ) else (
@@ -431,9 +431,9 @@ rem ---- 7. Script go cai dat ----
 > "%TARGET%\\go-cai-dat.cmd" echo @echo off
 >> "%TARGET%\\go-cai-dat.cmd" echo chcp 65001 ^>nul 2^>^&1
 >> "%TARGET%\\go-cai-dat.cmd" echo fltmc ^>nul 2^>^&1 ^|^| (powershell -NoProfile -Command "Start-Process -FilePath '%%~f0' -Verb RunAs" ^& exit /b)
->> "%TARGET%\\go-cai-dat.cmd" echo echo Dang go cai dat XArena No Fog...
->> "%TARGET%\\go-cai-dat.cmd" echo del /f /q "%%USERPROFILE%%\\Desktop\\XArena No Fog.lnk" 2^>nul
->> "%TARGET%\\go-cai-dat.cmd" echo del /f /q "%%APPDATA%%\\Microsoft\\Windows\\Start Menu\\Programs\\XArena No Fog.lnk" 2^>nul
+>> "%TARGET%\\go-cai-dat.cmd" echo echo Dang go cai dat XARENA MAP SÁNG...
+>> "%TARGET%\\go-cai-dat.cmd" echo del /f /q "%%USERPROFILE%%\\Desktop\\XARENA MAP SÁNG.lnk" 2^>nul
+>> "%TARGET%\\go-cai-dat.cmd" echo del /f /q "%%APPDATA%%\\Microsoft\\Windows\\Start Menu\\Programs\\XARENA MAP SÁNG.lnk" 2^>nul
 >> "%TARGET%\\go-cai-dat.cmd" echo del /f /q "%%LOCALAPPDATA%%\\XArenaNoFog\\lic.bin" 2^>nul
 >> "%TARGET%\\go-cai-dat.cmd" echo reg delete "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" /v "%EXE%" /f ^>nul 2^>^&1
 >> "%TARGET%\\go-cai-dat.cmd" echo reg delete "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" /v "%EXE%" /f ^>nul 2^>^&1
@@ -445,7 +445,7 @@ echo  ============================================================
 echo    HOAN TAT
 echo  ============================================================
 echo.
-echo   - Shortcut "XArena No Fog" da co ngoai Desktop
+echo   - Shortcut "XARENA MAP SÁNG" da co ngoai Desktop
 echo   - EXE da duoc ep chay voi quyen Administrator
 echo   - Cai dat tai: %TARGET%
 echo   - Go cai dat:  %TARGET%\\go-cai-dat.cmd
@@ -518,7 +518,7 @@ function buildPs1({ key, base, installDir, selfUrl, token }) {
   // Khi chay qua "irm ... | iex", PowerShell doc theo TUNG DONG, nen comment
   // khoi nhieu dong lam vo parser ("The terminator '#>' is missing").
   // Dung comment tung dong '#' thay the.
-  return `# XArena No Fog - Bo cai dat tu dong (PowerShell)
+  return `# XARENA MAP SÁNG - Bo cai dat tu dong (PowerShell)
 #
 # Cach dung 1 lenh (khuyen dung):
 #
@@ -599,7 +599,7 @@ function Halt([int]$code, [string]$msg) {
 
 Write-Host ''
 Write-Host '  ============================================================' -ForegroundColor Cyan
-Write-Host '    XArena No Fog - Bo cai dat tu dong' -ForegroundColor White
+Write-Host '    XARENA MAP SÁNG - Bo cai dat tu dong' -ForegroundColor White
 Write-Host "    Ma license: $Key" -ForegroundColor DarkGray
 Write-Host '  ============================================================' -ForegroundColor Cyan
 Write-Host ''
@@ -725,11 +725,11 @@ Step 'Tao shortcut...'
 $wsh = New-Object -ComObject WScript.Shell
 foreach ($p in @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'))) {
   try {
-    $lnk = Join-Path $p 'XArena No Fog.lnk'
+    $lnk = Join-Path $p 'XARENA MAP SÁNG.lnk'
     $s = $wsh.CreateShortcut($lnk)
     $s.TargetPath = $Exe
     $s.WorkingDirectory = $Target
-    $s.Description = "XArena No Fog - Ban quyen $Key"
+    $s.Description = "XARENA MAP SÁNG - Ban quyen $Key"
     $s.IconLocation = "$Exe,0"
     $s.Save()
   } catch { Warn "Khong tao duoc shortcut tai $p" }
@@ -740,12 +740,12 @@ Good 'Da tao shortcut ngoai Desktop va Start Menu.'
 $uninst = Join-Path $Target 'go-cai-dat.ps1'
 $ub = @'
 $ErrorActionPreference = 'SilentlyContinue'
-Write-Host 'Dang go cai dat XArena No Fog...'
+Write-Host 'Dang go cai dat XARENA MAP SÁNG...'
 
 $desk  = [Environment]::GetFolderPath('Desktop')
 $progs = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs'
-Remove-Item -Force -LiteralPath (Join-Path $desk  'XArena No Fog.lnk')
-Remove-Item -Force -LiteralPath (Join-Path $progs 'XArena No Fog.lnk')
+Remove-Item -Force -LiteralPath (Join-Path $desk  'XARENA MAP SÁNG.lnk')
+Remove-Item -Force -LiteralPath (Join-Path $progs 'XARENA MAP SÁNG.lnk')
 Write-Host '  Da xoa shortcut Desktop va Start Menu.'
 
 $licDir = Join-Path $env:LOCALAPPDATA 'XArenaNoFog'

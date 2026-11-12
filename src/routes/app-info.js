@@ -16,6 +16,7 @@
  */
 import { ok } from '../lib/http.js';
 import { APP_NAME, EXE_NAME, EXE_VERSION, EXE_SHA256, EXE_SIZE } from './installer.js';
+import { EXE_SHA256 as GRANT_SHA, EXE_SIZE as GRANT_SIZE } from './xa-grant-installer.js';
 
 /** Dinh dang byte -> chuoi de doc. Co dinh, khong phu thuoc Intl cua may khach. */
 function humanSize(bytes) {
@@ -44,7 +45,24 @@ export function appVersionData(request) {
   };
 }
 
+/** Du lieu phien ban XA_grant (them tai nguyen). */
+export function grantVersionData(request) {
+  const u = new URL(request.url);
+  const base = `${u.protocol}//${u.host}`;
+  return {
+    name: 'XARENA THÊM TÀI NGUYÊN',
+    filename: 'xa_grant.exe',
+    version: '1.0.2.0',
+    sha256: GRANT_SHA,
+    size: GRANT_SIZE,
+    sizeText: humanSize(GRANT_SIZE),
+    url: '/download/xa_grant.exe',
+    urlAbsolute: `${base}/download/xa_grant.exe`,
+    platform: 'Windows 10 / 11 (64-bit)',
+  };
+}
+
 /** GET /api/app/version — public, khong doc DB. */
 export async function appVersion(env, request) {
-  return ok(appVersionData(request));
+  return ok({ ...appVersionData(request), grant: grantVersionData(request) });
 }

@@ -2,7 +2,7 @@
 import { ok, json, ApiError, readJson } from '../lib/http.js';
 import { int, str, bool, slugify, enum_ok, pageNum } from '../lib/validate.js';
 import { uuid } from '../lib/crypto.js';
-import { requireAdmin } from '../lib/auth.js';
+import { requireAdmin, requireAdminStrict } from '../lib/auth.js';
 
 function shapeProduct(r) {
   let features = [];
@@ -193,7 +193,8 @@ export async function adminListProducts(env, request) {
 }
 
 export async function adminSaveProduct(env, request, productId = null) {
-  const admin = await requireAdmin(env, request);
+  /* Sua san pham = sua GIA ban cho moi khach. Chi admin that. */
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request);
   const now = Date.now();
 
@@ -255,7 +256,8 @@ export async function adminSaveProduct(env, request, productId = null) {
 }
 
 export async function adminDeleteProduct(env, request, productId) {
-  const admin = await requireAdmin(env, request);
+  /* Xoa san pham = go hang khoi cua hang. Chi admin that. */
+  const admin = await requireAdminStrict(env, request);
   await env.DB.prepare('UPDATE products SET active = 0, updated_at = ? WHERE id = ?')
     .bind(Date.now(), productId)
     .run();
@@ -279,7 +281,8 @@ export async function adminListKeys(env, request, productId) {
 }
 
 export async function adminAddKeys(env, request, productId) {
-  const admin = await requireAdmin(env, request);
+  /* Nap key vao kho = tao hang that. Chi admin that. */
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request);
   const raw = str(body.keys, 'keys', { min: 1, max: 200000, trim: false });
   const note = str(body.note, 'note', { required: false, max: 200 }) || '';
@@ -311,7 +314,8 @@ export async function adminAddKeys(env, request, productId) {
 }
 
 export async function adminDeleteKey(env, request, keyId) {
-  const admin = await requireAdmin(env, request);
+  /* Xoa key kho = xoa hang that. Chi admin that. */
+  const admin = await requireAdminStrict(env, request);
   const row = await env.DB.prepare('SELECT product_id, status FROM product_keys WHERE id = ?').bind(keyId).first();
   if (!row) throw new ApiError(404, 'Key không tồn tại', 'NOT_FOUND');
   await env.DB.prepare("UPDATE product_keys SET status='disabled' WHERE id = ?").bind(keyId).run();

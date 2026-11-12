@@ -61,7 +61,7 @@ export function renderDownload() {
     <!-- ===== HERO + NÚT TẢI ===== -->
     <section class="dl-hero" aria-labelledby="dl-title">
       <div class="dl-eyebrow">${icon('download', { size: 15 })}<span>Bộ cài chính thức</span></div>
-      <h1 class="dl-title" id="dl-title">Tải XArena No Fog</h1>
+      <h1 class="dl-title" id="dl-title">Tải XARENA MAP SÁNG</h1>
       <p class="dl-sub">
         Bộ xử lý bỏ sương mù toàn map + minimap. Tải trực tiếp từ máy chủ
         xienhl.com, không qua trung gian, không cần đăng nhập.
@@ -80,6 +80,18 @@ export function renderDownload() {
            data-dl-url rel="noopener">
           ${icon('download', { size: 15 })} Tải bộ cài (EXE)
         </a>
+      <div style="margin-top:26px;padding-top:22px;border-top:1px solid rgba(255,255,255,.08)">
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px">
+          Bộ cài thứ hai — Thêm tài nguyên
+        </div>
+        <p style="font-size:12.5px;color:var(--text-mute);margin:0 0 12px;line-height:1.7">
+          XARENA THÊM TÀI NGUYÊN bơm thịt / vàng / gỗ / đá trong trận.
+          Tải riêng, dùng key riêng.
+        </p>
+        <a class="btn btn-ghost btn-block" href="/download/xa_grant.exe" download="xa_grant.exe">
+          ${icon('download', { size: 15 })} Tải XA_grant (7,2 MB)
+        </a>
+      </div>
         <div class="dl-hint">
           File <code class="mono">${esc(EXE_FILE)}</code> ·
           <span data-dl-size2>${esc(FALLBACK.sizeText)}</span> ·

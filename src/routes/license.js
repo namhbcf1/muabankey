@@ -380,9 +380,15 @@ export async function adminLicenses(env, request) {
 }
 
 export async function adminLicenseAction(env, request, key, action) {
-  const { requireAdmin } = await import('../lib/auth.js');
+  const { requireAdminStrict } = await import('../lib/auth.js');
   const { ok, ApiError: AE } = await import('../lib/http.js');
-  const admin = await requireAdmin(env, request);
+  /*
+   * CHỈ admin thật: thu hồi / mở khoá / reset máy / reset lượt đổi máy /
+   * gia hạn +30 ngày trên license của KHÁCH. `staff` làm được thì một tài
+   * khoản nhân viên tự cấp cho mình license vĩnh viễn hoặc gia hạn vô hạn.
+   * Trước đây route này dùng requireAdmin (staff cũng qua).
+   */
+  const admin = await requireAdminStrict(env, request);
 
   const k = normKey(key);
   const lic = await readLicense(env, k);
@@ -407,10 +413,15 @@ export async function adminLicenseAction(env, request, key, action) {
 
 /** Admin tạo license thủ công. */
 export async function adminIssueLicenses(env, request) {
-  const { requireAdmin } = await import('../lib/auth.js');
+  const { requireAdminStrict } = await import('../lib/auth.js');
   const { ok, readJson } = await import('../lib/http.js');
   const { str, int } = await import('../lib/validate.js');
-  const admin = await requireAdmin(env, request);
+  /*
+   * CHỈ admin thật: route này ĐÚC license mới với số lượng (tới 100),
+   * số ngày (tới 3650, hoặc 0 = vĩnh viễn) và gán luôn cho userId bất kỳ.
+   * Đây là đường tạo hàng từ không khí — staff không được có quyền này.
+   */
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request);
 
   const count = int(body.count ?? 1, 'count', { min: 1, max: 100 });

@@ -1,11 +1,22 @@
 /** Tiện ích HTTP: response JSON, CORS, header bảo mật, lỗi có mã. */
 
+/**
+ * Header bảo mật cho MỌI phản hồi API.
+ *
+ * Trước đây bộ này thiếu HSTS + CSP và còn `X-XSS-Protection` — trong khi
+ * bộ header cho HTML (public/_headers) có đủ. Hai bộ lệch nhau âm thầm.
+ * `X-XSS-Protection` đã bị các trình duyệt hiện đại bỏ; từng có lỗi cho phép
+ * kẻ tấn công lợi dụng chính bộ lọc đó, nên giá trị đúng là `0` (tắt hẳn).
+ */
 export const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-  'X-XSS-Protection': '1; mode=block',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  // API không bao giờ cần render gì -> CSP chặt nhất có thể.
+  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+  'X-XSS-Protection': '0',
 };
 
 export class ApiError extends Error {

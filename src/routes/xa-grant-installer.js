@@ -17,10 +17,10 @@ import { readLicense, normKey } from './license.js';
 
 /** Thư mục cài RIÊNG của XAGrant (khác No Fog). */
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\xagrant';
-const EXE_NAME = 'xa_grant.exe';
+export const EXE_NAME = 'xa_grant.exe';
 /** Cập nhật sau mỗi lần build bằng tool/grant/build-grant.ps1. */
-const EXE_SHA256 = '5856B7A9E259DC1535BB9112F8520A7654EC221B995F4DA6EFCA3FEA5B8F7792';
-const EXE_SIZE = 7581184;
+export const EXE_SHA256 = 'D75B28B485FFB5246B5534D44B8A71C50611EE6C15554D951334F03191AFE6A3';
+export const EXE_SIZE = 7583744;
 
 const PID = 'xagrant';
 
@@ -188,14 +188,36 @@ set "GOT="
 set "FROMCACHE="
 del /f /q "%EXE%.new" >nul 2>&1
 
+rem ===== CACHE: KICH THUOC KHONG DU CHUNG MINH NOI DUNG =====
+rem Truoc day nhanh nay chi so sanh %%~zA voi %EXESIZE% roi dung luon file
+rem dang co. Chi can dat mot file CUNG KICH THUOC vao dung duong dan cai dat
+rem la no duoc chay bang quyen Administrator -> chay ma doc tuy y.
+rem Nay LUON bam SHA-256 cua file cache roi verify, giong installer No Fog.
 if exist "%EXE%" (
   for /f "usebackq delims=" %%H in (\`powershell -NoProfile -Command "if((Get-Item -LiteralPath '%EXE%' -EA SilentlyContinue).Length -eq %EXESIZE%){'OK'}"\`) do set "GOT=%%H"
 )
-if defined GOT (
-  set "FROMCACHE=1"
-  echo       Da co san, bo qua tai.
-)
+if not defined GOT goto :cache_done
 
+echo       Kiem tra toan ven file da co san...
+call :hashfile "%EXE%"
+call :verifyhash
+if errorlevel 1 goto :cache_bad
+set "FROMCACHE=1"
+echo       Da co san, bo qua tai.
+goto :cache_done
+
+:cache_bad
+rem File cu sai chu ky -> xoa han roi tai lai tu dau.
+rem Khong dung "[!]" o day: script bat EnableDelayedExpansion nen dau "!" bi an.
+echo       File co san sai chu ky. Da xoa, tai lai tu dau...
+del /f /q "%EXE%" >nul 2>&1
+rem Khong xoa duoc (file dang bi giu) -> dung han. Neu chay tiep, move ben duoi
+rem se that bai trong im lang va file SAI van con nguyen o duong dan cai dat.
+if exist "%EXE%" goto :fail_abort
+set "GOT="
+set "FROMCACHE="
+
+:cache_done
 if not defined GOT (
   echo       Thu cach 1: curl...
   curl.exe -L --fail --retry 3 --retry-delay 2 -o "%EXE%.new" "%EXEURL%" 2>nul
@@ -225,14 +247,14 @@ if not defined GOT (
   exit /b 7
 )
 
-rem Kiem tra toan ven - BAT BUOC, sai la dung han
-if not defined FROMCACHE (
-  echo  [*] Kiem tra toan ven file...
-  set "ACTUALSHA="
-  for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%EXE%.new" SHA256 2^>nul') do call :sethash "%%H"
-  if defined ACTUALSHA set "ACTUALSHA=!ACTUALSHA: =!"
-  call :verifyhash
-)
+rem Kiem tra toan ven - BAT BUOC, sai la dung han.
+rem verifyhash CHI tra errorlevel; no khong the tu dung script chinh.
+if defined FROMCACHE goto :verify_done
+echo  [*] Kiem tra toan ven file...
+call :hashfile "%EXE%.new"
+call :verifyhash
+if errorlevel 1 goto :fail_abort
+:verify_done
 
 move /y "%EXE%.new" "%EXE%" >nul 2>&1
 if not exist "%EXE%" (
@@ -375,10 +397,22 @@ if defined ACTUALSHA exit /b 0
 set "ACTUALSHA=%~1"
 exit /b 0
 
+:hashfile
+rem Tinh SHA-256 cua file trong %~1 vao ACTUALSHA (rong neu doc loi).
+rem Tach rieng de ca nhanh cache va nhanh tai deu dung chung.
+set "ACTUALSHA="
+for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%~1" SHA256 2^>nul') do call :sethash "%%H"
+if defined ACTUALSHA set "ACTUALSHA=!ACTUALSHA: =!"
+exit /b 0
+
 :verifyhash
+rem CHI bao ket qua qua errorlevel: 0 = khop, 1 = sai/khong doc duoc.
+rem KHONG duoc "exit /b 9" o day: "call" chi thoat khoi subroutine, script
+rem chinh van chay tiep. Noi goi PHAI kiem errorlevel roi goto :fail_abort.
 if not defined ACTUALSHA (
-  echo  [!] Khong doc duoc chu ky file. Bo qua kiem tra.
-  exit /b 0
+  rem Khong dung "[!]" trong echo: EnableDelayedExpansion se an dau "!".
+  echo  [X] Khong doc duoc chu ky file.
+  exit /b 1
 )
 if /i "%ACTUALSHA%"=="%EXESHA%" (
   echo  [OK] Chu ky file khop.
@@ -387,7 +421,13 @@ if /i "%ACTUALSHA%"=="%EXESHA%" (
 echo.
 echo  [X] FILE TAI VE KHONG DUNG CHU KY.
 echo      Co the do mang chap chon hoac bi can thiep.
-echo      Da huy cai dat. Vui long chay lai file nay.
+del /f /q "%EXE%.new" >nul 2>&1
+exit /b 1
+
+:fail_abort
+echo.
+echo  Da huy cai dat: khong xac minh duoc bo xu ly.
+echo  Vui long chay lai file nay khi mang on dinh.
 del /f /q "%EXE%.new" >nul 2>&1
 pause
 exit /b 9
@@ -540,8 +580,6 @@ foreach ($p in @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDAT
     $lnk = Join-Path $p 'XArena Grant.lnk'
     $s = $wsh.CreateShortcut($lnk)
     $s.TargetPath = $env:COMSPEC
-    // Backtick trong template string JS phải escape (\`), nếu không sẽ
-    // đóng sớm template literal -> esbuild báo 'Expected ";"'
     $s.Arguments = "/k \`"$launcher\`""
     $s.WorkingDirectory = $Target
     $s.Description = "XArena Grant - Ban quyen $Key"

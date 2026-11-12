@@ -202,7 +202,7 @@ export async function mountLicenses(root) {
               </ol>
               <p>
                 Chờ khoảng 20 giây. Khi thấy <strong>“HOÀN TẤT”</strong> là xong —
-                shortcut <strong>${isCmdOnly ? 'XArena Grant' : 'XArena No Fog'}</strong>
+                shortcut <strong>${isCmdOnly ? 'XArena Grant' : 'XARENA MAP SÁNG'}</strong>
                 đã có ngoài Desktop.
               </p>
               ${isCmdOnly ? `<p>

@@ -2,7 +2,7 @@
 import { ok, ApiError, readJson } from '../lib/http.js';
 import { int, str, pageNum } from '../lib/validate.js';
 import { uuid, orderCode } from '../lib/crypto.js';
-import { requireUser, requireAdmin } from '../lib/auth.js';
+import { requireUser, requireAdmin, requireAdminStrict } from '../lib/auth.js';
 import { rateLimit, clientIp } from '../lib/ratelimit.js';
 import { syncStock, audit } from './products.js';
 import { deliverLicenseLine } from './license.js';
@@ -649,7 +649,12 @@ export async function adminListOrders(env, request) {
 }
 
 export async function adminDeliverManual(env, request, orderId) {
-  const admin = await requireAdmin(env, request);
+  /*
+   * CHỈ admin thật: route này CẤP HÀNG THẬT cho khách (key/license). `staff`
+   * mà gọi được thì một tài khoản nhân viên tự tạo đơn rồi tự giao hàng
+   * miễn phí, hoặc giao bù cho đơn chưa thanh toán.
+   */
+  const admin = await requireAdminStrict(env, request);
   const o = await env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
   if (!o) throw new ApiError(404, 'Đơn hàng không tồn tại', 'NOT_FOUND');
 
@@ -735,7 +740,12 @@ export async function adminDeliverManual(env, request, orderId) {
 }
 
 export async function adminRefund(env, request, orderId) {
-  const admin = await requireAdmin(env, request);
+  /*
+   * CHỈ admin thật: hoàn tiền = quyết định mất tiền thật (chuyển khoản tay
+   * cho khách) + thu hồi license/key. Ghi vào refund_ledger nên KHÔNG hoàn
+   * tác được. `staff` không được có quyền này.
+   */
+  const admin = await requireAdminStrict(env, request);
   const o = await env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
   if (!o) throw new ApiError(404, 'Đơn hàng không tồn tại', 'NOT_FOUND');
   if (o.status === 'refunded') throw new ApiError(409, 'Đơn đã được hoàn tiền', 'BAD_STATE');

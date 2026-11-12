@@ -19,7 +19,7 @@ import { audit } from './products.js';
 export async function register(env, request) {
   const ip = clientIp(request);
   // 100/giờ/IP: thoáng cho quán net và NAT chung, vẫn chặn spam tự động hàng loạt
-  await rateLimit(env, `reg:${ip}`, 300, 3600);
+  await rateLimit(env, `reg:${ip}`, 300, 3600, { failClosed: true });
 
   const body = await readJson(request);
 
@@ -85,7 +85,7 @@ export async function register(env, request) {
 
 export async function login(env, request) {
   const ip = clientIp(request);
-  await rateLimit(env, `login:${ip}`, 500, 900);
+  await rateLimit(env, `login:${ip}`, 500, 900, { failClosed: true });
 
   const body = await readJson(request);
   const password = str(body.password, 'password', { min: 1, max: 128, trim: false });
@@ -109,12 +109,68 @@ export async function login(env, request) {
   }
   const loginName = identifier.toLowerCase();
 
+  /*
+   * ===== LOCKOUT THEO TÀI KHOẢN (chống dò mật khẩu) =====
+   *
+   * Rate limit ở trên chỉ khoá theo IP: 500 lần/15 phút. Kẻ tấn công đổi IP
+   * là vượt được, và 500 lần/IP vẫn đủ để dò một mật khẩu yếu. Không có bộ
+   * đếm nào theo TÊN TÀI KHOẢN nên spray qua nhiều account gần như tự do.
+   *
+   * Nay: đếm số lần SAI theo từng tài khoản trong 15 phút. Quá ngưỡng thì
+   * chặn, kể cả khi mật khẩu đúng — buộc kẻ tấn công phải chờ.
+   *
+   * Đếm trong KV (không phải D1) để không thêm 1 write DB cho mỗi lần đăng
+   * nhập sai. KV lỗi -> bỏ qua lớp này (fail-open có chủ ý: không khoá oan
+   * khách vì hạ tầng đếm hỏng).
+   */
+  const FAIL_LIMIT = 10;
+  const FAIL_WINDOW = 900;
+  const failKey = `lf:${loginName}`;
+  let failCount = 0;
+  try {
+    const rawFail = await env.CACHE.get(failKey);
+    failCount = rawFail ? Number(rawFail) : 0;
+  } catch { /* KV lỗi -> không chặn */ }
+  if (failCount >= FAIL_LIMIT) {
+    throw new ApiError(
+      429,
+      'Tài khoản tạm khoá do sai mật khẩu quá nhiều lần. Thử lại sau 15 phút.',
+      'TOO_MANY_ATTEMPTS',
+    );
+  }
+  /** Ghi nhận 1 lần sai; reset khi đúng. */
+  const bumpFail = async () => {
+    try {
+      const next = failCount + 1;
+      await env.CACHE.put(failKey, String(next), { expirationTtl: FAIL_WINDOW });
+      /*
+       * Khoá NGAY khi vừa chạm ngưỡng, không đợi lượt sau: nếu chỉ kiểm ở
+       * đầu hàm thì lần sai thứ LIMIT vẫn trả 401 bình thường, và ngưỡng
+       * thực tế thành LIMIT+1. Chặn tại đây làm ngưỡng đúng như đặt.
+       */
+      if (next >= FAIL_LIMIT) {
+        throw new ApiError(
+          429,
+          'Tài khoản tạm khoá do sai mật khẩu quá nhiều lần. Thử lại sau 15 phút.',
+          'TOO_MANY_ATTEMPTS',
+        );
+      }
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      /* KV lỗi -> không chặn oan */
+    }
+  };
+  const clearFail = async () => {
+    try { await env.CACHE.put(failKey, '0', { expirationTtl: 60 }); } catch { /* ignore */ }
+  };
+
   const user = await env.DB.prepare(
     'SELECT * FROM users WHERE lower(username) = ? LIMIT 1'
   ).bind(loginName).first();
 
   // Luôn chạy 1 lượt hash để giảm lộ thông tin thời gian
   if (!user) {
+    await bumpFail();
     await hashPassword(password, 'AAAAAAAAAAAAAAAAAAAAAA==');
     throw new ApiError(401, 'Tài khoản hoặc mật khẩu không đúng', 'INVALID_CREDENTIALS');
   }
@@ -122,7 +178,11 @@ export async function login(env, request) {
     throw new ApiError(403, 'Tài khoản của bạn đã bị khoá. Vui lòng liên hệ hỗ trợ.', 'ACCOUNT_LOCKED');
   }
   const valid = await verifyPassword(password, user.password_hash, user.password_salt);
-  if (!valid) throw new ApiError(401, 'Tài khoản hoặc mật khẩu không đúng', 'INVALID_CREDENTIALS');
+  if (!valid) {
+    await bumpFail();
+    throw new ApiError(401, 'Tài khoản hoặc mật khẩu không đúng', 'INVALID_CREDENTIALS');
+  }
+  await clearFail();
 
   const ttl = Number(env.SESSION_TTL_DAYS || 30);
   const session = await createSession(env, user.id, request, ttl);

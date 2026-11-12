@@ -2471,6 +2471,32 @@ def cmd_deactivate():
     return XL.EXIT_OK
 
 
+HELP_TEXT = r"""
+XA GRANT -- THEM TAI NGUYEN CHO AOE XARENA
+======================================================================
+
+CACH DUNG
+  xa_grant.exe --key XAGR-XXXX-XXXX-XXXX   kich hoat license
+  xa_grant.exe                             vao che do tuong tac
+  xa_grant.exe --status                    xem trang thai license
+  xa_grant.exe --rebind KEY TOKEN          doi may
+  xa_grant.exe --deactivate                xoa license tren may nay
+  xa_grant.exe --selftest                  kiem tra noi bo (khong can game)
+
+TRONG CHE DO TUONG TAC
+  who                    xem ban la ai trong tran
+  check                  xem tai nguyen hien tai
+  t 500    v 1000        +thit / +vang
+  g 1000   d 200         +go / +da
+  full 5000              +5000 ca bon loai
+  quit                   thoat
+
+CAN: Administrator + game dang chay + da vao tran that.
+======================================================================
+"""
+
+
+
 def main():
     args = sys.argv[1:]
 
@@ -2481,7 +2507,7 @@ def main():
         return interactive()
 
     if '--help' in args or '-h' in args:
-        print(__doc__)
+        print(HELP_TEXT)
         try:
             input('\nEnter de thoat...')
         except Exception:

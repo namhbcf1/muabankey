@@ -237,6 +237,45 @@ Phân biệt `requireAdmin` vs `requireAdminStrict` là điểm thiết kế t�
 
 **Session:** token 64 hex random, lưu server dưới dạng **SHA-256 hash** (không lưu plaintext), cookie `HttpOnly; Secure; SameSite=Lax`, TTL 30 ngày.
 
+### 2.4b Phân quyền — điểm yếu đã kiểm chứng
+
+Có **5 guard**, nhưng một cái là no-op và một cặp bị bất đối xứng.
+
+| Guard | Yêu cầu | Ghi chú |
+|---|---|---|
+| `getSessionUser` | session hợp lệ + `status='active'` | trả `null`, không ném |
+| `requireUser` | phải đăng nhập | 401 |
+| `requireAdmin` | `admin` **hoặc** `staff` | 403 |
+| `requireAdminStrict` | `admin` **thật** | 403 |
+| `requireCustomer` | **KHÔNG GÌ CẢ** | ❌ no-op |
+
+**(a) `requireCustomer` là guard giả** (`auth.js:119-126`, `KIỂM CHỨNG`): cả hai nhánh `if` và fall-through đều `return user`. Grep toàn `src/` = **1 dòng duy nhất** (chính định nghĩa), **0 call site**. Hiện vô hại nhưng là bẫy: người viết sau sẽ tưởng nó kiểm tra gì đó.
+
+**(b) `staff` có toàn quyền tài chính** qua `requireAdmin` (`KIỂM CHỨNG` bằng đọc handler):
+
+| Route | Quyền staff có được | Guard |
+|---|---|---|
+| `POST /admin/licenses` | **Đúc license vô hạn** (chọn `days`, `count`, `userId`) | `requireAdmin` ⚠️ |
+| `POST /admin/licenses/:key/:action` | Thu hồi / gia hạn +30d / reset HWID | `requireAdmin` ⚠️ |
+| `POST /admin/orders/:id/deliver` | Giao hàng chưa thanh toán | `requireAdmin` ⚠️ |
+| `POST /admin/orders/:id/refund` | Hoàn tiền + thu hồi hàng | `requireAdmin` ⚠️ |
+| `POST/DELETE /admin/products/:id/keys` | Sửa kho | `requireAdmin` ⚠️ |
+
+**(c) Bất đối xứng ở cặp duyệt/từ chối nạp tiền** (`KIỂM CHỨNG` tại `wallet.js`):
+
+```
+adminApproveTopup  L1012 → requireAdminStrict   ✅ admin thật
+adminRejectTopup   L1112 → requireAdmin         ⚠️ staff cũng được
+```
+
+`staff` huỷ được lệnh nạp đang chờ — kể cả lệnh mà tiền **đã vào tài khoản** nhưng webhook chưa bắn. Cặp sinh đôi mà một bên chặt một bên lỏng là lỗi thiết kế, bất kể có khai thác được hay không.
+
+**(d) Rate limit fail-open** (`ratelimit.js:52-56`): KV **và** D1 cùng lỗi → `return {count:0, degraded:true}` = **cho qua không giới hạn**. Đây là lựa chọn availability-over-security có chủ ý, nhưng nghĩa là KV chập chờn = mất toàn bộ throttle, kể cả login.
+
+**(e) Không có lockout theo tài khoản**: `login:${ip}` = **500 lần / 15 phút**, key theo IP. Không có bảng `login_attempts`, không đếm theo username. Spray password qua nhiều account từ 1 IP gần như không bị chặn; có IP rotation thì hoàn toàn tự do.
+
+**(f) Header API yếu hơn HTML** (`http.js:3-9`): response `/api/*` **không có HSTS, không có CSP**, lại thêm `X-XSS-Protection` (đã bị loại bỏ khỏi browser hiện đại). Hai bộ header đã lệch nhau âm thầm — thấp, nhưng nên đồng bộ.
+
 ### 2.5 Bảo mật đã áp dụng
 
 | Lớp | Cơ chế | Trạng thái |
@@ -347,45 +386,6 @@ WHERE order_id = ? AND state IN ('matched','wrong_amount')
 
 → `SUM(wallet_transactions)` không bao giờ khớp `users.balance`. Mọi query đối soát ví đều báo sai vĩnh viễn. Ví hiện **không tiêu được** (không có route nào trừ), nên đây là lỗi sổ sách chứ chưa phải lỗi tiền.
 
-### 2.4b Phân quyền — điểm yếu đã kiểm chứng
-
-Có **5 guard**, nhưng một cái là no-op và một cặp bị bất đối xứng.
-
-| Guard | Yêu cầu | Ghi chú |
-|---|---|---|
-| `getSessionUser` | session hợp lệ + `status='active'` | trả `null`, không ném |
-| `requireUser` | phải đăng nhập | 401 |
-| `requireAdmin` | `admin` **hoặc** `staff` | 403 |
-| `requireAdminStrict` | `admin` **thật** | 403 |
-| `requireCustomer` | **KHÔNG GÌ CẢ** | ❌ no-op |
-
-**(a) `requireCustomer` là guard giả** (`auth.js:119-126`, `KIỂM CHỨNG`): cả hai nhánh `if` và fall-through đều `return user`. Grep toàn `src/` = **1 dòng duy nhất** (chính định nghĩa), **0 call site**. Hiện vô hại nhưng là bẫy: người viết sau sẽ tưởng nó kiểm tra gì đó.
-
-**(b) `staff` có toàn quyền tài chính** qua `requireAdmin` (`KIỂM CHỨNG` bằng đọc handler):
-
-| Route | Quyền staff có được | Guard |
-|---|---|---|
-| `POST /admin/licenses` | **Đúc license vô hạn** (chọn `days`, `count`, `userId`) | `requireAdmin` ⚠️ |
-| `POST /admin/licenses/:key/:action` | Thu hồi / gia hạn +30d / reset HWID | `requireAdmin` ⚠️ |
-| `POST /admin/orders/:id/deliver` | Giao hàng chưa thanh toán | `requireAdmin` ⚠️ |
-| `POST /admin/orders/:id/refund` | Hoàn tiền + thu hồi hàng | `requireAdmin` ⚠️ |
-| `POST/DELETE /admin/products/:id/keys` | Sửa kho | `requireAdmin` ⚠️ |
-
-**(c) Bất đối xứng ở cặp duyệt/từ chối nạp tiền** (`KIỂM CHỨNG` tại `wallet.js`):
-
-```
-adminApproveTopup  L1012 → requireAdminStrict   ✅ admin thật
-adminRejectTopup   L1112 → requireAdmin         ⚠️ staff cũng được
-```
-
-`staff` huỷ được lệnh nạp đang chờ — kể cả lệnh mà tiền **đã vào tài khoản** nhưng webhook chưa bắn. Cặp sinh đôi mà một bên chặt một bên lỏng là lỗi thiết kế, bất kể có khai thác được hay không.
-
-**(d) Rate limit fail-open** (`ratelimit.js:52-56`): KV **và** D1 cùng lỗi → `return {count:0, degraded:true}` = **cho qua không giới hạn**. Đây là lựa chọn availability-over-security có chủ ý, nhưng nghĩa là KV chập chờn = mất toàn bộ throttle, kể cả login.
-
-**(e) Không có lockout theo tài khoản**: `login:${ip}` = **500 lần / 15 phút**, key theo IP. Không có bảng `login_attempts`, không đếm theo username. Spray password qua nhiều account từ 1 IP gần như không bị chặn; có IP rotation thì hoàn toàn tự do.
-
-**(f) Header API yếu hơn HTML** (`http.js:3-9`): response `/api/*` **không có HSTS, không có CSP**, lại thêm `X-XSS-Protection` (đã bị loại bỏ khỏi browser hiện đại). Hai bộ header đã lệch nhau âm thầm — thấp, nhưng nên đồng bộ.
-
 ### 3.4 Tiền thật đang treo (query production)
 
 | Trạng thái | Số GD | Số tiền |
@@ -459,6 +459,61 @@ xn1.<base64(payload)>.<base64(ECDSA-P256-signature)>
 
 **Fail-closed:** thiếu `XN_SIGN_JWK` → `ApiError NOT_CONFIGURED`, không sinh token rỗng.
 
+### 4.3b ⚠️ Token `xn1.` KHÔNG ràng buộc máy — đã khai thác được
+
+Token có verify chữ ký (thật, không thể giả), nhưng **client chỉ kiểm 3 trường**.
+
+`tool/src/xa_nofog_sec.py:556-599` — `verify_token_local()` chỉ đọc:
+```python
+if app is not None:
+    got = payload.get('a')
+    if got != app: return {'ok': False, 'code': 'wrong_app', ...}
+...
+gate_hex = b64u_dec(payload.get('ss') or '').hex()
+```
+
+Payload mà **server** ký có 9 trường (`license-server.js:24-25, 357-358`):
+`{v, a, k, h, p, e, n, g, ss, sv}` — tức `h`=hwid, `e`=hạn, `n`=nonce, `k`=key **đều có mặt**.
+
+| Trường | Server ký | Client kiểm |
+|---|---|---|
+| `a` (app) | ✅ | ✅ `:570` |
+| `ss`/`sv` (bảng vá) | ✅ | ✅ dùng để giải mã |
+| **`h` (hwid)** | ✅ | ❌ **KHÔNG** |
+| **`e` (expires_at)** | ✅ | ❌ **KHÔNG** |
+| **`n` (nonce)** | ✅ | ❌ **KHÔNG** |
+| **`k` (key)** | ✅ | ❌ **KHÔNG** |
+
+**KIỂM CHỨNG thực nghiệm** (`scripts/qa/prove-token-not-bound.py`): token mint cho `hwid='a'*32` →
+
+```
+=== verify_token_local(app="xa-nofog") — không xét hwid ===
+  ok = True   count = 17   groups = 3
+```
+
+→ Token của máy A giải mã **đủ 17 cổng / 3 nhóm** trên bất kỳ máy nào.
+
+**Nhưng mức độ thực tế thấp hơn vẻ ngoài** (`SUY RA`, quan trọng để không đánh giá sai):
+1. `gate = SHA-256(key || 'xa-nofog-gate-v1')[:16]` — phụ thuộc **key**, nên bảng vá giống nhau cho mọi key cùng sản phẩm. Bản thân bảng không bí mật theo key.
+2. Client vẫn phải qua `/api/check` để lấy token. `check` kiểm HWID **phía server**.
+3. `GRACE_HOURS = 0` (`license-server.js:60`) — **bắt buộc online**, không có offline grace.
+
+Nên đường tấn công thật là: **giả lập/lách `/api/check`**. Token chỉ là "giấy thông hành" mà client không tự kiểm hạn hay máy. Kẻ có tool đã sửa (họ sở hữu file `.py`/`.exe`) bỏ qua được cả bước này.
+
+**Sửa đề xuất:** client nên kiểm `h` (so với HWID tự tính) và `e` (so với giờ hệ thống) trước khi vá. Đây là phòng thủ theo chiều sâu — không chặn được người sửa binary, nhưng chặn được kịch bản "copy `lic.bin` sang máy khác", vốn là kịch bản phổ biến nhất.
+
+### 4.3c Tài liệu quảng cáo sai: grace offline 24h
+
+`license-server.js:59-60` (`QUAN SÁT`):
+```js
+// Bắt buộc online: không có offline grace cho bất kỳ key nào.
+const GRACE_HOURS = 0;
+```
+
+Nhưng tài liệu thiết kế vẫn ghi (`docs/nghien-cuu-gia-license-trial-3-ngay.md:362`):
+> "Đổi máy 1 lần miễn phí + hỗ trợ offline grace 24h — đã có (`max_rebind=1`, `GRACE_HOURS=24`). Rất ít shop nói được điều này."
+
+`README.md` cũng ghi "Grace offline: 24 giờ". **Cả hai đều sai** — code là 0. Nếu đem câu này đi marketing là quảng cáo sai sự thật.
 ### 4.4 Installer tự động
 
 `GET /i/<KEY>.cmd` — chỉ trả khi key tồn tại + chưa thu hồi (`KIỂM CHỨNG`: key giả → 404, không rò script).
@@ -475,6 +530,50 @@ Script làm 8 bước:
 
 **Phát hiện quan trọng từ lịch sử:** spec cũ định xoá sạch `C:\Program Files\XArena` — nhưng đó là **game client Arena.vn thật** (có `Arena.exe`, SoftEther VPN, `Game\`). Đã đổi sang `XArenaNoFog\` riêng. Nếu không phát hiện, mỗi lần cài sẽ **xoá game + mất config VPN của khách**.
 
+### 4.4b ⚠️ Installer XAGrant: 3 lỗi (1 đã sửa)
+
+**Đã sửa trong phiên — `/xg/<KEY>.ps1` TRƯỚC ĐÂY KHÔNG CHẠY ĐƯỢC.**
+
+Template `.ps1` chứa **comment JavaScript `//`** ở giữa (`xa-grant-installer.js:543-544` trước khi sửa):
+
+```powershell
+    $s.TargetPath = $env:COMSPEC
+    // Backtick trong template string JS phải escape (\`), nếu không sẽ
+    // đóng sớm template literal -> esbuild báo 'Expected ";"'
+    $s.Arguments = "/k \`"$launcher\`""
+```
+
+Dòng `//` không phải comment trong PowerShell. Nó làm **vỡ cú pháp toàn bộ file** — đó là cách duy nhất một lệnh `irm | iex` (chính là one-liner shop quảng cáo) chết ngay.
+
+**KIỂM CHỨNG** (`scripts/qa/check-ps1-parse.mjs` render template thật rồi đưa qua parser PowerShell):
+
+| | Trước sửa | Sau sửa |
+|---|---|---|
+| XAGrant `.ps1` | **PARSE_FAIL: 7 lỗi** — dòng 144 "Missing argument in parameter list", 184 "string is missing the terminator", 140/139 "Missing closing '}'", 185 "Try statement is missing its Catch" | **PARSE_OK** (6.642 ký tự, 183 dòng) |
+| NoFog `.ps1` | PARSE_OK | PARSE_OK (9.712 ký tự, 258 dòng) |
+
+Nghĩa là: khách mua XAGrant và dán one-liner **không cài được gì**, chỉ thấy lỗi PowerShell. Riêng NoFog (sản phẩm chính) vẫn tốt.
+
+**2 lỗi CÒN LẠI trong installer XAGrant (`QUAN SÁT`, chưa sửa):**
+
+**(a) Cache chỉ kiểm SIZE, không kiểm hash** — `xa-grant-installer.js:191-197`:
+```bat
+if exist "%EXE%" (
+  for /f "usebackq delims=" %%H in (`powershell ... .Length -eq %EXESIZE% ...`) do set "GOT=%%H"
+)
+if defined GOT ( set "FROMCACHE=1" & echo Da co san, bo qua tai. )
+```
+Chỉ cần file cùng **kích thước** là được chấp nhận, không kiểm SHA. Kẻ tấn công thay file cùng size (có thể đệm byte) → chạy mã độc với quyền Administrator. **Chính installer NoFog đã fix đúng chỗ này** (luôn hash cả nhánh cache) — XAGrant bị bỏ sót.
+
+**(b) `:verifyhash` fail-open** — `xa-grant-installer.js:378-382`:
+```bat
+:verifyhash
+if not defined ACTUALSHA (
+  echo  [!] Khong doc duoc chu ky file. Bo qua kiem tra.
+  exit /b 0
+)
+```
+Không đọc được hash → **bỏ qua kiểm tra, coi như đạt**. Nguyên tắc đúng phải là fail-closed (dừng cài).
 ### 4.5 Hệ thống dùng thử
 
 Hai loại: **1 giờ** và **3 ngày**, mỗi loại 10 lượt/tài khoản.

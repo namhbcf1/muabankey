@@ -6,8 +6,13 @@ import { ApiError } from './http.js';
  * @param {string} key  khoá định danh (ip + route)
  * @param {number} limit  số request tối đa trong window
  * @param {number} windowSec  độ dài window (giây)
+ * @param {object} [opts]
+ * @param {boolean} [opts.failClosed] khi CẢ KV và D1 đều lỗi thì CHẶN (429)
+ *   thay vì cho qua. Dùng cho endpoint nhạy cảm: đăng nhập, đăng ký, webhook.
+ *   Mặc định false (fail-open) để hạ tầng đếm hỏng không chặn oan khách.
  */
-export async function rateLimit(env, key, limit, windowSec) {
+export async function rateLimit(env, key, limit, windowSec, opts = {}) {
+  const failClosed = opts.failClosed === true;
   const now = Math.floor(Date.now() / 1000);
   const windowAt = Math.floor(now / windowSec);
   const cacheKey = `rl:${key}:${windowAt}`;
@@ -51,6 +56,19 @@ export async function rateLimit(env, key, limit, windowSec) {
       return { count: count + 1, remaining: limit - count - 1 };
     } catch (e2) {
       if (e2 instanceof ApiError) throw e2;
+      /*
+       * KV va D1 deu loi -> khong dem duoc.
+       *   failClosed = true  -> CHAN (dung cho login/register/webhook: thà
+       *                         khoá tạm còn hơn mở toang khi hạ tầng lỗi).
+       *   failClosed = false -> cho qua (mặc định, để không chặn oan khách).
+       */
+      if (failClosed) {
+        throw new ApiError(
+          429,
+          'Hệ thống đang bận, vui lòng thử lại sau ít phút',
+          'RATE_LIMIT_UNAVAILABLE',
+        );
+      }
       // Không chặn người dùng khi hạ tầng đếm lỗi
       return { count: 0, remaining: limit, degraded: true };
     }

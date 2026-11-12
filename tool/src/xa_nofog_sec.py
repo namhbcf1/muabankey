@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""xa_nofog_sec.py -- tang bao mat cua XArena No Fog.
+"""xa_nofog_sec.py -- tang bao mat cua XARENA MAP SÁNG.
 
 PORT tu `tool/grant/src/xa_sec.py` (kien truc da chay that cho XAGrant),
 doi tuong bao ve la BANG OFFSET PATCH cua No Fog thay vi bang dia chi engine.
@@ -42,6 +42,7 @@ import base64
 import hashlib
 import json
 import struct
+import time
 
 # ============================================================================
 # 1. MA HOA HANG SO  (chong `strings`)
@@ -512,8 +513,71 @@ _TOKEN_ERRORS = {
     'bad_payload': 'Payload token hong hoac sai kieu.',
     'no_sites': 'Token thieu khoi bang cong (server qua cu).',
     'bad_sites': 'Khoi bang cong khong giai ma duoc (token bi sua?).',
-    'wrong_app': 'Token nay cap cho san pham khac, khong phai XArena No Fog.',
+    'wrong_app': 'Token nay cap cho san pham khac, khong phai XARENA MAP SÁNG.',
 }
+
+
+def bind_token_to_machine(result, hwid=None, now=None, expire_skew=0):
+    """Kiem tra token co dung MAY NAY va con HAN khong.
+
+    VI SAO CAN: `verify_token_local()` chi kiem CHU KY + truong 'a' (app).
+    Payload do server ky co du `h` (hwid), `e` (expires_at), `n` (now),
+    `k` (key) nhung client KHONG doc. He qua: copy `lic.bin` tu may A sang
+    may B la dung duoc — token van hop le vi chu ky dung, chi la no cap cho
+    may khac.
+
+    Ham nay nhan ket qua cua verify_token_local va kiem them:
+        - payload['h'] phai trung hwid cua may dang chay
+        - payload['e'] (neu > 0) phai con o tuong lai
+
+    Tham so:
+        result : dict tra ve tu verify_token_local (phai co 'ok': True)
+        hwid   : hwid cua may hien tai; None = bo qua kiem hwid
+                 (dung khi goi tu test khong co phan cung)
+        now    : moc thoi gian de so (mac dinh time.time())
+        expire_skew : giay du bi cho lech dong ho
+
+    Tra ve cung shape voi verify_token_local: {'ok': bool, 'code', 'msg', ...}
+    KHONG BAO GIO raise.
+    """
+    if not result or not result.get('ok'):
+        return result
+
+    payload = result.get('payload') or {}
+
+    # ---- 1. Han dung ----
+    try:
+        exp = int(payload.get('e') or 0)
+    except Exception:
+        exp = 0
+    if exp > 0:
+        t = time.time() if now is None else now
+        if t > exp + expire_skew:
+            return {
+                'ok': False,
+                'code': 'token_expired',
+                'msg': ('Token bao ve da het han (%s).\n'
+                        '  Chay lai tool khi co mang de lay token moi.'
+                        % time.strftime('%Y-%m-%d %H:%M', time.localtime(exp))),
+                'expires_at': exp,
+            }
+
+    # ---- 2. Rang buoc may ----
+    if hwid is not None:
+        want = str(payload.get('h') or '').strip().lower()
+        got = str(hwid).strip().lower()
+        # Server co the ky h rong (key chua bind) -> khi do bo qua.
+        if want and got and want != got:
+            return {
+                'ok': False,
+                'code': 'token_wrong_machine',
+                'msg': ('Token nay cap cho MAY KHAC.\n'
+                        '  Moi key chi dung cho 1 may. Vao muc "License cua toi"\n'
+                        '  tren website de doi may neu can.'),
+            }
+
+    result['expires_at'] = exp
+    return result
 
 
 def token_error_msg(code, detail=''):

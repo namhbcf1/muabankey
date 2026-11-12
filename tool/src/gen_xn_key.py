@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""gen_xn_key.py -- sinh cap khoa ky ECDSA P-256 cho XArena No Fog.
+"""gen_xn_key.py -- sinh cap khoa ky ECDSA P-256 cho XARENA MAP SÁNG.
 
 CHAY MOT LAN khi thiet lap. Sau do:
 

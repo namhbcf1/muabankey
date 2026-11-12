@@ -64,6 +64,30 @@ export async function apiTrialClaim(env, request) {
     return json({ ok: false, code: 'bad_request', msg: 'JSON không hợp lệ' }, 400);
   }
 
+  /*
+   * ===== CHẶN LẠM DỤNG (đã vá) =====
+   *
+   * Trước đây route này KHÔNG có bất kỳ kiểm soát nào: không rate limit,
+   * không kiểm ban, không đếm quota, không giới hạn số máy. Chỉ cần biết
+   * một mã TR- là gọi được từ bao nhiêu máy cũng xong — trong khi mọi
+   * đường trial khác đều bị chặn.
+   *
+   * Nay: rate limit theo IP + kiểm trial_bans trước khi làm bất cứ việc gì.
+   * Đây là lớp phòng thủ rẻ, chặn dò mã và chặn máy đã bị đánh dấu.
+   */
+  try {
+    const { rateLimit } = await import('../lib/ratelimit.js');
+    await rateLimit(env, `trialc:${ip}`, 30, 3600, { failClosed: true });
+  } catch (e) {
+    if (e && e.code === 'RATE_LIMITED') {
+      return json({
+        ok: false, code: 'rate_limit',
+        msg: 'Bạn thao tác quá nhanh, thử lại sau ít phút',
+      }, 429);
+    }
+    throw e;
+  }
+
   const key = String(body.key || '').trim().toUpperCase();
   if (!/^TR-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key)) {
     return json({
@@ -115,6 +139,28 @@ export async function apiTrialClaim(env, request) {
         msg: 'Không hỗ trợ dùng thử trên máy ảo',
       }, 403);
     }
+  }
+
+  /*
+   * KIỂM TRA BAN (đã thêm). Trước đây nhánh claim bỏ qua hoàn toàn
+   * trial_bans, nên máy đã bị admin đánh dấu vẫn claim được mã mới.
+   */
+  if (!wlClaim.unlimited) {
+    try {
+      for (const [scope, value] of [['hwid', ids.hwid], ['weak', ids.weak]]) {
+        if (!value) continue;
+        const ban = await env.DB.prepare(
+          'SELECT reason FROM trial_bans WHERE scope = ? AND value = ? LIMIT 1'
+        ).bind(scope, value).first();
+        if (ban) {
+          await logEvent(env, key, ids.hwid, 'trial_banned', `claim bi chan: ${ban.reason || ''}`, ip);
+          return json({
+            ok: false, code: 'trial_banned',
+            msg: 'Thiết bị này không được dùng thử. Liên hệ hỗ trợ nếu cần.',
+          }, 403);
+        }
+      }
+    } catch { /* chưa migrate trial_bans -> bỏ qua, không chặn oan */ }
   }
 
   const cfg = await trialCfg(env);

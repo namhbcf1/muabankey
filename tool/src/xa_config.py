@@ -1,5 +1,5 @@
 """
-Cau hinh XArena No Fog
+Cau hinh XARENA MAP SÁNG
 ======================
 
 Sua MỌI thứ ở đây, KHÔNG cần chạm vào xa_nofog_pro.py.
@@ -19,7 +19,7 @@ Hoac chay truc tiep khong can build:
 API_BASE = 'https://xienhl.com'
 
 # Ten hien thi trong tieu de cua so console va User-Agent
-APP_NAME = 'XArena No Fog'
+APP_NAME = 'XARENA MAP SÁNG'
 
 
 # ---------------------------------------------------------------------------

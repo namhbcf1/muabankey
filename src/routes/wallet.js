@@ -426,18 +426,45 @@ export async function telegramWebhook(env, request) {
   const body = await readJson(request).catch(() => null);
   if (!body) return ok({ ignored: 'no_body' });
 
-  const { tgAnswerCallback, tgCall } = await import('../lib/telegram.js');
+  const { tgAnswerCallback, tgCall, tgConfig } = await import('../lib/telegram.js');
   const { handleCallback } = await import('../lib/telegram-actions.js');
 
   // ---- Callback từ nút bấm ----
   const cq = body.callback_query;
   if (cq) {
-    // Chỉ admin được bấm
-    const allowed = String(env.TG_CHAT_ID || '').trim();
-    const fromId = String(cq.from?.id || '');
-    const msgChat = String(cq.message?.chat?.id || '');
-    if (allowed && fromId !== allowed && msgChat !== allowed) {
-      await tgAnswerCallback(env, cq.id, 'Bạn không có quyền', true);
+    /*
+     * ===== KIỂM TRA QUYỀN BẤM NÚT (đã vá 2 lỗ) =====
+     *
+     * LỖ 1 — FAIL-OPEN khi chưa cấu hình TG_CHAT_ID:
+     *   Bản trước: `if (allowed && fromId !== allowed && msgChat !== allowed)`
+     *   `allowed` rỗng -> điều kiện thành false -> CHO QUA MỌI NGƯỜI.
+     *   Mà việc GỬI tin vẫn chạy được nhờ fallback settings.telegram_chat_id
+     *   (telegram.js:22-31), nên admin cấu hình bot qua UI (không set secret)
+     *   sẽ có bot hoạt động bình thường nhưng KHÔNG kiểm tra quyền ai bấm:
+     *   bất kỳ ai biết bot là bấm "Duyệt & giao key" được.
+     *
+     * LỖ 2 — NHÓM CHAT: điều kiện dùng OR (`msgChat !== allowed`), nên ai
+     *   nhắn trong nhóm admin cũng thoả -> cả nhóm duyệt được tiền.
+     *
+     * Nay: đọc chat id từ CÙNG nguồn với lúc gửi (env rồi settings), và
+     * CHỈ so `from.id` (người bấm) với chat id admin. Không có cấu hình
+     * thì TỪ CHỐI (fail-closed), không cho qua.
+     */
+    const cfg = await tgConfig(env).catch(() => ({ chatId: '' }));
+    const allowed = String(cfg.chatId || env.TG_CHAT_ID || '').trim();
+    const fromId = String(cq.from?.id || '').trim();
+
+    if (!allowed) {
+      // Chưa biết admin là ai -> không thể xác thực -> đóng cửa.
+      await tgAnswerCallback(env, cq.id,
+        'Bot chưa cấu hình TG_CHAT_ID nên không duyệt được. Liên hệ quản trị.', true)
+        .catch(() => {});
+      return ok({ denied: 'no_admin_chat_configured' });
+    }
+    // CHỈ người bấm phải là admin. Trong nhóm, `from.id` là người bấm
+    // (khác chat id của nhóm) -> thành viên khác không qua được.
+    if (fromId !== allowed) {
+      await tgAnswerCallback(env, cq.id, 'Bạn không có quyền', true).catch(() => {});
       return ok({ denied: 'not_admin' });
     }
 
@@ -1108,9 +1135,15 @@ export async function adminApproveTopup(env, request, topupId) {
 
 /** POST /api/admin/topups/:id/reject — huỷ lệnh nạp (không cộng tiền). */
 export async function adminRejectTopup(env, request, topupId) {
-  const { requireAdmin } = await import('../lib/auth.js');
+  const { requireAdminStrict } = await import('../lib/auth.js');
   const { ok, ApiError: AE } = await import('../lib/http.js');
-  const admin = await requireAdmin(env, request);
+  /*
+   * CHỈ admin thật — phải ĐỐI XỨNG với adminApproveTopup (dòng ~1034 dùng
+   * requireAdminStrict). Trước đây duyệt thì chặt, từ chối thì lỏng, nên
+   * `staff` huỷ được lệnh nạp đang chờ — kể cả lệnh mà tiền ĐÃ vào tài
+   * khoản nhưng webhook chưa bắn. Huỷ lệnh đó = khách mất tiền không dấu vết.
+   */
+  const admin = await requireAdminStrict(env, request);
   const body = await readJson(request).catch(() => ({}));
 
   const t = await env.DB.prepare('SELECT * FROM topups WHERE id = ?').bind(topupId).first();
