@@ -50,7 +50,7 @@ export function grantVersionData(request) {
   const u = new URL(request.url);
   const base = `${u.protocol}//${u.host}`;
   return {
-    name: 'XARENA THÊM TÀI NGUYÊN',
+    name: 'XA THÊM TÀI NGUYÊN',
     filename: 'xa_grant.exe',
     version: '1.0.2.0',
     sha256: GRANT_SHA,

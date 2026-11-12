@@ -85,7 +85,7 @@ export function renderDownload() {
           Bộ cài thứ hai — Thêm tài nguyên
         </div>
         <p style="font-size:12.5px;color:var(--text-mute);margin:0 0 12px;line-height:1.7">
-          XARENA THÊM TÀI NGUYÊN bơm thịt / vàng / gỗ / đá trong trận.
+          XA THÊM TÀI NGUYÊN bơm thịt / vàng / gỗ / đá trong trận.
           Tải riêng, dùng key riêng.
         </p>
         <a class="btn btn-ghost btn-block" href="/download/xa_grant.exe" download="xa_grant.exe">
