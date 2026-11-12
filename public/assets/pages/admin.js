@@ -397,13 +397,21 @@ async function renderTopups(host) {
       b.onclick = async () => {
         const code = b.dataset.code;
         const amt = Number(b.dataset.amt) || 0;
-        if (!(await confirmDialog({
-          title: 'Xác nhận đã nhận tiền',
-          message: `Đơn ${code} — ${fmtVnd(amt)}.\n\n`
+        /*
+         * confirmDialog(title, message, confirmLabel) — nhận 3 THAM SỐ CHUỖI.
+         * Trước đây chỗ này truyền một OBJECT -> esc(object) ra "[object Object]"
+         * và message rỗng, nên hộp thoại xác nhận giao key cho khách hiện
+         * tiêu đề vô nghĩa, không có nội dung cảnh báo, và nút ghi "Xác nhận"
+         * thay vì "Đã nhận tiền — giao key". Đây là thao tác không hoàn tác
+         * được (giao hàng thật), nên cảnh báo phải đọc được.
+         */
+        if (!(await confirmDialog(
+          'Xác nhận đã nhận tiền',
+          `Đơn ${code} — ${fmtVnd(amt)}.\n\n`
             + 'Chỉ bấm khi bạn ĐÃ THẤY tiền trong app ngân hàng. '
             + 'Hệ thống sẽ giao key ngay cho khách.',
-          confirmText: 'Đã nhận tiền — giao key',
-        }))) return;
+          'Đã nhận tiền — giao key',
+        ))) return;
 
         b.disabled = true;
         try {
