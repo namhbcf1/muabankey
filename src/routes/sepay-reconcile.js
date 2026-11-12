@@ -46,16 +46,22 @@ export async function autoWindow(env) {
   const to = Number.isFinite(Number(m.sepay_auto_to)) ? Number(m.sepay_auto_to) : 12;
 
   const hour = vnHour();
-  const inWindow = from <= to
+  const inRange = from <= to
     ? hour >= from && hour < to          // 00 -> 12
     : hour >= from || hour < to;         // 22 -> 06 (qua nửa đêm)
 
+  /*
+   * `sepay_auto_enabled = 0` nghĩa là TẮT chế độ cửa sổ giờ → luôn tự giao.
+   * KHÔNG phải "luôn ngoài cửa sổ". Bản trước viết `enabled && inRange`
+   * khiến tắt cửa sổ lại thành "chờ admin duyệt 24/24" — ngược hoàn toàn.
+   */
   return {
     enabled,
     from,
     to,
     hour,
-    inWindow: enabled && inWindow,
+    inRange,
+    inWindow: enabled ? inRange : true,
   };
 }
 

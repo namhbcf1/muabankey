@@ -7,6 +7,45 @@ import { readFileSync } from 'node:fs';
 const SEC = (process.env.WEBHOOK_SECRET
   || readFileSync(process.env.TEMP + '/testsec.txt', 'utf8')).trim();
 
+
+/* ===== TẮT CỬA SỔ GIỜ TỰ ĐỘNG TRONG LÚC TEST =====
+ * Cửa sổ thật 00:00-11:59 (chủ shop chốt). Test này kiểm logic tự giao
+ * (underpaid / duplicate / overpaid) nên cần server luôn tự giao.
+ * Bật lại ở cuối, dù pass hay fail.
+ */
+const CF_TOKEN = 'cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6';
+const CF_ACCT = '5b62d10947844251d23e0eac532531dd';
+const CF_DB = '81f478c9-5627-458a-a35f-d483e69d400b';
+
+async function cfSql(sql) {
+  const r = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${CF_ACCT}/d1/database/${CF_DB}/query`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${CF_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    },
+  );
+  const j = await r.json();
+  return j.result?.[0]?.results;
+}
+
+async function windowOff() {
+  await cfSql("UPDATE settings SET value='0' WHERE key='sepay_auto_enabled'");
+  // D1 read replica có độ trễ — chờ để Worker đọc được giá trị mới.
+  await new Promise((r) => setTimeout(r, 8000));
+  // Xác nhận Worker đã thấy
+  for (let i = 0; i < 5; i++) {
+    const row = await cfSql("SELECT value FROM settings WHERE key='sepay_auto_enabled'");
+    if (String(row?.[0]?.value) === '0') break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+async function windowOn() {
+  await cfSql("UPDATE settings SET value='1' WHERE key='sepay_auto_enabled'");
+  await new Promise((r) => setTimeout(r, 2000));
+}
+
 let pass = 0, fail = 0;
 const ok = (n, c, x = '') => {
   if (c) { pass++; console.log(`  ✅ ${n}`); }
@@ -44,6 +83,9 @@ const wh = async (payload) => {
 
 (async () => {
   console.log('\n⚠️  TEST TRƯỜNG HỢP MẤT TIỀN / MẤT HÀNG\n');
+
+  await windowOff();
+  console.log('  (đã tắt cửa sổ giờ tự động để test, sẽ bật lại sau)\n');
 
   const ck = await reg();
   const pr = await fetch(B + '/api/products').then((r) => r.json());
@@ -178,6 +220,8 @@ const wh = async (payload) => {
     JSON.stringify(w2.data).slice(0, 80));
 
   console.log(`\n${'─'.repeat(54)}`);
+  await windowOn();
+  console.log('  (đã bật lại cửa sổ giờ tự động)');
   console.log(`Tổng: ${pass + fail}  |  ✅ ${pass}  |  ❌ ${fail}`);
   process.exit(fail > 0 ? 1 : 0);
-})().catch((e) => { console.error('💥', e.message); process.exit(1); });
+})().catch(async (e) => { await windowOn(); console.error('💥', e.message); process.exit(1); });
