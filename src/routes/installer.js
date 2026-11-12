@@ -13,9 +13,22 @@ import { ApiError } from '../lib/http.js';
 import { readLicense, normKey } from './license.js';
 
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
-const EXE_NAME = 'xa_nofog_pro.exe';
-const EXE_SHA256 = 'CF91F953386FEB3FC64B1279C5E4E4748D7A5F610F8A577296FD234D47D89456';
-const EXE_SIZE = 8993792;
+
+/*
+ * NGUON DUY NHAT cho thong tin bo cai.
+ *
+ * Trang /tai-ve lay lai cac gia tri nay qua GET /api/app/version
+ * (src/routes/app-info.js) thay vi chep tay. Truoc day hash/size chi nam o
+ * day va khong noi nao doc ra duoc: moi lan phat hanh ban moi phai sua nhieu
+ * cho va rat de lech -> khach tai dung file nhung so sanh hash sai.
+ */
+export const EXE_NAME = 'xa_nofog_pro.exe';
+export const EXE_SHA256 = 'CF91F953386FEB3FC64B1279C5E4E4748D7A5F610F8A577296FD234D47D89456';
+export const EXE_SIZE = 8993792;
+/** Phien ban phat hanh dang phuc vu. Doi o day la trang /tai-ve tu cap nhat. */
+export const EXE_VERSION = '1.4.0.0';
+/** Ten hien thi cua san pham. */
+export const APP_NAME = 'XArena No Fog';
 
 function siteBase(request) {
   const u = new URL(request.url);

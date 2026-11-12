@@ -841,9 +841,9 @@ export async function sepayWebhook(env, request) {
 
            (id, order_id, order_code, amount, expected, method, txn_ref,
 
-            content, state, confirmed_by, raw, at)
+            content, state, confirmed_by, raw, at, is_test)
 
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
       ).bind(crypto.randomUUID(), null, null, amount, 0, 'sepay',
 
@@ -851,7 +851,16 @@ export async function sepayWebhook(env, request) {
 
         JSON.stringify(body).slice(0, 4000), nowSec(), isTest ? 1 : 0).run();
 
-    } catch { /* trùng txn_ref -> bỏ qua */ }
+    } catch (e) {
+      /*
+       * KHÔNG được im lặng ở đây. Đây chính là chỗ đã nuốt lỗi "13 values for
+       * 12 columns" suốt thời gian qua: tiền vào ngân hàng mà sổ trống, admin
+       * không thấy gì. Chỉ bỏ qua trường hợp trùng txn_ref (Webhook replay).
+       */
+      if (!String(e?.message || '').includes('UNIQUE')) {
+        console.error('webhook unmatched INSERT:', e && e.message ? e.message : e);
+      }
+    }
 
     try {
       const { notifyUnmatchedPayment } = await import('../lib/telegram-pay.js');
@@ -878,17 +887,30 @@ export async function sepayWebhook(env, request) {
   const win = await autoWindow(env);
 
   if (!win.inWindow) {
-    // Ngoài cửa sổ: ghi sổ + báo Telegram, KHÔNG giao
+    // Ngoài cửa sổ: ghi sổ + báo Telegram, KHÔNG giao.
+    //
+    // `expected`/`state` phải tính Ở ĐÂY (không phải trong confirmOrderPaid,
+    // hàm đó không được gọi trên nhánh này). Bản trước hardcode 'matched' nên
+    // khách chuyển THIẾU tiền buổi chiều vẫn bị ghi sổ là "khớp đủ" — admin
+    // nhìn sổ tưởng đủ tiền rồi duyệt giao hàng.
+    const expected = Number(order.total) || 0;
+    const state = amount >= expected ? 'matched' : 'wrong_amount';
     try {
       await env.DB.prepare(
         `INSERT INTO payments
            (id, order_id, order_code, amount, expected, method, txn_ref,
-            content, state, confirmed_by, raw, at)
-         VALUES (?,?,?,?,?,?,?,?,'matched','sepay-window',?,?,?)`
+            content, state, confirmed_by, raw, at, is_test)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).bind(crypto.randomUUID(), order.id, order.code, amount,
-        Number(order.total) || 0, 'sepay', txnRef || null, content || null,
+        expected, 'sepay', txnRef || null, content || null,
+        state, 'sepay-window',
         JSON.stringify(body).slice(0, 3000), nowSec(), isTest ? 1 : 0).run();
-    } catch { /* trùng txn_ref -> đã ghi rồi */ }
+    } catch (e) {
+      // Lỗi ghi sổ buổi chiều = tiền vào mà không ai biết. Phải log.
+      if (!String(e?.message || '').includes('UNIQUE')) {
+        console.error('webhook window INSERT:', e && e.message ? e.message : e);
+      }
+    }
 
     try {
       const { notifyPaymentClaim } = await import('../lib/telegram-pay.js');

@@ -10,6 +10,34 @@
  * Khác biệt so với bản cũ: chỉ một worker, một CSDL (muabankey-db).
  * Đã vá bug firstBind: apiCheck không gọi lại apiActivate nữa mà xử lý bind
  * trực tiếp, nên body không bị đọc hai lần.
+ *
+ * ============================================================================
+ * TOKEN BẢO VỆ BẢNG OFFSET (mới)
+ * ============================================================================
+ * Bảng offset patch No Fog (MINIMAP/CORE/LEGACY: địa chỉ + byte gốc + byte vá)
+ * KHÔNG còn nằm trong EXE. Server mã hoá bảng đó theo `gate` riêng của TỪNG
+ * license và đặt vào payload token đã ký ECDSA P-256:
+ *
+ *     token = "xn1." + b64u(payload JSON) + "." + b64u(sig r||s)
+ *
+ *     payload = {
+ *       v: 1, a: 'xa-nofog', k: <key>, h: <hwid>, p: <plan>,
+ *       e: <expires_at>, n: <now giây>, g: <grace_hours>,
+ *       ss: b64u(gate 16 byte),       <- khoá giải mã bảng
+ *       sv: b64u(ciphertext bảng),    <- bảng đã mã hoá
+ *     }
+ *
+ *   keystream(i) = SHA-256("xn-ks" || gate || u32be(i))   (32 byte / khối)
+ *   ciphertext   = bảng JSON XOR keystream
+ *
+ * `gate` = SHA-256(key || 'xa-nofog-gate-v1')[:16] — deterministic nên KHÔNG
+ * cần cột CSDL mới và key cũ đã bán dùng được ngay. Điều này KHÔNG làm yếu
+ * thiết kế: thứ bảo vệ bảng là CHỮ KÝ, không phải bí mật của `gate`. Kẻ tấn
+ * công biết `gate` vẫn cần chữ ký server mới mint được token hợp lệ.
+ *
+ * Vì sao bảng không nhúng vào binary: `gate` khác nhau cho từng license, mà
+ * cùng một bản rõ với N khoá khác nhau sinh ra N ciphertext khác nhau — không
+ * thể nhúng MỘT blob tĩnh phục vụ mọi key.
  */
 import { json, ApiError } from '../lib/http.js';
 
@@ -36,12 +64,276 @@ const GRACE_HOURS = 0;
 const RATE_LIMIT = 500;
 const RATE_WINDOW = 3600;
 
+/* ------------------------------------------------------------------ */
+/* Token bảo vệ bảng offset                                           */
+/* ------------------------------------------------------------------ */
+
+/** Tên sản phẩm trong token. Client kiểm `payload.a` phải bằng giá trị này. */
+const TOKEN_APP = 'xa-nofog';
+const TOKEN_VERSION = 1;
+
+/** Phiên bản bảng offset. Tăng khi đổi byte vá. */
+const SITES_VERSION = 1;
+
+/**
+ * Bảng offset No Fog — TOÀN BỘ tri thức reverse-engineering của tool.
+ *
+ * Mỗi dòng: [key, group, va, byte_gốc_hex, byte_vá_hex]
+ *
+ * KHÔNG một byte nào trong đây xuất hiện dạng plaintext trong EXE: bảng được
+ * mã hoá bằng khoá suy ra từ `gate` của từng license và chỉ gửi trong token
+ * đã ký. Client không có token hợp lệ thì không biết vá vào đâu.
+ *
+ * GIỮ NGUYÊN đúng giá trị trong xa_nofog_pro.py (MINIMAP/CORE/LEGACY).
+ */
+const SITES = [
+  // ---- viewport (CORE) ----
+  ['T1', 'viewport', 0x514e0f, '85d17407', '90909090'],
+  ['V3', 'viewport', 0x514f58, '7404', 'eb43'],
+  ['V6', 'viewport', 0x516590, '518b442408', '33c0c21400'],
+  // ---- minimap (MINIMAP) ----
+  ['A', 'minimap', 0x42d521, '8a83b88d0000', 'b00190909090'],
+  ['B', 'minimap', 0x42d547, '0f84e2030000', '909090909090'],
+  ['C', 'minimap', 0x42dc63, '8a85b88d0000', 'b00190909090'],
+  ['D', 'minimap', 0x42dc6d, '8a95b98d0000', 'b20190909090'],
+  ['E', 'minimap', 0x42dca9, '8a85b98d0000', 'b00190909090'],
+  ['M', 'minimap', 0x42dc93, 'b180', 'b10f'],
+  ['N', 'minimap', 0x42dca7, 'b180', 'b10f'],
+  // ---- legacy (chỉ dùng khi --full) ----
+  ['F', 'legacy', 0x513df8, '8a81b88d0000', 'b00190909090'],
+  ['I', 'legacy', 0x51c631, '8a81b88d0000', 'b00190909090'],
+  ['J', 'legacy', 0x51c6b8, '8a81b88d0000', 'b00190909090'],
+  ['K', 'legacy', 0x51d28e, '8a82b88d0000', 'b00190909090'],
+  ['L', 'legacy', 0x51d3d7, '8a82b88d0000', 'b00190909090'],
+  // O: 0x51FC6F nằm GIỮA lệnh -> địa chỉ đúng là 0x529BEA (xem xa_nofog_pro.py)
+  ['O', 'legacy', 0x529bea, 'b280', 'b20f'],
+  ['T2', 'legacy', 0x514eff, '0f853c010000', '909090909090'],
+];
+
+/** Nhóm mặc định khi chạy không tham số (viewport + minimap). */
+const DEFAULT_GROUPS = ['viewport', 'minimap'];
+
+/** Địa chỉ module game 32-bit; client kiểm lại trước khi ghi. */
+const VA_MIN = 0x400000;
+const VA_MAX = 0x08000000;
+
+/**
+ * Kiểm cấu trúc bảng lúc nạp module. Fail closed: bảng hỏng thì KHÔNG được
+ * ký token, vì client sẽ ghi byte rác vào process game và làm crash game.
+ */
+function assertSites() {
+  const keys = new Set();
+  const addrs = new Set();
+  for (const row of SITES) {
+    if (!Array.isArray(row) || row.length !== 5) {
+      throw new Error('bảng SITES: dòng sai định dạng');
+    }
+    const [key, group, va, orig, pat] = row;
+    if (typeof key !== 'string' || !key) throw new Error('SITES: key sai');
+    if (keys.has(key)) throw new Error('SITES: trùng key ' + key);
+    keys.add(key);
+    if (!DEFAULT_GROUPS.includes(group) && group !== 'legacy') {
+      throw new Error('SITES: nhóm lạ ' + group);
+    }
+    if (!Number.isInteger(va) || va < VA_MIN || va >= VA_MAX) {
+      throw new Error('SITES: địa chỉ ngoài miền ' + key);
+    }
+    if (addrs.has(va)) throw new Error('SITES: trùng địa chỉ ' + key);
+    addrs.add(va);
+    const o = String(orig).toLowerCase();
+    const p = String(pat).toLowerCase();
+    if (!/^[0-9a-f]+$/.test(o) || !/^[0-9a-f]+$/.test(p)) {
+      throw new Error('SITES: byte không phải hex ' + key);
+    }
+    if (o.length !== p.length) {
+      throw new Error('SITES: byte gốc/vá khác độ dài ' + key);
+    }
+    if (o.length % 2 !== 0 || o.length > 32) {
+      throw new Error('SITES: độ dài byte lạ ' + key);
+    }
+    if (o === p) throw new Error('SITES: byte gốc bằng byte vá ' + key);
+  }
+  if (SITES.length === 0) throw new Error('SITES: bảng rỗng');
+}
+assertSites();
+
+/**
+ * Khoá ký RIÊNG của server (Worker secret `XN_SIGN_JWK`).
+ *
+ * Fail closed: thiếu secret thì từ chối ký, KHÔNG dùng key dự phòng hardcode.
+ */
+function signJwk(env) {
+  const raw = env && env.XN_SIGN_JWK;
+  if (!raw) {
+    throw new ApiError(
+      503,
+      'Chưa cấu hình XN_SIGN_JWK — không thể ký token',
+      'NOT_CONFIGURED',
+    );
+  }
+  let v;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    throw new ApiError(503, 'XN_SIGN_JWK không phải JSON hợp lệ', 'NOT_CONFIGURED');
+  }
+  if (!v || v.kty !== 'EC' || !v.d || !v.x || !v.y) {
+    throw new ApiError(503, 'XN_SIGN_JWK thiếu thành phần EC', 'NOT_CONFIGURED');
+  }
+  return v;
+}
+
 function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
 
 export function normKey(k) {
   return String(k || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+/* ---------------------- token: mã hoá bảng offset --------------------- */
+
+const enc = new TextEncoder();
+
+function b64u(bytes) {
+  const b = new Uint8Array(bytes);
+  let s = '';
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function hexToBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return out;
+}
+
+function u32be(v) {
+  const b = new Uint8Array(4);
+  b[0] = (v >>> 24) & 0xff;
+  b[1] = (v >>> 16) & 0xff;
+  b[2] = (v >>> 8) & 0xff;
+  b[3] = v & 0xff;
+  return b;
+}
+
+async function sha256Bytes(data) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+}
+
+async function concatBytes(...arrs) {
+  const len = arrs.reduce((n, a) => n + a.length, 0);
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const a of arrs) {
+    out.set(a, o);
+    o += a.length;
+  }
+  return out;
+}
+
+/**
+ * `gate` của MỘT license: SHA-256(key || 'xa-nofog-gate-v1')[:16].
+ *
+ * Deterministic nên KHÔNG cần cột CSDL mới, và mọi key đã bán (kể cả key cũ
+ * chưa từng có `gate`) đều dùng được ngay.
+ *
+ * Vì sao đây KHÔNG phải là làm yếu thiết kế: thứ bảo vệ bảng offset là CHỮ
+ * KÝ ECDSA, không phải bí mật của `gate`. Kẻ tấn công biết `gate` (vì nó suy
+ * được từ key họ đang có) vẫn KHÔNG mint được token hợp lệ — thiếu khoá riêng
+ * của server thì chữ ký sai và client từ chối trước khi giải mã.
+ */
+async function deriveGate(key) {
+  const msg = enc.encode(normKey(key) + 'xa-nofog-gate-v1');
+  const d = await sha256Bytes(msg);
+  return d.slice(0, 16);
+}
+
+/**
+ * Mã hoá bảng offset cho MỘT license.
+ *
+ *   ks(i)  = SHA-256("xn-ks" || gate || u32be(i))   32 byte mỗi khối
+ *   cipher = plaintext XOR ks
+ *
+ * Stream cipher dựng trên SHA-256 (PRF); an toàn khi `gate` khác nhau cho từng
+ * license. Cố ý không dùng AES để client Python không phải phụ thuộc thư viện
+ * mã hoá nào (giảm bề mặt tấn công, build nhẹ, chạy được cả trên Win7).
+ */
+async function sealSites(gate) {
+  const plain = enc.encode(JSON.stringify({
+    v: SITES_VERSION,
+    dg: DEFAULT_GROUPS,
+    s: SITES,
+  }));
+
+  const ct = new Uint8Array(plain.length);
+  const blocks = Math.ceil(plain.length / 32);
+  for (let b = 0; b < blocks; b++) {
+    const ks = await sha256Bytes(
+      await concatBytes(enc.encode('xn-ks'), gate, u32be(b))
+    );
+    for (let j = 0; j < 32; j++) {
+      const at = b * 32 + j;
+      if (at >= plain.length) break;
+      ct[at] = plain[at] ^ ks[j];
+    }
+  }
+  return b64u(ct);
+}
+
+let _signKey = null;
+let _signKeyId = '';
+async function signKey(env) {
+  const jwk = signJwk(env);
+  const id = jwk.d;
+  if (_signKey && _signKeyId === id) return _signKey;
+  _signKey = await crypto.subtle.importKey(
+    'jwk', jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false, ['sign']
+  );
+  _signKeyId = id;
+  return _signKey;
+}
+
+/** Tạo token `xn1.<payload>.<sig>` đã ký ECDSA P-256. */
+async function mintToken(env, payload) {
+  const body = 'xn1.' + b64u(enc.encode(JSON.stringify(payload)));
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' }, await signKey(env), enc.encode(body)
+  );
+  return body + '.' + b64u(sig);
+}
+
+/**
+ * Token hoàn chỉnh cho một license.
+ *
+ * Trả `{ token, gate_hex }`. `token` là chuỗi client cần; `gate_hex` chỉ để
+ * log/health, KHÔNG trả cho client (client lấy gate TỪ token đã ký).
+ */
+async function buildToken(env, lic, key, hwid) {
+  const gate = await deriveGate(key);
+  const sealed = await sealSites(gate);
+  const payload = {
+    v: TOKEN_VERSION,          // phiên bản định dạng token
+    a: TOKEN_APP,              // sản phẩm: client kiểm phải bằng 'xa-nofog'
+    sver: SITES_VERSION,       // phiên bản bảng offset
+    k: key,
+    h: hwid,
+    p: lic.plan || 'aoe1',
+    e: lic.expires_at || 0,
+    n: nowSec(),               // giờ server -> client neo đồng hồ
+    g: lic.plan === 'trial' ? 0 : GRACE_HOURS,
+    ss: b64u(gate),            // gate 16 byte -> khoá giải mã bảng
+    sv: sealed,                // bảng offset đã mã hoá
+  };
+  const token = await mintToken(env, payload);
+  return {
+    token,
+    gate_hex: Array.from(gate, (b) => b.toString(16).padStart(2, '0')).join(''),
+  };
 }
 
 /* ------------------------------ helpers ------------------------------ */
@@ -106,6 +398,19 @@ function publicLic(lic, extra = {}) {
     trial: isTrial,
     ...extra,
   };
+}
+
+/**
+ * Gói phản hồi THÀNH CÔNG: metadata license + `token` đã ký.
+ *
+ * `token` là thứ DUY NHẤT chứa bảng offset. Không có nó, client không biết
+ * vá byte nào vào địa chỉ nào -> tool không hoạt động. Vì vậy token được cấp
+ * ở mọi phản hồi thành công (activate / check / trial), kể cả key vừa bind.
+ */
+async function okWithToken(env, lic, key, hwid, extra = {}) {
+  // Ký lỗi (thiếu secret) -> ApiError 503, KHÔNG trả license "nửa vời".
+  const t = await buildToken(env, lic, key, hwid);
+  return json(publicLic(lic, { ...extra, token: t.token }));
 }
 
 async function readBody(request) {
@@ -259,7 +564,7 @@ export async function apiActivate(env, request) {
   }
 
   await logAttempt(env, ip, true);
-  return json(publicLic(lic, { first_bind: !!v.firstBind }));
+  return okWithToken(env, lic, key, hwid, { first_bind: !!v.firstBind });
 }
 
 export async function apiCheck(env, request) {
@@ -310,7 +615,8 @@ export async function apiCheck(env, request) {
       }, 403);
     }
     await logAttempt(env, ip, true);
-    return json(publicLic(lic, { first_bind: true, rebound: !!br.rebind }));
+    return okWithToken(env, lic, key, hwid,
+      { first_bind: true, rebound: !!br.rebind });
   }
 
   await env.DB.prepare(
@@ -319,7 +625,7 @@ export async function apiCheck(env, request) {
   await logAttempt(env, ip, true);
   await logEvent(env, key, hwid, 'check', null, ip);
 
-  return json(publicLic(lic));
+  return okWithToken(env, lic, key, hwid);
 }
 
 /**
@@ -344,7 +650,7 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
         now, expires_at: v.expires_at || 0,
       }, 403);
     }
-    return json(publicLic(lic, { legacy_trial: true }));
+    return okWithToken(env, lic, key, hwid, { legacy_trial: true });
   }
 
   // Đã bị thu hồi / dừng
@@ -395,10 +701,16 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
 
     await logEvent(env, key, hwid, 'trial_activate', `${kind} ${secs}s`, ip);
 
+    // Phải cấp token ngay: trial cũng cần bảng offset để vá. Gắn hạn mới vào
+    // lic để chữ ký phủ đúng `expires_at` vừa ghi.
+    lic.expires_at = expiresAt;
+    lic.activated_at = startedAt;
+    const t = await buildToken(env, lic, key, hwid);
     return json({
       ...publicUse(fresh, cfg, kind),
       trial_kind_state: 'activated',
       now,
+      token: t.token,
     });
   }
 
@@ -426,10 +738,14 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
     'UPDATE licenses SET last_seen = ?, last_ip = ? WHERE key = ?'
   ).bind(now, ip, key).run();
 
+  // Token mới mỗi lần check: gói tin bắt được KHÔNG phát lại được, và client
+  // luôn có bảng offset khớp phiên bản mới nhất.
+  const t = await buildToken(env, lic, key, hwid);
   return json({
     ...publicUse(use, cfg, kind),
     trial_kind_state: 'active',
     now,
+    token: t.token,
     ...(quota ? { used: quota.used, quota: quota.quota, left: quota.left } : {}),
   });
 }
@@ -510,5 +826,36 @@ async function sha256hex(text) {
 
 export async function apiHealth(env) {
   const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM licenses').first();
-  return json({ ok: true, at: nowSec(), licenses: total?.n || 0, server: 'muabankey' });
+  // `token_ready` = đã có khoá ký chưa. Chưa có thì client sẽ nhận 503 khi
+  // kích hoạt -> biết ngay nguyên nhân thay vì đoán.
+  let tokenReady = false;
+  try { signJwk(env); tokenReady = true; } catch { tokenReady = false; }
+  return json({
+    ok: true,
+    at: nowSec(),
+    licenses: total?.n || 0,
+    server: 'muabankey',
+    token_ready: tokenReady,
+    sites_version: SITES_VERSION,
+    sites_count: SITES.length,
+  });
 }
+
+/* ------------------------------------------------------------------ */
+/* Xuất nội bộ cho TEST + script sinh hằng số                         */
+/*                                                                    */
+/* Không phải endpoint: chỉ để script test mint token offline và đối  */
+/* chiếu bảng SITES với client mà không cần CSDL.                     */
+/* ------------------------------------------------------------------ */
+export const __test = {
+  SITES,
+  DEFAULT_GROUPS,
+  SITES_VERSION,
+  TOKEN_APP,
+  deriveGate,
+  sealSites,
+  buildToken,
+  mintToken,
+  signJwk,
+  assertSites,
+};

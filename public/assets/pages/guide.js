@@ -103,6 +103,7 @@ export function renderGuide() {
           Nhắn Telegram
         </a>
         <a class="btn btn-ghost btn-sm" href="#/support">Trang hỗ trợ</a>
+        <a class="btn btn-ghost btn-sm" href="#/tai-ve">← Về trang tải</a>
       </div>
     </div>
 

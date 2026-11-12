@@ -23,6 +23,7 @@ import * as trialCmd from './routes/trial-command.js';
 import * as twl from './routes/trial-whitelist-admin.js';
 import * as stats from './routes/stats.js';
 import * as installer from './routes/installer.js';
+import * as appInfo from './routes/app-info.js';
 import * as xgServer from './routes/xa-grant-server.js';
 import * as xgInstaller from './routes/xa-grant-installer.js';
 
@@ -47,6 +48,12 @@ r.post('/api/auth/change-password', auth.changePassword);
 
 /* ---------- Catalog ---------- */
 r.get('/api/stats', (env) => stats.publicStats(env));
+/*
+ * Thong tin bo cai cho trang /tai-ve. PUBLIC co y: khach con dang phan
+ * van phai xem duoc version + hash de quyet dinh tai. Chi tra ten file,
+ * hash, dung luong — khong lo gi ve license hay nguoi dung.
+ */
+r.get('/api/app/version', (env, req) => appInfo.appVersion(env, req));
 r.get('/api/categories', products.listCategories);
 r.get('/api/products', products.listProducts);
 r.get('/api/products/featured', products.getFeatured);

@@ -171,17 +171,25 @@ export async function payosSignature(data, checksumKey) {
   return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Đọc checksum key: ưu tiên Worker secret, sau đó tới settings. */
+/**
+ * Đọc checksum key: CHỈ Worker secret.
+ *
+ * VÌ SAO BỎ fallback settings:
+ *   `payos_checksum_key` nằm trong bảng `settings`, mà bảng này được trả về
+ *   NGUYÊN VĂN qua GET /api/admin/settings và cho phép sửa qua
+ *   POST /api/admin/settings. Ai đọc được settings là biết checksum key, tự
+ *   ký một payload payOS giả rồi POST /api/webhooks/payos -> server coi như
+ *   "đã thanh toán" và giao license MIỄN PHÍ.
+ *
+ *   Đã kiểm chứng thật trên production: ký HMAC-SHA256 bằng giá trị
+ *   `payos_checksum_key` đang lưu trong settings đã được chấp nhận.
+ *
+ * Giao dịch thật chạy qua SePay (MB Bank). payOS là kênh dự phòng: nếu cần
+ * bật lại thì đặt secret `PAYOS_CHECKSUM_KEY` bằng `wrangler secret put` —
+ * secret không bao giờ lộ ra API.
+ */
 export async function payosChecksumKey(env) {
-  if (env.PAYOS_CHECKSUM_KEY) return env.PAYOS_CHECKSUM_KEY;
-  try {
-    const row = await env.DB.prepare(
-      "SELECT value FROM settings WHERE key = 'payos_checksum_key'"
-    ).first();
-    return row?.value || '';
-  } catch {
-    return '';
-  }
+  return env.PAYOS_CHECKSUM_KEY || '';
 }
 
 /**

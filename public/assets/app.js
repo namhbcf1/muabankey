@@ -17,6 +17,7 @@ import { renderSupport, mountSupport } from './pages/support.js';
 import { renderLicenses, mountLicenses } from './pages/licenses.js';
 import { renderAdmin, mountAdmin } from './pages/admin.js';
 import { renderGuide, mountGuide } from './pages/guide.js';
+import { renderDownload, mountDownload } from './pages/download.js';
 
 const ROUTES = [
   { pattern: /^\/$/, render: renderHome, mount: mountHome },
@@ -42,6 +43,12 @@ const ROUTES = [
   { pattern: /^\/licenses$/, render: renderLicenses, mount: mountLicenses },
   { pattern: /^\/support$/, render: renderSupport, mount: mountSupport },
   { pattern: /^\/huong-dan$/, render: renderGuide, mount: mountGuide },
+  /*
+   * /tai-ve — trang tải bộ cài. PUBLIC (không cần đăng nhập): khách còn
+   * đang phân vân vẫn phải xem được version + hash trước khi quyết định
+   * mua, và nút tải phải chạy ngay từ lần mở đầu tiên.
+   */
+  { pattern: /^\/tai-ve$/, render: renderDownload, mount: mountDownload },
   { pattern: /^\/admin$/, render: renderAdmin, mount: mountAdmin },
 ];
 

@@ -34,6 +34,7 @@ export function renderHeader() {
       <nav class="nav" aria-label="Điều hướng chính">
         <a href="#/" class="nav-link ${isActive('/') ? 'active' : ''}">Trang chủ</a>
         <a href="#/products" class="nav-link ${isActive('/products') ? 'active' : ''}">Sản phẩm</a>
+        <a href="#/tai-ve" class="nav-link ${isActive('/tai-ve') ? 'active' : ''}">Tải về</a>
         <a href="#/orders" class="nav-link ${isActive('/orders') ? 'active' : ''}">Đơn hàng</a>
         <a href="#/support" class="nav-link ${isActive('/support') ? 'active' : ''}">Hỗ trợ</a>
       </nav>
@@ -53,6 +54,7 @@ export function renderHeader() {
       <nav aria-label="Điều hướng di động">
         <a href="#/" class="mobile-nav-link ${isActive('/') ? 'active' : ''}">${icon('home', { size: 15 })} Trang chủ</a>
         <a href="#/products" class="mobile-nav-link ${isActive('/products') ? 'active' : ''}">${icon('grid', { size: 15 })} Sản phẩm</a>
+        <a href="#/tai-ve" class="mobile-nav-link ${isActive('/tai-ve') ? 'active' : ''}">${icon('download', { size: 15 })} Tải về</a>
         <a href="#/orders" class="mobile-nav-link ${isActive('/orders') ? 'active' : ''}">${icon('receipt', { size: 15 })} Đơn hàng</a>
         <a href="#/support" class="mobile-nav-link ${isActive('/support') ? 'active' : ''}">${icon('help', { size: 15 })} Hỗ trợ</a>
       </nav>
@@ -305,6 +307,8 @@ export function renderFooter() {
         </div>
         <div class="footer-col">
           <h2 class="footer-h">Hỗ trợ</h2>
+          <a href="#/tai-ve">Tải bộ cài (EXE)</a>
+          <a href="#/huong-dan">Vượt cảnh báo Windows</a>
           <a href="#/support">Trung tâm hỗ trợ</a>
           <a href="#/support#warranty">Chính sách bảo hành</a>
           <a href="#/support#refund">Chính sách hoàn tiền</a>
