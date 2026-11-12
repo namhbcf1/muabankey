@@ -74,9 +74,17 @@ export function int(v, field, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
  * câu SQL hỏng -> 500 INTERNAL. Đã tái hiện thật trên production:
  *   GET /api/products?page=NOT_A_NUMBER  ->  500
  * Đầu vào từ query string là dữ liệu của client, phải chặn ở biên.
+ *
+ * CẨN THẬN với `Number(null) === 0` và `Number('') === 0`: tham số VẮNG MẶT
+ * (`url.searchParams.get()` trả `null`) cũng là số hữu hạn, nên nếu chỉ kiểm
+ * `Number.isFinite` thì `perPage` vắng mặt sẽ bị kẹp thành 1 thay vì mặc định.
+ * Phải loại giá trị rỗng trước khi ép số.
  */
 export function pageNum(v, fallback = 1, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const n = Number(v);
+  if (v === null || v === undefined) return fallback;
+  const s = String(v).trim();
+  if (s === '') return fallback;
+  const n = Number(s);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
