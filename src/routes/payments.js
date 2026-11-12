@@ -857,9 +857,13 @@ export async function sepayWebhook(env, request) {
        * 12 columns" suốt thời gian qua: tiền vào ngân hàng mà sổ trống, admin
        * không thấy gì. Chỉ bỏ qua trường hợp trùng txn_ref (Webhook replay).
        */
-      if (!String(e?.message || '').includes('UNIQUE')) {
-        console.error('webhook unmatched INSERT:', e && e.message ? e.message : e);
+      const msg = String(e?.message || e);
+      if (msg.includes('UNIQUE')) {
+        // Giao dịch đã ghi ở lần gửi trước -> không báo Telegram lần nữa,
+        // nếu không admin nhận 1 tin cho mỗi lần SePay retry.
+        return ok({ matched: false, duplicated: true, reason: 'NO_ORDER_MATCH' });
       }
+      console.error('webhook unmatched INSERT:', msg);
     }
 
     try {
@@ -895,32 +899,58 @@ export async function sepayWebhook(env, request) {
     // nhìn sổ tưởng đủ tiền rồi duyệt giao hàng.
     const expected = Number(order.total) || 0;
     const state = amount >= expected ? 'matched' : 'wrong_amount';
-    try {
-      await env.DB.prepare(
-        `INSERT INTO payments
-           (id, order_id, order_code, amount, expected, method, txn_ref,
-            content, state, confirmed_by, raw, at, is_test)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).bind(crypto.randomUUID(), order.id, order.code, amount,
-        expected, 'sepay', txnRef || null, content || null,
-        state, 'sepay-window',
-        JSON.stringify(body).slice(0, 3000), nowSec(), isTest ? 1 : 0).run();
-    } catch (e) {
-      // Lỗi ghi sổ buổi chiều = tiền vào mà không ai biết. Phải log.
-      if (!String(e?.message || '').includes('UNIQUE')) {
-        console.error('webhook window INSERT:', e && e.message ? e.message : e);
+    /*
+     * CHỐNG REPLAY Ở NHÁNH BUỔI CHIỀU.
+     *
+     * Trước đây mọi lỗi INSERT đều bị `catch {}` nuốt, nên không phân biệt
+     * được "đã ghi rồi" với "ghi hỏng". SePay gửi lại cùng một giao dịch là
+     * chuyện bình thường (retry khi webhook timeout) -> mỗi lần gửi lại lại
+     * bắn thêm một tin Telegram cho admin, và response vẫn nói như lần đầu.
+     * Nay: kiểm txn_ref trước, và trả `duplicated: true` để bên gọi biết.
+     */
+    let duplicated = false;
+    if (txnRef) {
+      const seen = await env.DB.prepare(
+        'SELECT id FROM payments WHERE txn_ref = ? LIMIT 1'
+      ).bind(txnRef).first();
+      duplicated = !!seen;
+    }
+
+    if (!duplicated) {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO payments
+             (id, order_id, order_code, amount, expected, method, txn_ref,
+              content, state, confirmed_by, raw, at, is_test)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).bind(crypto.randomUUID(), order.id, order.code, amount,
+          expected, 'sepay', txnRef || null, content || null,
+          state, 'sepay-window',
+          JSON.stringify(body).slice(0, 3000), nowSec(), isTest ? 1 : 0).run();
+      } catch (e) {
+        // Lỗi ghi sổ buổi chiều = tiền vào mà không ai biết. Phải log.
+        const msg = String(e?.message || e);
+        if (msg.includes('UNIQUE')) {
+          // Đua nhau cùng lúc: request khác đã ghi trước -> coi là trùng.
+          duplicated = true;
+        } else {
+          console.error('webhook window INSERT:', msg);
+        }
       }
     }
 
-    try {
-      const { notifyPaymentClaim } = await import('../lib/telegram-pay.js');
-      await notifyPaymentClaim(env, order, { username: 'SePay ngoai gio tu dong' });
-    } catch { /* bỏ qua */ }
+    if (!duplicated) {
+      try {
+        const { notifyPaymentClaim } = await import('../lib/telegram-pay.js');
+        await notifyPaymentClaim(env, order, { username: 'SePay ngoai gio tu dong' });
+      } catch { /* bỏ qua */ }
+    }
 
     return ok({
       matched: true,
       order: order.code,
       delivered: false,
+      duplicated,
       reason: 'AWAITING_ADMIN_APPROVAL',
       window: { from: win.from, to: win.to, hour: win.hour },
     });

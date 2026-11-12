@@ -298,13 +298,47 @@ async function signKey(env) {
   return _signKey;
 }
 
-/** Tạo token `xn1.<payload>.<sig>` đã ký ECDSA P-256. */
+/**
+ * Chuẩn hoá chữ ký ECDSA về dạng "low-S" (s <= N/2).
+ *
+ * WebCrypto trả chữ ký không chuẩn hoá: khoảng một nửa số lần `s > N/2`.
+ * Client Python từ chối `s > N/2` để chặn malleability (cùng một thông điệp
+ * có hai chữ ký hợp lệ), nên nếu server không chuẩn hoá thì ~50% lượt kích
+ * hoạt sẽ thất bại với `bad_sig` — lỗi ngẫu nhiên, cực khó tìm.
+ *
+ * Ở đây ta đổi (r, s) -> (r, N-s) khi s > N/2. Đây là phép biến đổi chuẩn
+ * (BIP-62 / RFC 6979 §5): cả hai đều là chữ ký hợp lệ của cùng thông điệp,
+ * chỉ khác cách mã hoá, nên chọn dạng nhỏ hơn là an toàn và làm token có
+ * dạng chuẩn tất định.
+ *
+ * `sig` là raw r||s 64 byte (WebCrypto trả đúng định dạng này cho P-256).
+ */
+const P256_N = BigInt(
+  '0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551'
+);
+const P256_HALF_N = P256_N >> 1n;
+
+function toLowS(sig) {
+  const b = new Uint8Array(sig);
+  if (b.length !== 64) return b;
+  const s = BigInt('0x' + Array.from(b.slice(32))
+    .map((x) => x.toString(16).padStart(2, '0')).join(''));
+  if (s <= P256_HALF_N) return b;
+  const flipped = P256_N - s;
+  const hex = flipped.toString(16).padStart(64, '0');
+  for (let i = 0; i < 32; i++) {
+    b[32 + i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return b;
+}
+
+/** Tạo token `xn1.<payload>.<sig>` đã ký ECDSA P-256 (chuẩn hoá low-S). */
 async function mintToken(env, payload) {
   const body = 'xn1.' + b64u(enc.encode(JSON.stringify(payload)));
-  const sig = await crypto.subtle.sign(
+  const raw = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' }, await signKey(env), enc.encode(body)
   );
-  return body + '.' + b64u(sig);
+  return body + '.' + b64u(toLowS(raw));
 }
 
 /**

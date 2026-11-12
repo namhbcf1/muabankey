@@ -13,6 +13,7 @@ cmdurl.txt
 
 # Tool build
 tool/dist/
+tool/dist-nuitka/
 tool/.build/
 tool/src/__pycache__/
 __pycache__/
@@ -51,3 +52,8 @@ scripts/gen-credentials.mjs
 
 # Khoa ma hoa product_keys.secret - KHONG commit
 .key-enc.txt
+
+# Khoa ky license (ECDSA P-256). `secrets/xn-sign-jwk.json` chua `d` (private).
+# Lo khoa nay = mint duoc token hop le => mat toan bo tac dung bao ve.
+# Da tung bi commit; nay chan lai va da xoay khoa moi.
+secrets/

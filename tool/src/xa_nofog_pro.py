@@ -249,14 +249,63 @@ def _pd_path(name):
     return os.path.join(_programdata_dir(), name)
 
 
-def _current_exe():
-    """Duong dan tuyet doi cua chinh ban dang chay."""
+def _is_frozen():
+    """True neu dang chay tu file EXE da dong goi (PyInstaller hoac Nuitka).
+
+    QUAN TRONG: Nuitka --onefile KHONG dat sys.frozen. No dat:
+      - sys.argv[0]       = duong dan EXE THAT (dung)
+      - sys.executable    = ...\\Temp\\onefile_xxx\\python.exe  (SAI - thu muc
+                            giai nen tam, se bi xoa khi thoat)
+      - __compiled__      = module cua Nuitka (dau hieu chinh xac)
+    Vi vay khong duoc chi dua vao sys.frozen de tim EXE.
+    """
+    if getattr(sys, 'frozen', False):
+        return True
+    if '__compiled__' in globals():
+        return True
     try:
-        if getattr(sys, 'frozen', False):
-            return os.path.abspath(sys.executable)
+        return sys.argv[0].lower().endswith('.exe')
+    except Exception:
+        return False
+
+
+def _current_exe():
+    """Duong dan tuyet doi cua chinh ban dang chay (file .exe that).
+
+    Thu tu uu tien:
+      1. sys.argv[0] neu la .exe  -- Nuitka/PyInstaller deu dat dung cho nay
+      2. sys.executable           -- khi chay .py bang python.exe
+      3. __file__                 -- du phong cuoi
+    KHONG dung sys.executable truoc: voi Nuitka onefile no tro vao thu muc
+    giai nen tam, chep tu do ra Program Files se hong.
+    """
+    cands = []
+    try:
+        if sys.argv and sys.argv[0]:
+            cands.append(sys.argv[0])
     except Exception:
         pass
-    return os.path.abspath(__file__)
+    try:
+        if getattr(sys, 'frozen', False) and sys.executable:
+            cands.append(sys.executable)
+    except Exception:
+        pass
+    for c in cands:
+        try:
+            p = os.path.abspath(c)
+            if p.lower().endswith('.exe') and os.path.isfile(p):
+                return p
+        except Exception:
+            continue
+    # Chay tu source (.py) -> tra file script
+    try:
+        return os.path.abspath(__file__)
+    except Exception:
+        pass
+    try:
+        return os.path.abspath(sys.executable)
+    except Exception:
+        return sys.argv[0] if sys.argv else ''
 
 
 def is_installed():
@@ -1630,6 +1679,13 @@ def trial_guard(verbose=True):
                 _print_hwid_fail()
             elif 'clock_tampered' in msg:
                 print('  [!] Dong ho may bi chinh lui -> dung.')
+            elif 'ban cu' in msg and 'can ' in msg:
+                # Server yeu cau version toi thieu (min_ver) -> dung han,
+                # khong the chay tiep bang ban cu.
+                print('')
+                print('  [!] Ban %s da cu. Tai ban moi: %s'
+                      % (CLIENT_VERSION, DOWNLOAD_URL))
+                print('')
             elif is_trial(st):
                 print('  Khong xac minh duoc dung thu: %s' % msg)
                 _offer_buy()
@@ -2126,6 +2182,28 @@ def title(text):
     _titler.set(text)
 
 
+# --- TokenElevation -----------------------------------------------------------
+# PHAI khai bao argtypes/restype truoc khi dung.
+# Neu khong, ctypes coi GetCurrentProcess() tra c_int (32 bit) -> pseudo-handle
+# -1 bi cat thanh 0x00000000FFFFFFFF, OpenProcessToken that bai, va ham
+# LUON tra False ke ca khi dang elevated (High integrity) -> vong lap
+# elevate vo tan. Da gap that tren may nay.
+_ADV = advapi32 if advapi32 is not None else ctypes.WinDLL(
+    'advapi32', use_last_error=True)
+
+kernel32.GetCurrentProcess.restype = wt.HANDLE
+kernel32.GetCurrentProcess.argtypes = []
+_ADV.OpenProcessToken.restype = wt.BOOL
+_ADV.OpenProcessToken.argtypes = [wt.HANDLE, wt.DWORD,
+                                  ctypes.POINTER(wt.HANDLE)]
+_ADV.GetTokenInformation.restype = wt.BOOL
+_ADV.GetTokenInformation.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                     wt.DWORD, ctypes.POINTER(wt.DWORD)]
+
+TOKEN_QUERY = 0x0008
+TokenElevation = 20
+
+
 def is_admin():
     """TokenElevation -- chinh xac cho 'dang chay elevated'.
 
@@ -2133,26 +2211,27 @@ def is_admin():
     Administrators nhung token dang bi UAC loc (Medium integrity). Truong hop
     do moi lan chay deu bi hoi UAC lai -> phai doc TokenElevation that.
 
-    TokenElevation = 20, TOKEN_QUERY = 0x0008.
+    Tra True CHI khi dang thuc su chay voi quyen cao (High integrity).
     """
     try:
-        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
-        adv = ctypes.WinDLL('advapi32', use_last_error=True)
-        TOKEN_QUERY, TokenElevation = 0x0008, 20
         h = wt.HANDLE()
-        if not adv.OpenProcessToken(k32.GetCurrentProcess(), TOKEN_QUERY,
-                                    ctypes.byref(h)):
+        if not _ADV.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY,
+                                     ctypes.byref(h)):
             return False
         try:
             elev = wt.DWORD(0)
             ret = wt.DWORD(0)
-            if not adv.GetTokenInformation(h, TokenElevation, ctypes.byref(elev),
-                                           ctypes.sizeof(elev),
-                                           ctypes.byref(ret)):
+            if not _ADV.GetTokenInformation(h, TokenElevation,
+                                            ctypes.byref(elev),
+                                            ctypes.sizeof(elev),
+                                            ctypes.byref(ret)):
                 return False
             return bool(elev.value)
         finally:
-            k32.CloseHandle(h)
+            try:
+                kernel32.CloseHandle(h)
+            except Exception:
+                pass
     except Exception:
         # Fallback: cach cu
         try:
@@ -2185,12 +2264,11 @@ def require_admin(allow_view):
     print('Can quyen Administrator de va game.')
     print('Dang yeu cau Windows cap quyen (UAC)...')
     args = _args_str()
-    if getattr(sys, 'frozen', False):
-        exe = sys.executable
+    exe = _current_exe()
+    if _is_frozen():
         params = args
     else:
-        exe = sys.executable
-        params = '-ExecutionPolicy Bypass -NoProfile -File "%s"' % os.path.abspath(__file__)
+        params = '-ExecutionPolicy Bypass -NoProfile -File "%s"' % exe
         if args:
             params += ' ' + args
     rc = shell32.ShellExecuteW(None, 'runas', exe, params or None, None,
@@ -2549,7 +2627,8 @@ _TASK_XML = '''<?xml version="1.0" encoding="UTF-16"?>
   <Triggers/>
   <Principals>
     <Principal id="Author">
-      <GroupId>S-1-5-32-545</GroupId>
+      <UserId>{usersid}</UserId>
+      <LogonType>InteractiveToken</LogonType>
       <RunLevel>HighestAvailable</RunLevel>
     </Principal>
   </Principals>
@@ -2581,6 +2660,56 @@ _TASK_XML = '''<?xml version="1.0" encoding="UTF-16"?>
 </Task>
 '''
 
+# GHI CHU ve Principal:
+# Truoc day dung <GroupId>S-1-5-32-545</GroupId> (Users). Task dang ky boi
+# admin thi owner la Administrators -> user thuong bam shortcut bi
+# "ERROR: Access is denied" khi schtasks /run.
+# Dung <UserId> cua CHINH user dang dang nhap + InteractiveToken:
+#   - user la owner -> duoc phep /run va /delete
+#   - HighestAvailable -> chay High integrity, KHONG hien UAC
+#   - InteractiveToken  -> khong can luu mat khau
+
+
+def _current_user_sid():
+    """SID cua user dang dang nhap (dang chuoi S-1-5-21-...). '' neu khong doc duoc.
+
+    Dung `whoami /user` de khong phu thuoc pywin32. Lay tu TOKEN cua process
+    hien tai -- chu y: khi chay elevated, token la cua CUNG user do (UAC chi
+    nang quyen, khong doi user), nen SID van dung.
+    """
+    try:
+        r = subprocess.run(['whoami', '/user', '/fo', 'csv', '/nh'],
+                           capture_output=True, timeout=20,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        out = r.stdout.decode('utf-8', 'replace')
+        m = re.search(r'(S-1-5-21-\d+-\d+-\d+-\d+)', out)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    # Du phong: dung token qua advapi32
+    try:
+        h = wt.HANDLE()
+        if _ADV.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY,
+                                 ctypes.byref(h)):
+            try:
+                need = wt.DWORD(0)
+                _ADV.GetTokenInformation(h, 1, None, 0, ctypes.byref(need))
+                buf = ctypes.create_string_buffer(max(int(need.value), 64))
+                if _ADV.GetTokenInformation(h, 1, buf, len(buf),
+                                            ctypes.byref(need)):
+                    # TOKEN_USER: SID_AND_ATTRIBUTES { PSID Sid; DWORD Attr; }
+                    sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+                    s = ctypes.c_wchar_p()
+                    _ADV.ConvertSidToStringSidW(ctypes.c_void_p(sid_ptr),
+                                                ctypes.byref(s))
+                    return s.value or ''
+            finally:
+                kernel32.CloseHandle(h)
+    except Exception:
+        pass
+    return ''
+
 
 def _create_elevated_task(exe_path):
     """Tao Scheduled Task chay EXE voi quyen cao nhat, KHONG hien UAC.
@@ -2592,14 +2721,25 @@ def _create_elevated_task(exe_path):
     tmp = os.path.join(os.environ.get('TEMP', os.path.expanduser('~')),
                        '_xanf_task_%d.xml' % os.getpid())
     try:
+        sid = _current_user_sid() or os.environ.get('USERNAME', '')
+        if not sid:
+            return False
         xml = _TASK_XML.format(task=TASK_NAME, target=exe_path,
-                               workdir=os.path.dirname(exe_path))
+                               workdir=os.path.dirname(exe_path),
+                               usersid=sid)
         with open(tmp, 'w', encoding='utf-16') as f:
             f.write(xml)
         r = subprocess.run(['schtasks.exe', '/Create', '/TN', TASK_NAME,
                             '/XML', tmp, '/F'],
                            capture_output=True, timeout=60,
                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if r.returncode != 0:
+            try:
+                err = r.stderr.decode('utf-8', 'replace')[:200]
+            except Exception:
+                err = ''
+            if err.strip():
+                print('       schtasks: %s' % err.strip())
         return r.returncode == 0
     except Exception:
         return False
@@ -2703,6 +2843,93 @@ def _foreign_files_in_root():
     return out
 
 
+# --- GUARD 3: nhan dien GAME CLIENT -----------------------------------------
+# C:\Program Files\XArena la ban cai game Arena.vn cua KHACH. Neu --install
+# hoac --uninstall cham vao do thi mat game + mat config VPN SoftEther.
+# Nhung dau vet nay KHONG BAO GIO duoc phep co trong thu muc cua tool.
+GAME_CLIENT_MARKERS = (
+    'Arena.exe',
+    'Arena.exp',
+    'Arena.lib',
+    'Uninstall.exe',
+    'Uninstall.dat',
+    'UpdateService.vbs',
+    'Exclusive_XArena.bat',
+    'StartAoE.zip',
+    'underworld.dll',
+    'spine_flutter.dll',
+)
+
+# Ten file/thu muc con dai dien cho game/launcher (so khop ten, khong phan biet hoa).
+GAME_CLIENT_DIRS = ('SoftEther', 'StartAoE', 'Game', 'update', 'logs',
+                    '.sentry-native', 'data')
+
+
+def _looks_like_game_client(path=None):
+    """Tra (True, ly_do) neu `path` la ban cai GAME Arena (khong phai tool).
+
+    GUARD 3: dung TRUOC moi thao tac ghi/xoa. Khong doan mo: chi can thay
+    MOT dau vet dac trung la du ket luan.
+    """
+    p = path or INSTALL_ROOT
+    try:
+        if not os.path.isdir(p):
+            return False, ''
+        for m in GAME_CLIENT_MARKERS:
+            if os.path.isfile(os.path.join(p, m)):
+                return True, m
+        # Thu muc con: chi tinh khi co it nhat 2 (mot cai co the la trung ten)
+        hit = [d for d in GAME_CLIENT_DIRS if os.path.isdir(os.path.join(p, d))]
+        if len(hit) >= 2:
+            return True, ', '.join(hit[:3]) + '\\'
+        # Arena.exe o bat ky dau (khong chi goc)
+        try:
+            for root, _dirs, files in os.walk(p):
+                # chi quet sau 2 muc de khong ton thoi gian
+                if root[len(p):].count(os.sep) > 2:
+                    _dirs[:] = []
+                    continue
+                for f in files:
+                    if f.lower() == 'arena.exe':
+                        return True, os.path.join(root[len(p) + 1:], f)
+                for d in _dirs:
+                    if d.lower() == 'softhernet':
+                        return True, os.path.join(root[len(p) + 1:], d) + '\\'
+        except Exception:
+            pass
+        return False, ''
+    except Exception:
+        return False, ''
+
+
+def _assert_safe_target(verbose=True):
+    """GUARD 3 + 4: dung lai neu INSTALL_ROOT khong an toan de ghi/xoa.
+
+    Tra (ok, msg). ok=False -> caller PHAI abort ngay, khong ghi gi.
+    """
+    # GUARD 4: duong dan chua "Arena" nhung khong phai "XArenaNoFog" -> chan.
+    root_name = os.path.basename(os.path.normpath(INSTALL_ROOT))
+    if 'arena' in root_name.lower() and root_name.lower() != _INSTALL_VENDOR.lower():
+        return False, ('Thu muc dich "%s" co ten chua "Arena" nhung khong phai '
+                       '"%s" -- co the la game Arena.vn. Khong ghi vao.'
+                       % (root_name, _INSTALL_VENDOR))
+
+    # GUARD 3: nhan dien game client
+    is_game, why = _looks_like_game_client(INSTALL_ROOT)
+    if is_game:
+        return False, ('Thu muc "%s" thuoc game Arena.vn (thay %s) -- '
+                       'KHONG ghi vao.' % (INSTALL_ROOT, why))
+
+    # Guard cu: co file la ma khong co dau vet cua tool
+    if os.path.isdir(INSTALL_ROOT) and not _root_owned_by_us():
+        foreign = _foreign_files_in_root()
+        if foreign:
+            return False, ('Thu muc "%s" da co du lieu khac (%s%s). Khong ghi vao.'
+                           % (INSTALL_ROOT, ', '.join(foreign[:5]),
+                              ' ...' if len(foreign) > 5 else ''))
+    return True, ''
+
+
 def _pid_wait_exit(pid, timeout=10.0):
     """Cho process thoat (dung khi cap nhat ban dang chay). Tra True neu da thoat."""
     if not pid:
@@ -2718,7 +2945,7 @@ def _pid_wait_exit(pid, timeout=10.0):
 def _elevate_self(args=None):
     """Chay lai chinh minh voi quyen admin. Tra True neu da gui yeu cau."""
     exe = _current_exe()
-    if getattr(sys, 'frozen', False):
+    if _is_frozen():
         params = args if args is not None else _args_str()
     else:
         params = '-ExecutionPolicy Bypass -NoProfile -File "%s"' % exe
@@ -2826,22 +3053,16 @@ def run_install(opts=None):
     print('  ------------------------------------------------------------')
 
     # --- 1. Thu muc cai dat ------------------------------------------
-    # CHAN AN TOAN: neu INSTALL_ROOT da ton tai va chua du lieu cua nguoi
-    # khac thi dung lai. Truong hop that: "C:\Program Files\XArena" la ban
-    # cai GAME Arena cua khach -- cai vao do se lam ban thu muc game.
-    if os.path.isdir(INSTALL_ROOT) and not _root_owned_by_us():
-        foreign = _foreign_files_in_root()
-        if foreign:
-            print('', file=sys.stderr)
-            print('  [X] KHONG cai vao %s' % INSTALL_ROOT, file=sys.stderr)
-            print('      Thu muc nay dang chua du lieu khac:', file=sys.stderr)
-            for n in foreign[:8]:
-                print('        - %s' % n, file=sys.stderr)
-            print('', file=sys.stderr)
-            print('      Chon thu muc khac bang bien moi truong:', file=sys.stderr)
-            print('        set XA_INSTALL_ROOT_NAME=TenKhac', file=sys.stderr)
-            print('      hoac go cai dat ban cu truoc.', file=sys.stderr)
-            return 1
+    # GUARD 3 + 4: chan TUYET DOI neu dich la game Arena.vn hoac ten la.
+    ok_t, why = _assert_safe_target()
+    if not ok_t:
+        print('', file=sys.stderr)
+        print('  [X] KHONG CAI DAT', file=sys.stderr)
+        print('      %s' % why, file=sys.stderr)
+        print('', file=sys.stderr)
+        print('      Doi thu muc dich bang bien moi truong neu can:', file=sys.stderr)
+        print('        set XA_INSTALL_ROOT_NAME=TenKhac', file=sys.stderr)
+        return 1
     try:
         os.makedirs(INSTALL_EXE_DIR, exist_ok=True)
     except Exception as e:
@@ -2941,6 +3162,43 @@ def run_install(opts=None):
     return 0
 
 
+def _uninstall_plan():
+    """Liet ke CHINH XAC nhung gi --uninstall se xoa. Tra list (mo_ta, path).
+
+    GUARD 5: in ra va hoi xac nhan TRUOC khi dong vao bat cu thu gi.
+    """
+    plan = []
+
+    if _task_exists():
+        plan.append(('Scheduled Task (khong UAC)', TASK_NAME))
+
+    for lnk in _shortcut_paths():
+        if os.path.isfile(lnk):
+            plan.append(('Shortcut', lnk))
+
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, LAYERS_KEY, 0,
+                            winreg.KEY_READ) as k:
+            winreg.QueryValueEx(k, INSTALL_EXE)
+        plan.append(('Registry RUNASADMIN',
+                     'HKCU\\' + LAYERS_KEY + '\\' + INSTALL_EXE))
+    except Exception:
+        pass
+
+    p = _pd_path(INSTALL_JSON)
+    if os.path.isfile(p):
+        plan.append(('Dau vet cai dat', p))
+
+    if os.path.isdir(INSTALL_ROOT):
+        if _root_owned_by_us():
+            plan.append(('Thu muc cai dat', INSTALL_ROOT))
+        else:
+            plan.append(('[GIU NGUYEN - khong phai cua tool]', INSTALL_ROOT))
+
+    return plan
+
+
 def run_uninstall(opts=None):
     """Luong go cai dat. Tra exit code. Mac dinh GIU license."""
     _need_admin_or_elevate('--uninstall')
@@ -2950,11 +3208,45 @@ def run_uninstall(opts=None):
     print('   GO CAI DAT XARENA NO FOG')
     print('  ============================================================')
 
+    # GUARD 3: khong bao gio go cai dat mot thu muc game.
+    is_game, why = _looks_like_game_client(INSTALL_ROOT)
+    if is_game:
+        print('', file=sys.stderr)
+        print('  [X] KHONG GO CAI DAT', file=sys.stderr)
+        print('      "%s" thuoc game Arena.vn (thay %s).'
+              % (INSTALL_ROOT, why), file=sys.stderr)
+        print('      Day khong phai thu muc cua XArena No Fog -- khong dung vao.',
+              file=sys.stderr)
+        return 1
+
     # Khong xoa khi dang co ban chay: file dang bi giu -> xoa nua voi.
     if not acquire_mutex():
         print('  [!] Dang co ban khac chay. Tat no truoc roi hay go cai dat.',
               file=sys.stderr)
         return EXIT_ALREADY_RUNNING
+
+    # --- GUARD 5: in ke hoach, hoi xac nhan TRUOC khi xoa -------------
+    plan = _uninstall_plan()
+    st = load_state()
+    has_lic = bool(st.get('key')) or os.path.isfile(STATE_FILE)
+    if has_lic:
+        plan.append(('License (hoi rieng ben duoi)',
+                     '%s  [%s]' % (STATE_FILE, mask_key(st.get('key')))))
+
+    if plan:
+        print('')
+        print('   Se XOA:')
+        for label, target in plan:
+            print('     - %-38s %s' % (label, target))
+    else:
+        print('')
+        print('   Khong tim thay gi de xoa (chua cai dat?).')
+    print('')
+
+    if not (opts or {}).get('force'):
+        if not _ask_yes_no('   Xac nhan go cai dat?', default=True):
+            print('   Da huy. Khong xoa gi.')
+            return 0
 
     errors = []
 
@@ -3066,7 +3358,7 @@ def offer_install_if_needed(opts):
     """Chay khi KHONG co --install: hoi cai dat neu chua cai. Tra True neu
     da chuyen sang luong cai dat (caller phai return ngay)."""
     # Chi hoi khi that su chay ban .exe. Chay .py tu source thi bo qua.
-    if not getattr(sys, 'frozen', False):
+    if not _is_frozen():
         return False
     if is_installed():
         if not running_from_install():
@@ -3631,13 +3923,54 @@ def _ask_yes_no(prompt, default=False):
         return default
 
 
+_HELP_FALLBACK = """XArena No Fog Pro -- huong dan nhanh
+
+    xa_nofog_pro.exe                 thuong tru: doi game, va 1 lan/game
+    xa_nofog_pro.exe --once          va 1 lan neu game dang mo, roi thoat
+    xa_nofog_pro.exe --off           tra byte goc 17/17 (game phai dang mo)
+    xa_nofog_pro.exe --dump          in trang thai byte cua tung cong
+    xa_nofog_pro.exe --list          liet ke cong + byte goc/byte va
+    xa_nofog_pro.exe --full          them 7 cong legacy (F I J K L O T2)
+    xa_nofog_pro.exe --watch         va lai moi 0.5s -- CHI de debug
+    xa_nofog_pro.exe --key XXXX      kich hoat bang key, roi thoat
+    xa_nofog_pro.exe --trial 1h      dung thu 1 GIO
+    xa_nofog_pro.exe --trial 3d      dung thu 3 NGAY (mac dinh)
+    xa_nofog_pro.exe --trial-key TR-XXXX-XXXX-XXXX   nhan ma do WEB cap
+    xa_nofog_pro.exe --login         dang nhap (hoi tai khoan + mat khau)
+    xa_nofog_pro.exe --login tk mk   dang nhap truc tiep
+    xa_nofog_pro.exe --logout        dang xuat (GIU key ban quyen)
+    xa_nofog_pro.exe --buy           mo trang mua key
+    xa_nofog_pro.exe --rebind K T    doi may bang token
+    xa_nofog_pro.exe --status        xem trang thai + so luot con lai
+    xa_nofog_pro.exe --deactivate    xoa key khoi may nay
+    xa_nofog_pro.exe --install       cai vao Program Files + shortcut Desktop
+    xa_nofog_pro.exe --uninstall     go cai dat
+    xa_nofog_pro.exe --help          huong dan nay
+"""
+
+
+def help_text():
+    """Tra ve phan huong dan de in ra.
+
+    VI SAO KHONG dung thang `print(__doc__)`:
+      Ban EXE dong goi bang Nuitka co the bi cat docstring (--python-flag=no_docstrings
+      hoac toi uu tuong duong). Khi do `__doc__` la None va `--help` chi in ra
+      chu "None" -- dung loi khach gap that o ban 1.4.0/1.4.1. Luon co ban du
+      phong de --help khong bao gio in rac.
+    """
+    doc = __doc__
+    if isinstance(doc, str) and doc.strip():
+        return doc
+    return _HELP_FALLBACK
+
+
 def run():
     opts, err = parse_args(sys.argv[1:])
     if err:
         print(err, file=sys.stderr)
         return 2
     if opts['help']:
-        print(__doc__)
+        print(help_text())
         return 0
 
     # --uninstall: go cai dat (khong can license, KHONG hoi key)
@@ -3850,6 +4183,12 @@ def run():
     if not opts['restore']:
         if not require_license(opts):
             return EXIT_NO_LICENSE
+
+    # Chua cai dat -> hoi cai vao Program Files (chi voi ban .exe).
+    # Dat SAU license: nguoi chua co key khong bi hoi cai dat truoc.
+    if not opts['restore'] and not opts['dump'] and not opts['list']:
+        if offer_install_if_needed(opts):
+            return 0
 
     require_admin(allow_view=False)
 
