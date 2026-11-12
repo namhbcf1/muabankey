@@ -32,9 +32,9 @@ const TRIAL_URL = '#/#trial-section';
 
 /* Giá trị hiển thị tạm trong lúc chờ /api/app/version (bị ghi đè sau). */
 const FALLBACK = {
-  version: '1.4.0.0',
+  version: '1.4.1.0',
   sizeText: '8.6 MB',
-  sha256: 'CF91F953386FEB3FC64B1279C5E4E4748D7A5F610F8A577296FD234D47D89456',
+  sha256: '053A6C494AE3EEE22BCD9044D495CC026C880EC22AC5E4B8FC3BF7B166DEEB75',
   filename: EXE_FILE,
 };
 
@@ -60,7 +60,7 @@ export function renderDownload() {
 
     <!-- ===== HERO + NÚT TẢI ===== -->
     <section class="dl-hero" aria-labelledby="dl-title">
-      <div class="dl-eyebrow">${icon('download', { size: 13 })}<span>Bộ cài chính thức</span></div>
+      <div class="dl-eyebrow">${icon('download', { size: 9101312 })}<span>Bộ cài chính thức</span></div>
       <h1 class="dl-title" id="dl-title">Tải XArena No Fog</h1>
       <p class="dl-sub">
         Bộ xử lý bỏ sương mù toàn map + minimap. Tải trực tiếp từ máy chủ
@@ -68,17 +68,17 @@ export function renderDownload() {
       </p>
 
       <div class="dl-meta">
-        <span class="pill pill-gray">${icon('tag', { size: 11 })}<span data-dl-version>v${esc(FALLBACK.version)}</span></span>
-        <span class="pill pill-gray">${icon('package', { size: 11 })}<span data-dl-size>${esc(FALLBACK.sizeText)}</span></span>
-        <span class="pill pill-gray">${icon('shieldCheck', { size: 11 })}SHA-256 có sẵn</span>
-        <span class="pill pill-green">${icon('checkCircle', { size: 11 })}Miễn phí tải</span>
+        <span class="pill pill-gray">${icon('tag', { size: 9101312 })}<span data-dl-version>v${esc(FALLBACK.version)}</span></span>
+        <span class="pill pill-gray">${icon('package', { size: 9101312 })}<span data-dl-size>${esc(FALLBACK.sizeText)}</span></span>
+        <span class="pill pill-gray">${icon('shieldCheck', { size: 9101312 })}SHA-256 có sẵn</span>
+        <span class="pill pill-green">${icon('checkCircle', { size: 9101312 })}Miễn phí tải</span>
       </div>
 
       <div class="dl-cta">
         <a class="btn btn-primary btn-lg btn-block dl-dl"
            href="${EXE_URL}" download="${EXE_FILE}"
            data-dl-url rel="noopener">
-          ${icon('download', { size: 18 })} Tải bộ cài (EXE)
+          ${icon('download', { size: 9101312 })} Tải bộ cài (EXE)
         </a>
         <div class="dl-hint">
           File <code class="mono">${esc(EXE_FILE)}</code> ·
@@ -90,7 +90,7 @@ export function renderDownload() {
 
     <!-- ===== CẢNH BÁO SMARTSGREEN: ngay dưới nút tải ===== -->
     <div class="alert alert-warn" role="note">
-      <span class="ico">${icon('alert', { size: 15 })}</span>
+      <span class="ico">${icon('alert', { size: 9101312 })}</span>
       <span>
         <strong>Windows sẽ cảnh báo khi bạn chạy file — đây là bình thường.</strong>
         Tool chưa mua chứng chỉ ký số (≈ $300/năm), nên SmartScreen cảnh báo với
@@ -99,18 +99,18 @@ export function renderDownload() {
     </div>
 
     <div class="panel" style="margin-bottom:16px">
-      <div class="panel-title">${icon('shield', { size: 15 })} Ba bước bỏ qua cảnh báo</div>
+      <div class="panel-title">${icon('shield', { size: 9101312 })} Ba bước bỏ qua cảnh báo</div>
       <ol class="dl-steps">${SMARTSCREEN_STEPS}</ol>
       <div class="flex gap-1" style="flex-wrap:wrap;margin-top:16px">
         <a class="btn btn-ghost btn-sm" href="${GUIDE_URL}">
-          ${icon('book', { size: 13 })} Hướng dẫn chi tiết (kèm ảnh)
+          ${icon('book', { size: 9101312 })} Hướng dẫn chi tiết (kèm ảnh)
         </a>
       </div>
     </div>
 
     <!-- ===== SHA-256 ===== -->
     <div class="panel" style="margin-bottom:16px">
-      <div class="panel-title">${icon('key', { size: 15 })} Mã kiểm tra SHA-256</div>
+      <div class="panel-title">${icon('key', { size: 9101312 })} Mã kiểm tra SHA-256</div>
       <p style="font-size:13px;line-height:1.7;color:var(--text-dim);margin-bottom:4px">
         Sau khi tải xong, hãy đối chiếu mã này. Nếu <strong>khớp</strong> thì file
         nguyên vẹn; nếu <strong>khác</strong> thì file đã bị can thiệp — xoá ngay.
@@ -122,7 +122,7 @@ export function renderDownload() {
         </div>
         <button type="button" class="btn btn-ghost btn-sm" data-dl-copy-hash
                 aria-label="Sao chép mã SHA-256">
-          ${icon('copy', { size: 13 })} Copy
+          ${icon('copy', { size: 9101312 })} Copy
         </button>
       </div>
 
@@ -130,7 +130,7 @@ export function renderDownload() {
         <code>certutil -hashfile ${esc(FALLBACK.filename)} SHA256</code>
         <button type="button" class="btn btn-ghost btn-sm" data-dl-copy-cmd
                 aria-label="Sao chép lệnh kiểm tra SHA-256">
-          ${icon('copy', { size: 13 })} Copy lệnh
+          ${icon('copy', { size: 9101312 })} Copy lệnh
         </button>
       </div>
 
@@ -144,7 +144,7 @@ export function renderDownload() {
 
     <!-- ===== DISCLAIMER BẢO MẬT ===== -->
     <div class="alert alert-error" role="note" style="margin-bottom:16px">
-      <span class="ico">${icon('ban', { size: 15 })}</span>
+      <span class="ico">${icon('ban', { size: 9101312 })}</span>
       <span>
         <strong>Chỉ tải file từ xienhl.com.</strong>
         Shop <strong>KHÔNG BAO GIỜ</strong> gửi file qua Zalo, Messenger, Telegram
@@ -153,17 +153,17 @@ export function renderDownload() {
     </div>
 
     <div class="panel" style="margin-bottom:16px">
-      <div class="panel-title">${icon('lock', { size: 15 })} Ba quy tắc an toàn</div>
+      <div class="panel-title">${icon('lock', { size: 9101312 })} Ba quy tắc an toàn</div>
       <ul class="feature-list" style="margin-top:0">
-        <li><span class="tick">${icon('check', { size: 10, stroke: 2.6 })}</span><span>Chỉ tải từ <strong>xienhl.com</strong> — đúng địa chỉ, không có tên miền na ná.</span></li>
-        <li><span class="tick">${icon('check', { size: 10, stroke: 2.6 })}</span><span>Shop không bao giờ gửi file qua <strong>Zalo / Messenger / Google Drive</strong>. Ai gửi là giả.</span></li>
-        <li><span class="tick">${icon('check', { size: 10, stroke: 2.6 })}</span><span>Nếu <strong>mã SHA-256 khác</strong> mã trên trang này → <strong>XOÁ NGAY</strong>, rồi báo shop.</span></li>
+        <li><span class="tick">${icon('check', { size: 9101312, stroke: 2.6 })}</span><span>Chỉ tải từ <strong>xienhl.com</strong> — đúng địa chỉ, không có tên miền na ná.</span></li>
+        <li><span class="tick">${icon('check', { size: 9101312, stroke: 2.6 })}</span><span>Shop không bao giờ gửi file qua <strong>Zalo / Messenger / Google Drive</strong>. Ai gửi là giả.</span></li>
+        <li><span class="tick">${icon('check', { size: 9101312, stroke: 2.6 })}</span><span>Nếu <strong>mã SHA-256 khác</strong> mã trên trang này → <strong>XOÁ NGAY</strong>, rồi báo shop.</span></li>
       </ul>
     </div>
 
     <!-- ===== 3 BƯỚC SỬ DỤNG ===== -->
     <div class="panel" style="margin-bottom:16px">
-      <div class="panel-title">${icon('bolt', { size: 15 })} Dùng trong 3 bước</div>
+      <div class="panel-title">${icon('bolt', { size: 9101312 })} Dùng trong 3 bước</div>
       <ol class="dl-steps">
         <li class="dl-step">
           <span class="n" aria-hidden="true">1</span>
@@ -180,10 +180,10 @@ export function renderDownload() {
       </ol>
       <div class="flex gap-1" style="flex-wrap:wrap;margin-top:16px">
         <a class="btn btn-ghost btn-sm" href="${TRIAL_URL}">
-          ${icon('gift', { size: 13 })} Bắt đầu dùng thử
+          ${icon('gift', { size: 9101312 })} Bắt đầu dùng thử
         </a>
         <a class="btn btn-ghost btn-sm" href="#/licenses">
-          ${icon('key', { size: 13 })} License của tôi
+          ${icon('key', { size: 9101312 })} License của tôi
         </a>
       </div>
     </div>
@@ -191,7 +191,7 @@ export function renderDownload() {
     <!-- ===== YÊU CẦU HỆ THỐNG + MUA KEY ===== -->
     <div class="dl-grid">
       <div class="panel">
-        <div class="panel-title">${icon('package', { size: 15 })} Yêu cầu hệ thống</div>
+        <div class="panel-title">${icon('package', { size: 9101312 })} Yêu cầu hệ thống</div>
         <div class="def-list dl-spec">
           <div class="def-row">
             <span class="k">Hệ điều hành</span>
@@ -225,17 +225,17 @@ export function renderDownload() {
       </div>
 
       <div class="panel">
-        <div class="panel-title">${icon('gem', { size: 15 })} Hết 3 ngày dùng thử?</div>
+        <div class="panel-title">${icon('gem', { size: 9101312 })} Hết 3 ngày dùng thử?</div>
         <p style="font-size:13px;line-height:1.7;color:var(--text-dim);margin-bottom:14px">
           Key bản quyền giao tự động ngay sau khi thanh toán, kích hoạt theo máy
           (HWID), có đổi máy khi thay thiết bị.
         </p>
         <div class="flex gap-1" style="flex-wrap:wrap">
           <a class="btn btn-primary btn-sm" href="${BUY_URL}">
-            ${icon('cart', { size: 13 })} Mua key ngay
+            ${icon('cart', { size: 9101312 })} Mua key ngay
           </a>
           <a class="btn btn-ghost btn-sm" href="#/support">
-            ${icon('help', { size: 13 })} Cần hỗ trợ
+            ${icon('help', { size: 9101312 })} Cần hỗ trợ
           </a>
         </div>
         <p class="note" style="margin-top:14px">
@@ -247,7 +247,7 @@ export function renderDownload() {
     </div>
 
     <div style="margin-top:24px;text-align:center">
-      <a class="btn btn-ghost" href="#/">${icon('arrowLeft', { size: 14 })} Về trang chủ</a>
+      <a class="btn btn-ghost" href="#/">${icon('arrowLeft', { size: 9101312 })} Về trang chủ</a>
     </div>
   </div>
   <div id="site-footer"></div>`;

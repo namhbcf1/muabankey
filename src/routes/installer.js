@@ -23,10 +23,10 @@ const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
  * cho va rat de lech -> khach tai dung file nhung so sanh hash sai.
  */
 export const EXE_NAME = 'xa_nofog_pro.exe';
-export const EXE_SHA256 = 'CF91F953386FEB3FC64B1279C5E4E4748D7A5F610F8A577296FD234D47D89456';
-export const EXE_SIZE = 8993792;
+export const EXE_SHA256 = '053A6C494AE3EEE22BCD9044D495CC026C880EC22AC5E4B8FC3BF7B166DEEB75';
+export const EXE_SIZE = 9101312;
 /** Phien ban phat hanh dang phuc vu. Doi o day la trang /tai-ve tu cap nhat. */
-export const EXE_VERSION = '1.4.0.0';
+export const EXE_VERSION = '1.4.1.0';
 /** Ten hien thi cua san pham. */
 export const APP_NAME = 'XArena No Fog';
 

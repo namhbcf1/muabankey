@@ -71,10 +71,14 @@ PHAN 2 -- NO FOG
 17 cong, chia 3 nhom: viewport (T1 V3 V6), minimap (A B C D E M N),
 legacy (F I J K L O T2). Tat ca chi sua DUONG VE, khong sua LOGIC.
 
+DIA CHI VA BYTE CUA 17 CONG KHONG CON TRONG FILE NAY. Chung den tu token da
+ky cua server (xem xa_nofog_sec.py). Khong co token hop le thi tool khong biet
+va vao dau -- do la muc dich cua thiet ke, khong phai loi.
+
 --- Ba cong toi thieu ---
-T1  0x514E0F  nop je          -> terrain sang toan map
-V3  0x514F58  je -> jmp       -> bo grid kim cuong mo
-V6  0x516590  stub ham ve fog -> khong con gi de ve
+T1  nop je          -> terrain sang toan map
+V3  je -> jmp       -> bo grid kim cuong mo
+V6  stub ham ve fog -> khong con gi de ve
 
 --- Vi sao V4/V5 bi loai ---
 Nhay qua ca `mov [esp+0x3C],eax` -> caller dung index cu -> AV doc 0x2103E1E.
@@ -97,6 +101,24 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+# ---------------------------------------------------------------------------
+# TANG BAO MAT -- bang cong No Fog KHONG con trong file nay.
+#
+# Truoc day 17 cong (MINIMAP/CORE/LEGACY: dia chi + byte goc + byte va) nam
+# thang trong file. Chi can mo EXE bang hex editor, hoac lay lai source tu ban
+# PyInstaller cu, la biet chinh xac tool va byte nao vao dia chi nao.
+#
+# Nay bang do chi ton tai duoi dang CIPHERTEXT trong token da ky ECDSA P-256
+# cua server (xem xa_nofog_sec.py + src/routes/license-server.js). Khoa giai
+# ma (`gate`) chi co trong payload da ky, sinh rieng cho tung license.
+#
+# He qua: khong co token hop le -> khong co bang -> tool khong biet va vao dau.
+# Patch "bo kiem tra license" cung vo dung: cai bi thieu la DU LIEU, khong
+# phai mot dieu kien `if` co the xoa.
+# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import xa_nofog_sec as NF                        # noqa: E402
 
 # Console Windows co the dung codepage cu (cp437/cp1258/cp1252) khong ma hoa
 # duoc tieng Viet co dau -> print() nem UnicodeEncodeError va lam chet chuong
@@ -133,28 +155,33 @@ LICENSE_MODE = 'server'
 
 # Server license (Cloudflare Worker + D1). Server la bo nho chung:
 # no biet key da gan may nao, nen mot key khong dung duoc tren may thu hai.
-API_BASE = str(_c('API_BASE', 'https://xienhl.com')).rstrip('/')
-APP_NAME = str(_c('APP_NAME', 'XArena No Fog'))
+# Gia tri mac dinh lay tu blob da XOR (xa_nofog_const.py) -> `strings` tren
+# EXE khong thay URL. Van uu tien bien moi truong / xa_config.py nhu cu.
+API_BASE = str(_c('API_BASE', NF.C(NF.K_API_BASE))).rstrip('/')
+APP_NAME = str(_c('APP_NAME', NF.C(NF.K_APP_NAME)))
 
 # Han tinh tu LAN KICH HOAT DAU TIEN, server luu activated_at.
 # Server da cong san 1 ngay bonus khi tao key (xem admin dashboard).
 # Cac ten goi chi de tham khao -- client khong con tu quyet han.
 TERMS = dict(_c('TERMS', {'TUAN': 7, 'THANG': 30, 'NAM': 365, 'VINHVIEN': 0}))
 
-PROCESS_NAMES = tuple(_c('PROCESS_NAMES', ('EMPIRESX.EXE', 'EMPIRESX_HD.EXE', 'EMPIRESX_HDR.EXE')))
+# Ten process game cung nam trong blob: khong de lo "EMPIRESX.EXE" trong EXE.
+PROCESS_NAMES = tuple(_c(
+    'PROCESS_NAMES',
+    tuple(x for x in NF.C(NF.K_PROCESS).split('|') if x)))
 PREFERRED_BASE = int(_c('PREFERRED_BASE', 0x400000))
 RESIDENT_POLL = float(_c('RESIDENT_POLL', 2.0))
 HTTP_TIMEOUT = int(_c('HTTP_TIMEOUT', 10))
 EXIT_NOT_ADMIN = int(_c('EXIT_NOT_ADMIN', 5))
 EXIT_NO_LICENSE = int(_c('EXIT_NO_LICENSE', 3))
 EXIT_ALREADY_RUNNING = int(_c('EXIT_ALREADY_RUNNING', 4))
-MUTEX_NAME = str(_c('MUTEX_NAME', r'Global\XArenaNoFogPro'))
+MUTEX_NAME = str(_c('MUTEX_NAME', NF.C(NF.K_MUTEX)))
 ERROR_ALREADY_EXISTS = 183
 _mutex_handle = None
 # Dong ho chay cham/lui trong khoang nay duoc coi la binh thuong
 # (dong bo NTP, doi mui gio, DST). Vuot qua moi coi la chinh lui.
 CLOCK_SKEW_TOLERANCE = int(_c('CLOCK_SKEW_TOLERANCE', 2 * 3600))
-REG_KEY = str(_c('REG_KEY', r'Software\Microsoft\Windows\CurrentVersion\XASupport'))
+REG_KEY = str(_c('REG_KEY', NF.C(NF.K_REG_KEY)))
 
 # --- DUNG THU ---------------------------------------------------------------
 TRIAL_ENABLED = str(_c('TRIAL_ENABLED', '1')) not in ('0', 'False', 'false', '')
@@ -180,9 +207,9 @@ TRIAL_WARN_DAYS = TRIAL_WARN_DAYS_3D
 
 TRIAL_GRACE_HOURS = int(_c('TRIAL_GRACE_HOURS', 0))
 TRIAL_RECHECK_SEC = int(_c('TRIAL_RECHECK_SEC', 300))
-BUY_URL = str(_c('BUY_URL', 'https://xienhl.com/#/product/license-xarena-thang'))
+BUY_URL = str(_c('BUY_URL', NF.C(NF.K_BUY_URL)))
 LOGIN_URL = str(_c('LOGIN_URL', 'https://xienhl.com/#/login'))
-REGISTER_URL = str(_c('REGISTER_URL', 'https://xienhl.com/#/register'))
+REGISTER_URL = str(_c('REGISTER_URL', NF.C(NF.K_REGISTER_URL)))
 FORGOT_URL = str(_c('FORGOT_URL', 'https://xienhl.com/#/login'))
 EXIT_TRIAL_END = int(_c('EXIT_TRIAL_END', 6))
 EXIT_TRIAL_QUOTA = int(_c('EXIT_TRIAL_QUOTA', 7))
@@ -1105,11 +1132,26 @@ def activate(key, verbose=True, token=None):
         if code == 'token_expired':
             return False, 'Mã đổi máy đã hết hạn (30 phút). Lấy mã mới trên web.'
         return False, msg
+    tok = r.get('token') or ''
+    if not tok:
+        # Server CU (chua trien khai ban ky) tra ve khong co token.
+        return False, (
+            'server khong tra token bao ve ban quyen.\n'
+            '  Ban dang chay phien ban cu, hoac server chua cap nhat.\n'
+            '  Tai ban moi nhat roi thu lai.')
+    # Xac minh NGAY tai cho, truoc khi luu: token hong ma luu vao state thi
+    # lan chay sau se chet voi loi kho hieu.
+    _vr = NF.verify_token_local(tok, app='xa-nofog')
+    if not _vr.get('ok'):
+        return False, ('token server tra ve KHONG hop le (%s).\n  %s'
+                       % (_vr.get('code'), _vr.get('msg') or ''))
+
     st = load_state()
     anchor_server_time(st, r.get('now'))
     st.update({
         'key': key.strip().upper(),
         'hwid': hwid,
+        'xn_token': tok,
         'expires_at': r.get('expires_at', 0),
         'activated_at': r.get('activated_at', 0),
         # Xoa dau vet trial TRUOC: neu server khong tra 'plan', st['plan']
@@ -1168,7 +1210,15 @@ def check_online(st=None, verbose=True):
         'last_ok': time.time(),
         'mono_last_ok': _mono(),
     })
+    # Token moi moi lan check: bang cong luon khop phien ban server hien tai,
+    # va goi tin bat duoc KHONG phat lai duoc.
+    tok = r.get('token') or ''
+    if tok and NF.verify_token_local(tok, app='xa-nofog').get('ok'):
+        st['xn_token'] = tok
     save_state(st)
+    # Nap bang cong ngay, khong doi vong sau.
+    if not _load_sites(st)[0]:
+        return False, 'code:token_invalid|token bao ve ban quyen khong hop le'
     return True, 'ok'
 
 
@@ -1721,7 +1771,12 @@ def ensure_licensed(verbose=True):
     ok, msg = check_online(st, verbose=False)
 
     if ok:
-        # Server xac nhan -> con han
+        # Server xac nhan -> con han.
+        # Phai nap duoc bang cong TRUOC khi bao "chay duoc": khong co bang thi
+        # tool khong biet va vao dau, chay tiep chi to thoi gian cua khach.
+        sok, smsg = _load_sites(st)
+        if not sok:
+            return False, 'thieu bang cong (%s)' % (smsg or 'token khong hop le')
         return True, 'ok'
 
     code = ''
@@ -1761,7 +1816,14 @@ def ensure_licensed(verbose=True):
 # Chống lùi đồng hồ: ghi mốc thời gian cao nhất vào NHIỀU nơi. Kẻ tấn công
 # phải sửa hết tất cả mới qua được. Không nơi nào là "nguồn duy nhất".
 
-_ANCHOR_SALT = b'xanf-anchor-v1'
+def _anchor_salt():
+    """Muoi MAC cho moc thoi gian, lay tu blob da ma hoa.
+
+    Gia tri KHONG doi (van la 'xanf-anchor-v1'): doi no se lam moi moc da ghi
+    tren may khach thanh khong doc duoc -> mat kha nang phat hien lui dong ho.
+    Chi khac la nay no khong con lo dang chuoi trong EXE.
+    """
+    return (NF.C(NF.K_ANCHOR_SALT) or 'xanf-anchor-v1').encode('utf-8')
 
 
 def _anchor_paths():
@@ -1783,11 +1845,12 @@ def _anchor_read(path):
     try:
         with open(path, 'rb') as f:
             raw = f.read()
-        n = len(_ANCHOR_SALT)
-        if len(raw) < n + 32 or raw[:n] != _ANCHOR_SALT:
+        salt = _anchor_salt()
+        n = len(salt)
+        if len(raw) < n + 32 or raw[:n] != salt:
             return 0
         body = raw[n:]
-        mac = hashlib.sha256(_ANCHOR_SALT + body[:-32]).digest()
+        mac = hashlib.sha256(salt + body[:-32]).digest()
         if not hmac.compare_digest(mac, body[-32:]):
             return 0
         return int(body[:-32].decode('ascii', 'ignore') or 0)
@@ -1798,11 +1861,12 @@ def _anchor_read(path):
 def _anchor_write(path, value):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        salt = _anchor_salt()
         body = str(int(value)).encode('ascii')
-        mac = hashlib.sha256(_ANCHOR_SALT + body).digest()
+        mac = hashlib.sha256(salt + body).digest()
         tmp = path + '.tmp'
         with open(tmp, 'wb') as f:
-            f.write(_ANCHOR_SALT + body + mac)
+            f.write(salt + body + mac)
         os.replace(tmp, path)
         return True
     except Exception:
@@ -1918,54 +1982,82 @@ class PE32(ctypes.Structure):
 
 
 # --- bang cong ---------------------------------------------------------------
-MINIMAP = [
-    ('A', 0x42D521, '8a83b88d0000', 'b00190909090'),
-    ('B', 0x42D547, '0f84e2030000', '909090909090'),
-    ('C', 0x42DC63, '8a85b88d0000', 'b00190909090'),
-    ('D', 0x42DC6D, '8a95b98d0000', 'b20190909090'),
-    ('E', 0x42DCA9, '8a85b98d0000', 'b00190909090'),
-    ('M', 0x42DC93, 'b180',         'b10f'),
-    ('N', 0x42DCA7, 'b180',         'b10f'),
-]
-CORE = [
-    ('T1', 0x514E0F, '85d17407',   '90909090'),
-    ('V3', 0x514F58, '7404',       'eb43'),
-    ('V6', 0x516590, '518b442408', '33c0c21400'),
-]
-LEGACY = [
-    ('F',  0x513DF8, '8a81b88d0000', 'b00190909090'),
-    ('I',  0x51C631, '8a81b88d0000', 'b00190909090'),
-    ('J',  0x51C6B8, '8a81b88d0000', 'b00190909090'),
-    ('K',  0x51D28E, '8a82b88d0000', 'b00190909090'),
-    ('L',  0x51D3D7, '8a82b88d0000', 'b00190909090'),
-    # O: 0x51FC6F la GIUA LENH -- `b2 80` o do la 2 byte cuoi cua
-    # `8b 04 b2  mov eax,[edx+esi*4]` tai 0x51FC6D (xac nhan bang recursive
-    # descent tu prologue 0x51FA40: 0x51FC6F KHONG phai ranh gioi lenh).
-    # Va vao do ghi de giua lenh -> vmread -> #UD.
-    # Dia chi dung la 0x529BEA (entry ham 0x529BE0, co 2 call site:
-    # 0x529BD1 va 0x52EB01). Do la `mov dl,0x80` that su.
-    ('O',  0x529BEA, 'b280',         'b20f'),
-    ('T2', 0x514EFF, '0f853c010000', '909090909090'),
-]
-BASE = CORE + MINIMAP
-DEFAULT = BASE
-ALL_SITES = CORE + MINIMAP + LEGACY
-GROUPS = (('viewport', CORE), ('minimap', MINIMAP), ('legacy', LEGACY))
+#
+# KHONG CON MOT CONG NAO O DAY.
+#
+# Truoc day khoi nay chua 17 dong: moi dong la (ten, dia chi VA, byte goc,
+# byte da). Chi can `strings` hoac mo EXE bang hex editor la biet chinh xac
+# tool va byte nao vao dia chi nao -- va do chinh la toan bo gia tri cua tool.
+#
+# KHONG dat vi du byte that trong comment: comment CUNG nam trong binary.
+#
+# Nay bang do den tu token da ky:
+#
+#     /api/activate hoac /api/check  ->  {token: "xn1.<payload>.<sig>"}
+#     NF.verify_token_local(token)    ->  chi khi chu ky ECDSA hop le
+#     SITES                           ->  SiteTable (xem _load_sites)
+#
+# `SITES` la None cho toi khi nap xong. Moi ham dung no deu phai kiem
+# `_require_sites()` truoc -> fail closed, KHONG bao gio va bua.
+# ---------------------------------------------------------------------------
+
+SITES = None            # kieu xa_nofog_sec.SiteTable, nap boi _load_sites()
 
 
-def _validate():
-    keys = [s[0] for s in ALL_SITES]
-    if len(keys) != len(set(keys)):
-        raise SystemExit('trung key')
-    addrs = [s[1] for s in ALL_SITES]
-    if len(addrs) != len(set(addrs)):
-        raise SystemExit('trung dia chi')
-    for k, va, o, p in ALL_SITES:
-        if len(bytes.fromhex(o)) != len(bytes.fromhex(p)):
-            raise SystemExit('cong %s: do dai khac nhau' % k)
+class SitesUnavailable(Exception):
+    """Chua nap duoc bang cong. KHONG duoc cham vao process game."""
 
 
-_validate()
+def _require_sites():
+    """Tra bang cong da giai ma. Nem SitesUnavailable neu chua co."""
+    if SITES is None:
+        raise SitesUnavailable(
+            'chua co bang cong. Tool can token hop le tu server de biet '
+            'va vao dau (chay lai de kich hoat).')
+    return SITES
+
+
+def _load_sites(st=None, verbose=False):
+    """Xac minh token trong state va nap bang cong.
+
+    Tra (ok: bool, msg: str). KHONG BAO GIO nem ra ngoai.
+
+    Thu tu kiem (giong het xa_sec.py, khong duoc dao):
+      1. Chu ky ECDSA tren token  -- sai thi dung han
+      2. `payload.a` phai la 'xa-nofog'
+      3. Giai ma khoi bang cong bang `gate` trong payload
+    """
+    global SITES
+
+    if st is None:
+        st = load_state()
+    tok = (st or {}).get('xn_token') or ''
+
+    r = NF.verify_token_local(tok, app='xa-nofog')
+    if not r.get('ok'):
+        SITES = None
+        return False, r.get('msg') or ('loi token: %s' % r.get('code'))
+
+    SITES = r['sites']
+    if verbose:
+        print('  bang cong: %d cong (gate %s...)'
+              % (r['count'], (r.get('gate') or '')[:8]))
+    return True, 'ok'
+
+
+def _need_sites_msg():
+    """Thong bao khi thieu bang cong. Tra chuoi nhieu dong."""
+    return (
+        'KHONG CO BANG CONG -- tool khong biet va vao dau.\n'
+        '\n'
+        '  Bang cong (dia chi + byte) khong con nam trong file EXE. No duoc\n'
+        '  server ky va ma hoa theo tung license, chi giai ma duoc khi token\n'
+        '  trong may con hop le.\n'
+        '\n'
+        '  Cach xu ly:\n'
+        '    1. Chay lai tool (khong tham so) de lay token moi tu server\n'
+        '    2. Neu van loi: kich hoat lai bang  xa_nofog_pro.exe --key <MA>\n'
+        '    3. Neu server chua cap nhat: tai ban EXE moi nhat')
 
 
 # --- admin -------------------------------------------------------------------
@@ -2339,6 +2431,9 @@ def write_at(h, addr, data):
 
 
 def patch(h, base, site, restore=False):
+    # Bang cong phai duoc nap TU TOKEN truoc khi ghi bat cu byte nao.
+    # Thieu bang => khong biet dia chi/byte => ghi bua se lam crash game.
+    _require_sites()
     key, va, orig_s, pat_s = site
     orig = bytes.fromhex(orig_s)
     pat = bytes.fromhex(pat_s)
@@ -2422,10 +2517,31 @@ def dump_state(h, base, sites):
 
 
 def list_sites():
-    for name, group in GROUPS:
+    """In bang cong DA GIAI MA tu token trong state.
+
+    Khong can admin, khong can game -- chi can da kich hoạt mot lan.
+    Day cung la phep thu chung minh chu ky + giai ma chay dung.
+    """
+    ok, msg = _load_sites()
+    if not ok:
+        print('')
+        print('  [!] Khong nap duoc bang cong.')
+        print('')
+        for line in _need_sites_msg().split('\n'):
+            print('  ' + line)
+        if msg and msg != 'no_token':
+            print('')
+            print('  chi tiet: %s' % msg)
+        return False
+
+    t = SITES
+    print('  bang cong: %d cong, %d nhom'
+          % (len(t.all()), len(t.groups())))
+    for name, group in t.groups():
         print('[%s]' % name)
         for key, va, o, p in group:
             print('  %-3s 0x%08X  %s -> %s' % (key, va, o, p))
+    return True
 
 
 # =============================================================================
@@ -3281,14 +3397,20 @@ def run_uninstall(opts=None):
         errors.append('install.json (%s)' % e)
 
     # --- 4. Hoi truoc khi xoa license -------------------------------
+    # --force: bo qua CA prompt nay (dung cho script/unattend).
+    # Mac dinh KHONG xoa license -- de khach cai lai dung tiep.
     st = load_state()
     drop_lic = False
+    force = bool((opts or {}).get('force'))
     if st.get('key') or os.path.isfile(STATE_FILE):
         print('')
         print('   May nay dang co license: %s' % mask_key(st.get('key')))
-        drop_lic = _ask_yes_no(
-            '   Xoa luon license khoi may nay? (khong xoa = cai lai dung tiep)',
-            default=False)
+        if force:
+            print('   [=] --force: giu nguyen license (mac dinh an toan)')
+        else:
+            drop_lic = _ask_yes_no(
+                '   Xoa luon license khoi may nay? (khong xoa = cai lai dung tiep)',
+                default=False)
         if drop_lic:
             for p in (STATE_FILE, _pd_path(INSTALL_LICENSE_COPY)):
                 try:
@@ -3325,22 +3447,78 @@ def run_uninstall(opts=None):
             print('       De nguyen de khong xoa nham du lieu cua ban.')
             errors.append('thu muc cai dat (khong phai cua tool, giu nguyen)')
         else:
+            _remove_install_dir()
+
+
+def _move_file_on_reboot(path):
+    """Danh dau file de Windows xoa o lan khoi dong sau. Tra True/False."""
+    try:
+        MOVEFILE_DELAY_UNTIL_REBOOT = 0x4
+        fn = kernel32.MoveFileExW
+        fn.restype = wt.BOOL
+        fn.argtypes = [wt.LPCWSTR, wt.LPCWSTR, wt.DWORD]
+        return bool(fn(path, None, MOVEFILE_DELAY_UNTIL_REBOOT))
+    except Exception:
+        return False
+
+
+def _park_running_exe():
+    """Chuyen EXE dang chay ra khoi INSTALL_ROOT. Tra True neu da chuyen.
+
+    Tren Windows CO THE doi ten / di chuyen file .exe dang chay (chi khong
+    xoa duoc). Tan dung dieu do: chuyen EXE sang %TEMP% -> INSTALL_ROOT
+    khong con file bi khoa -> rmtree xoa duoc ngay, khong phai cho process
+    thoat va khong phai dat lich rmdir (cach cu that bai vi chay qua som).
+    File tam o %TEMP% se bi Windows don sau; danh dau xoa khi reboot.
+    """
+    try:
+        if not os.path.isfile(INSTALL_EXE):
+            return False
+        tmpdir = os.environ.get('TEMP') or os.path.expanduser('~')
+        dst = os.path.join(tmpdir, '_xanf_old_%d.exe' % os.getpid())
+        if os.path.exists(dst):
             try:
-                shutil.rmtree(INSTALL_ROOT)
-                print('   [OK] Da xoa %s' % INSTALL_ROOT)
-            except Exception as e:
-                # EXE dang chay tu trong Program Files -> khong tu xoa duoc.
-                # Dat len lich xoa sau khi thoat.
-                print('   [!] Khong xoa ngay duoc (%s)' % e)
-                print('       Ban dang chay tu thu muc cai dat - se xoa sau khi thoat.')
-                try:
-                    subprocess.Popen(
-                        ['cmd.exe', '/c',
-                         'ping -n 4 127.0.0.1 >nul & rmdir /s /q "%s"' % INSTALL_ROOT],
-                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                        close_fds=True)
-                except Exception:
-                    errors.append('thu muc cai dat')
+                os.remove(dst)
+            except Exception:
+                pass
+        os.replace(INSTALL_EXE, dst)
+        _move_file_on_reboot(dst)
+        return True
+    except Exception:
+        return False
+
+
+def _remove_install_dir(errors=None):
+    """Xoa INSTALL_ROOT neu la cua tool. Tra True/False."""
+    errors = errors if errors is not None else []
+    if not os.path.isdir(INSTALL_ROOT):
+        return True
+    try:
+        shutil.rmtree(INSTALL_ROOT)
+        print('   [OK] Da xoa %s' % INSTALL_ROOT)
+        return True
+    except Exception as e:
+        first_err = e
+
+    # Bi khoa boi chinh EXE dang chay -> chuyen no ra ngoai roi xoa lai.
+    if _park_running_exe():
+        try:
+            shutil.rmtree(INSTALL_ROOT)
+            print('   [OK] Da xoa %s' % INSTALL_ROOT)
+            print('       (EXE dang chay duoc chuyen sang %TEMP%, tu don sau)')
+            return True
+        except Exception as e:
+            first_err = e
+
+    # Van khong duoc -> dat lich xoa luc khoi dong lai may.
+    print('   [!] Khong xoa ngay duoc (%s)' % first_err)
+    if _move_file_on_reboot(INSTALL_ROOT):
+        print('       Da dat lich xoa %s o lan khoi dong Windows tiep theo.'
+              % INSTALL_ROOT)
+    else:
+        print('       Hay xoa thu cong: %s' % INSTALL_ROOT)
+        errors.append('thu muc cai dat')
+    return False
 
     print('')
     if errors:
@@ -3505,9 +3683,11 @@ def parse_args(argv):
 
 
 def pick_sites(opts):
+    """Chon cong can va, tu bang DA GIAI MA (khong con hang so trong file)."""
+    t = _require_sites()
     if opts['full']:
-        return BASE + LEGACY, 'viewport+minimap+legacy'
-    return DEFAULT, 'viewport+minimap'
+        return t.full(), 'viewport+minimap+legacy'
+    return t.default(), 'viewport+minimap'
 
 
 def _gui_label():
@@ -4146,8 +4326,7 @@ def run():
         return 0
 
     if opts['list']:
-        list_sites()
-        return 0
+        return 0 if list_sites() else EXIT_NO_LICENSE
     if opts['status']:
         show_status()
         return 0
@@ -4162,6 +4341,15 @@ def run():
             if existed:
                 kernel32.SetFileAttributesW(STATE_FILE, 0x80)
                 os.remove(STATE_FILE)
+            # Token nam trong lic.bin nen da bi xoa cung. Xoa them ban sao
+            # trong ProgramData (--install chep license sang do).
+            try:
+                pd = _pd_path('license.dat') if '_pd_path' in globals() else ''
+                if pd and os.path.exists(pd):
+                    kernel32.SetFileAttributesW(pd, 0x80)
+                    os.remove(pd)
+            except Exception:
+                pass
             print('Da xoa key khoi may nay.' if existed
                   else 'May nay chua kich hoat, khong co gi de xoa.')
         except Exception as e:
@@ -4192,8 +4380,17 @@ def run():
 
     require_admin(allow_view=False)
 
+    # --off: tra byte goc phai LUON lam duoc (khong the bat khach co license
+    # chi de go tool ra khoi game). Nhung van can bang cong de biet dia chi.
+    # Khong co bang -> khong biet tra o dau -> bao ro, khong crash.
     if opts['restore']:
-        sites, label = ALL_SITES, 'all'
+        try:
+            sites, label = _require_sites().full(), 'all'
+        except SitesUnavailable:
+            print('')
+            for line in _need_sites_msg().split('\n'):
+                print('  ' + line)
+            return EXIT_NO_LICENSE
     else:
         sites, label = pick_sites(opts)
 
@@ -4335,7 +4532,7 @@ def run():
                     print('canh bao: base lech 0x%x' % (base - PREFERRED_BASE))
 
             if opts['dump']:
-                for gname, group in GROUPS:
+                for gname, group in _require_sites().groups():
                     print(' [%s]' % gname)
                     dump_state(h, base, group)
                 kernel32.CloseHandle(h)

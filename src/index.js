@@ -340,9 +340,22 @@ export default {
             .bind(nowS - 30 * 86400).run();
         } catch { /* chưa migrate */ }
         try {
+          /*
+           * `rate_limits.window_at` là CHỈ SỐ KHUNG, không phải mốc thời gian:
+           * ratelimit.js ghi `Math.floor(now / windowSec)`. Với window 60s giá
+           * trị hiện tại ~29.907.000, trong khi mốc so sánh là Unix giây
+           * ~1.794.400.000. Phép "<" vì thế LUÔN đúng -> mỗi lần cron chạy
+           * (10 phút) xoá SẠCH bảng, làm bộ đếm fallback khi KV lỗi mất tác
+           * dụng hoàn toàn (reset rate limit trước hạn).
+           *
+           * Giữ lại 24 giờ gần nhất: mốc = (now - 86400) chia cho window.
+           * windowSec nhỏ nhất dùng trong hệ thống là 60 (rateLimit ... , 60).
+           * Dùng 60 làm mẫu số an toàn: nếu window lớn hơn thì ngưỡng chỉ bảo
+           * thủ hơn (giữ lâu hơn), không bao giờ xoá sớm.
+           */
           await env.DB.prepare('DELETE FROM rate_limits WHERE window_at < ?')
-            .bind(nowS - 86400).run();
-        } catch { /* dùng ms hoặc chưa có */ }
+            .bind(Math.floor((nowS - 86400) / 60)).run();
+        } catch { /* chưa có bảng */ }
         // trial_quota mồ côi: user_id không còn trong users (user test đã xoá)
         try {
           await env.DB.prepare(

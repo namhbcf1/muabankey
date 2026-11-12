@@ -597,12 +597,24 @@ export async function confirmOrderPaid(env, opts = {}) {
    * (worker chết giữa chừng) sẽ KHÔNG BAO GIỜ được dọn — khách đã trả tiền
    * nhưng đơn treo vĩnh viễn.
    */
+  /*
+   * ===== MỐC THỜI GIAN: MILI-GIÂY =====
+   *
+   * `orders.created_at` là MILI-GIÂY (Date.now()), và cron dọn đơn kẹt so
+   * `processing_started_at < ?` với `now - 10*60*1000` (mili-giây).
+   *
+   * Trước đây hai cột này ghi `nowSec()` (GIÂY). Hệ quả thật:
+   *   • paid_at/delivered_at lệch 1000 lần so với created_at (UI hiện năm 1970);
+   *   • `processing_started_at` (1.79e9) LUÔN nhỏ hơn mốc mili-giây (1.79e12),
+   *     nên cron coi MỌI đơn 'processing' là kẹt quá 10 phút và reset về 'paid'
+   *     ngay ở lần chạy kế tiếp — kể cả đơn vừa bắt đầu xử lý.
+   */
   const claim = await env.DB.prepare(
     `UPDATE orders SET status = 'processing', paid_at = ?, confirmed_by = ?,
             processing_started_at = ?
      WHERE id = ? AND status IN ('pending','expired','processing','cancelled')`
-  ).bind(now, source === 'sepay' || source === 'payos' ? source : (adminId || 'admin'),
-    now, order.id).run();
+  ).bind(now * 1000, source === 'sepay' || source === 'payos' ? source : (adminId || 'admin'),
+    now * 1000, order.id).run();
 
   if (!claim.meta || claim.meta.changes !== 1) {
 
@@ -681,7 +693,7 @@ async function deliverAndFinish(env, order, { amount, source, adminId, now, exce
 
      WHERE id = ? AND status IN ('processing','paid')`
 
-  ).bind(finalStatus, result.pendingManual ? null : now, order.id).run();
+  ).bind(finalStatus, result.pendingManual ? null : now * 1000, order.id).run();
 
   const fresh = await env.DB.prepare('SELECT * FROM orders WHERE id = ?')
 

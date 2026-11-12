@@ -37,6 +37,17 @@ export async function rateLimit(env, key, limit, windowSec) {
       )
         .bind(key, windowAt)
         .run();
+      /*
+       * Dọn khung CŨ của chính khoá này.
+       *
+       * Bảng khoá theo (key, window_at) nên mỗi phút lại sinh thêm một dòng
+       * cho mỗi IP -> phình vô hạn nếu chỉ dựa vào cron. Xoá ngay tại đây thì
+       * bảng chỉ còn khung hiện tại và khung trước (đệm an toàn cho request
+       * đang chạy qua ranh giới khung).
+       */
+      await env.DB.prepare(
+        'DELETE FROM rate_limits WHERE key = ? AND window_at < ?'
+      ).bind(key, windowAt - 1).run();
       return { count: count + 1, remaining: limit - count - 1 };
     } catch (e2) {
       if (e2 instanceof ApiError) throw e2;

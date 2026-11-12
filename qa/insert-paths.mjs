@@ -74,7 +74,7 @@ const plist = await admin.get('/api/admin/products');
 const pid = (plist.json?.products || []).find((p) => p.slug === pcode)?.id;
 if (pid) {
   no5xx('admin add keys (INSERT product_keys)', await admin.post(`/api/admin/products/${pid}/keys`, {
-    keys: ['QA-KEY-1-' + T, 'QA-KEY-2-' + T],
+    keys: 'QA-KEY-1-' + T + '\nQA-KEY-2-' + T,
   }));
   no5xx('admin list keys', await admin.get(`/api/admin/products/${pid}/keys`));
   no5xx('admin product delete', await admin.del(`/api/admin/products/${pid}`));
@@ -95,10 +95,10 @@ if (uid) {
   no5xx('trial unban', await admin.post('/api/admin/trial/ban', { user: uname, kind: '3d', banned: false }));
 }
 no5xx('whitelist add (INSERT trial_whitelist)', await admin.post('/api/admin/trial/whitelist', {
-  scope: 'weak', value: 'qa-weak-' + T, note: 'QA',
+  scope: 'user', value: uname, note: 'QA',
 }));
 no5xx('whitelist list', await admin.get('/api/admin/trial/whitelist'));
-no5xx('whitelist remove', await admin.del('/api/admin/trial/whitelist'));
+no5xx('whitelist remove', await admin.del('/api/admin/trial/whitelist?scope=user&value=' + uname));
 
 // audit log write already exercised by all the above; read it back
 no5xx('admin logs (INSERT audit_logs happened)', await admin.get('/api/admin/logs'));
