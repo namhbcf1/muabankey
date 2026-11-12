@@ -1230,8 +1230,31 @@ export async function adminListPayments(env, request) {
      LIMIT ?`
   ).bind(...params).all();
 
-  // Thống kê
+  /*
+   * Thống kê cho thẻ số liệu đầu tab "Chờ thanh toán".
+   *
+   * PHẢI TÁCH TIỀN THẬT KHỎI GIAO DỊCH TEST.
+   *
+   * Trước đây chỉ `GROUP BY state` trên TOÀN BỘ bảng payments, nên thẻ
+   * "Tổng đã khớp" hiện 19.660.000đ trong khi tiền thật chỉ 1.150.000đ —
+   * 18.510.000đ là giao dịch thử của chính hệ thống (is_test=1). Cùng lý do,
+   * số "giao dịch tiền vào KHÔNG khớp đơn" bị đội lên gấp 6 lần.
+   *
+   * Admin dùng đúng những con số này để quyết định có phải kiểm sao kê hay
+   * không. Số ảo ở đây làm loãng cảnh báo thật và khiến không ai còn tin
+   * cảnh báo nữa.
+   *
+   * `stats`      = CHỈ tiền thật (is_test=0) — dùng cho cảnh báo + số liệu.
+   * `statsAll`   = gồm cả test — chỉ để đối soát nội bộ, không hiện mặc định.
+   */
   const stats = await env.DB.prepare(
+    `SELECT state, COUNT(*) AS n, COALESCE(SUM(amount),0) AS total
+     FROM payments
+     WHERE COALESCE(is_test,0) = 0
+     GROUP BY state`
+  ).all();
+
+  const statsAll = await env.DB.prepare(
     `SELECT state, COUNT(*) AS n, COALESCE(SUM(amount),0) AS total
      FROM payments GROUP BY state`
   ).all();
@@ -1239,6 +1262,11 @@ export async function adminListPayments(env, request) {
   const byState = {};
   for (const r of stats.results || []) {
     byState[r.state] = { count: r.n, total: r.total };
+  }
+
+  const byStateAll = {};
+  for (const r of statsAll.results || []) {
+    byStateAll[r.state] = { count: r.n, total: r.total };
   }
 
   return ok({
@@ -1255,9 +1283,11 @@ export async function adminListPayments(env, request) {
       txnRef: p.txn_ref,
       content: p.content,
       confirmedBy: p.confirmed_by,
+      isTest: !!p.is_test,
       at: p.at,
     })),
     stats: byState,
+    statsAll: byStateAll,
   });
 }
 

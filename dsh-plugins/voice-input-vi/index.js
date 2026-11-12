@@ -1,9 +1,41 @@
-import { mkdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
-import { createReadStream, createWriteStream } from 'node:fs'
+import { mkdir, rename, stat, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import { dirname, isAbsolute, join } from 'node:path'
+import { createRequire } from 'node:module'
+import { isAbsolute, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import z from '@deepseek-ai/schemastery'
+import { createWriteStream } from 'node:fs'
+
+/**
+ * Resolve a dependency as this bundle would, then as the DSH installation does.
+ * A plugin installed as a linked workspace directory does not sit under any
+ * node_modules, so the runtime packages it shares with the Host
+ * (sherpa-onnx-node, schemastery) are only reachable from there.
+ * @param specifier - bare package name.
+ * @returns the loaded module.
+ */
+function loadShared(specifier) {
+  const bases = [import.meta.url]
+  const resources = process.resourcesPath
+  if (typeof resources === 'string' && resources !== '') {
+    bases.push(join(resources, 'app.asar', 'dsh', 'node_modules', 'noop.js'))
+  }
+  let lastError
+  for (const base of bases) {
+    try {
+      return createRequire(base)(specifier)
+    } catch (error) {
+      lastError = error
+    }
+  }
+  const error = new Error(`Cannot load ${specifier} from this bundle or the DSH installation`)
+  error.cause = lastError
+  throw error
+}
+
+const z = (() => {
+  const loaded = loadShared('@deepseek-ai/schemastery')
+  return typeof loaded === 'function' ? loaded : loaded.default
+})()
 
 /** Language hints this recognizer accepts; the model is Vietnamese-only. */
 const LANGUAGES = ['vi', 'auto']
@@ -120,23 +152,15 @@ async function downloadFile(url, destination, expected, signal, onProgress) {
 }
 
 /**
- * Load the sherpa-onnx runtime that DSH already installs, or the local
- * dependency when this bundle was installed as a package.
+ * Load the sherpa-onnx runtime that DSH already installs.
  * @returns the module namespace.
  */
-async function loadSherpa() {
-  const candidates = ['sherpa-onnx-node']
-  let lastError
-  for (const specifier of candidates) {
-    try {
-      return await import(specifier)
-    } catch (error) {
-      lastError = error
-    }
+function loadSherpa() {
+  const sherpa = loadShared('sherpa-onnx-node')
+  if (typeof sherpa.OfflineRecognizer !== 'function') {
+    throw new Error('The installed sherpa-onnx runtime exposes no offline recognizer')
   }
-  const error = new Error('The sherpa-onnx runtime is unavailable; enable the voice input bundle first')
-  error.cause = lastError
-  throw error
+  return sherpa
 }
 
 /** Own one recognizer across recordings: preparation, decode, and idle unload. */
@@ -287,7 +311,7 @@ class ZipformerVietnamese {
         { kind: 'load', status: 'running' },
       ],
     })
-    const sherpa = await loadSherpa()
+    const sherpa = loadSherpa()
     const recognizer = await sherpa.OfflineRecognizer.createAsync({
       featConfig: { sampleRate: 16000, featureDim: 80 },
       modelConfig: {
@@ -393,28 +417,26 @@ class ZipformerVietnamese {
 }
 
 /**
- * Normalize a transcript: collapse whitespace, restore sentence capitalization,
- * and add a closing question mark to interrogatives that lost their punctuation.
+ * Normalize a transcript. The model emits uppercase text with no punctuation,
+ * so restore sentence casing and mark an obvious Vietnamese interrogative.
  * @param text - raw decoded text.
  * @returns text ready to insert into a draft.
  */
 function tidy(text) {
-  let value = text.replace(/\s+/g, ' ').trim()
+  const value = text.replace(/\s+/gu, ' ').trim().toLocaleLowerCase('vi')
   if (value === '') return ''
-  value = value.toLocaleLowerCase('vi')
-  const question = /^(mấy|bao nhiêu|bao lâu|bao giờ|làm sao|thế nào|tại sao|vì sao|ở đâu|ai|gì|có .* (không|chưa|chưa|nhỉ)|đúng không|được không|phải không|hả|nhỉ|nhé)$/u
-  const sentences = value.split(/(?<=[.!?])\s+/u)
-  value = sentences
-    .map((sentence) => {
-      const trimmed = sentence.trim()
-      if (trimmed === '') return ''
-      const capitalized = trimmed.charAt(0).toLocaleUpperCase('vi') + trimmed.slice(1)
-      return question.test(trimmed.replace(/[.!?]+$/u, '')) ? `${capitalized}?` : capitalized
-    })
+  const question = /(không|chưa|nhỉ|nhé|hả|được không|đúng không|phải không|bao nhiêu|thế nào|làm sao|ở đâu|tại sao|vì sao|mấy)$/u
+  const sentences = value
+    .split(/(?<=[.!?])\s+/u)
+    .map((sentence) => sentence.trim())
     .filter((sentence) => sentence !== '')
-    .join(' ')
-  if (!/[.!?]$/u.test(value)) value += ' '
-  return value
+  const rebuilt = sentences.map((sentence) => {
+    const body = sentence.replace(/[.!?]+$/u, '')
+    if (body === '') return ''
+    const capitalized = body.charAt(0).toLocaleUpperCase('vi') + body.slice(1)
+    return question.test(body) ? `${capitalized}?` : `${capitalized}.`
+  })
+  return `${rebuilt.filter((sentence) => sentence !== '').join(' ')} `
 }
 
 /**

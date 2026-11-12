@@ -122,9 +122,11 @@ export async function mountProductDetail(root, slug) {
           <h1 class="pd-title">${esc(p.name)}</h1>
 
           <div class="pd-rating">
-            ${ratingStars(p.rating)}
-            <span><strong class="text-strong">${Number(p.rating).toFixed(1)}</strong> (${fmtNum(p.ratingCount)} đánh giá)</span>
-            <span class="pd-dot" aria-hidden="true">·</span>
+            ${Number(p.ratingCount) > 0
+              ? `${ratingStars(p.rating)}
+                 <span><strong class="text-strong">${Number(p.rating).toFixed(1)}</strong> (${fmtNum(p.ratingCount)} đánh giá)</span>
+                 <span class="pd-dot" aria-hidden="true">·</span>`
+              : ''}
             <span>Đã bán ${fmtNum(p.sold)}</span>
           </div>
 

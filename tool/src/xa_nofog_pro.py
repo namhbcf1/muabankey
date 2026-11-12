@@ -226,10 +226,19 @@ REQUIRE_ONLINE = str(_c('REQUIRE_ONLINE', '1')) not in ('0', 'False', 'false', '
 # =============================================================================
 # PHAN 1 -- LICENSE
 # =============================================================================
-STATE_DIR = os.path.join(
-    os.environ.get('LOCALAPPDATA', os.path.expanduser('~')),
-    str(_c('STATE_SUBDIR', 'XArenaNoFog')),
-)
+# PHAI dung `or`, khong dung `os.environ.get(k, default)`: khi bien TON TAI
+# nhung rong (LOCALAPPDATA='') thi get() tra '' chu khong tra default ->
+# os.path.join('') + ten thu muc = DUONG DAN TUONG DOI. Hau qua da kiem chung
+# bang test that: lic.bin bi ghi vao THU MUC HIEN TAI (CWD) thay vi profile
+# user. Chay tu USB -> license nam tren USB; chay tu thu muc chi-doc ->
+# save_state() fail im lang, khach tuong da kich hoat nhung lan sau van chua.
+_STATE_BASE = (os.environ.get('LOCALAPPDATA') or ''
+               or os.environ.get('USERPROFILE') or ''
+               or os.path.expanduser('~') or '')
+if not _STATE_BASE or not os.path.isabs(_STATE_BASE):
+    # Khong xac dinh duoc thu muc profile -> dung duong dan TUYET DOI.
+    _STATE_BASE = os.path.abspath(_STATE_BASE or '.')
+STATE_DIR = os.path.join(_STATE_BASE, str(_c('STATE_SUBDIR', 'XArenaNoFog')))
 STATE_FILE = os.path.join(STATE_DIR, 'lic.bin')
 
 # --- cai dat (--install) -----------------------------------------------------
@@ -3447,7 +3456,24 @@ def run_uninstall(opts=None):
             print('       De nguyen de khong xoa nham du lieu cua ban.')
             errors.append('thu muc cai dat (khong phai cua tool, giu nguyen)')
         else:
-            _remove_install_dir()
+            _remove_install_dir(errors)
+
+    # --- 6. Ket qua --------------------------------------------------
+    # TRUOC DAY khoi nay nam o CUOI _remove_install_dir(), SAU mot lenh
+    # `return False` -> dead code khong bao gio chay, va run_uninstall()
+    # roi khoi ham khong co return -> sys.exit(None) = exit 0 DU CO LOI.
+    # Script cai dat (.cmd/.ps1) doc %errorlevel% de bao "KHOI PHUC THAT BAI"
+    # nen exit code sai lam khach tuong da go sach.
+    print('')
+    if errors:
+        print('  Go cai dat XONG nhung co loi:')
+        for e in errors:
+            print('    - %s' % e)
+        print('')
+        return 1
+    print('Da go cai dat. Ban co the xoa file EXE goc (trong Downloads).')
+    print('')
+    return 0
 
 
 def _move_file_on_reboot(path):
@@ -3520,17 +3546,6 @@ def _remove_install_dir(errors=None):
         errors.append('thu muc cai dat')
     return False
 
-    print('')
-    if errors:
-        print('  Go cai dat XONG nhung co loi:')
-        for e in errors:
-            print('    - %s' % e)
-        print('')
-        return 1
-    print('Da go cai dat. Ban co the xoa file EXE goc (trong Downloads).')
-    print('')
-    return 0
-
 
 def offer_install_if_needed(opts):
     """Chay khi KHONG co --install: hoi cai dat neu chua cai. Tra True neu
@@ -3558,7 +3573,11 @@ def offer_install_if_needed(opts):
     print('     - co shortcut tren Desktop')
     print('     - Windows tu xin quyen admin (khong phai chuot phai)')
     print('  ============================================================')
-    if not _ask_yes_no('  Cai dat vao Program Files?', default=True):
+    # on_no_tty=True: cai dat la thao tac KHONG pha huy du lieu (chi them file
+    # + shortcut) va bo cai .cmd/.ps1 goi EXE ma khong co TTY -> van phai cai
+    # duoc. Khac voi --uninstall (co the xoa) nen mac dinh la TU CHOI.
+    if not _ask_yes_no('  Cai dat vao Program Files?', default=True,
+                       on_no_tty=True):
         print('  Bo qua cai dat. Tiep tuc chay tu file hien tai.')
         return False
     run_install(opts)
@@ -4089,18 +4108,30 @@ def _ask_key_final():
     return True
 
 
-def _ask_yes_no(prompt, default=False):
-    """Hoi yes/no. Tra bool. Khong bao gio raise, khong treo."""
+def _ask_yes_no(prompt, default=False, on_no_tty=None):
+    """Hoi yes/no. Tra bool. Khong bao gio raise, khong treo.
+
+    on_no_tty: gia tri tra ve khi KHONG co terminal (pipe/script/CI).
+      - None (mac dinh) -> False = TU CHOI. An toan: khong co nguoi doc
+        cau hoi thi khong duoc phep lam viec nguy hiem.
+      - True -> dong y (chi dung cho cau hoi KHONG pha huy).
+
+    LY DO CO THAM SO NAY: truoc day ham tra `default` khi khong co TTY.
+    `--uninstall` goi voi default=True cho cau "Xac nhan go cai dat?" ->
+    chay trong script/piped la XOA NGAY Program Files, shortcut, Scheduled
+    Task ma khong hoi ai. Da kiem chung: isatty()=False -> _ask_yes_no(...,
+    default=True) tra True.
+    """
     try:
         if not sys.stdin or not sys.stdin.isatty():
-            return default
+            return False if on_no_tty is None else bool(on_no_tty)
         suffix = ' [Y/n] ' if default else ' [y/N] '
         ans = input(prompt + suffix).strip().lower()
         if not ans:
             return default
         return ans in ('y', 'yes', 'c', 'co', '1')
     except Exception:
-        return default
+        return False if on_no_tty is None else bool(on_no_tty)
 
 
 _HELP_FALLBACK = """XArena No Fog Pro -- huong dan nhanh

@@ -35,10 +35,12 @@ character accuracy on five Vietnamese test sentences.
 
 1. Open a conversation so the composer is visible.
 2. Click the microphone in the composer tool row.
-3. If the active recognizer is not Vietnamese yet, pick "Tiếng Việt (Zipformer)"
-   and language `vi` in the plugin's page under Settings → Plugins.
-4. Speak, then click the microphone again to stop. The transcript is inserted at
-   the cursor of your draft; you can edit it before sending.
+3. Speak Vietnamese, then click the microphone again to stop.
+4. The transcript is inserted at the cursor of your draft; edit it if needed and send.
+
+The recognizer is selected by default, so the microphone dictates Vietnamese
+right away. Switching back to another recognizer, or changing language, is done
+in the plugin's page under Settings → Plugins.
 
 ## Configuration
 

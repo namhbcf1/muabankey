@@ -1,0 +1,28 @@
+# Adds a Vietnamese recognizer to the composer microphone.
+#
+# The microphone itself comes from @deepseek-ai/dsh-experimental-voice-input-bundle;
+# this bundle only contributes one more recognizer to the Host speechToText
+# registry and points the selection at it.
+- insert:
+    - id: voice-input-vi
+      name: '@local/voice-input-vi'
+      config:
+        providerId: zipformer-vi-local
+        modelDisplayName: Tiếng Việt (Zipformer 30M)
+        dataRoot: !!js dshHomePath('speech-to-text', 'zipformer-vi')
+        numThreads: 4
+        maxAudioBytes: 4194304
+        idleTimeoutMs: 300000
+
+# Select the Vietnamese recognizer by default so the microphone dictates
+# Vietnamese without a detour through the plugin page.
+#
+# `language` stays `auto` on purpose. The microphone's provider switcher sends
+# only a provider id, then validates the retained language against that
+# provider; pinning `vi` here would make SenseVoice reject the switch back. This
+# recognizer is Vietnamese-only, so the hint changes nothing about decoding.
+- id: speech-to-text
+  name: '@deepseek-ai/dsh-experimental-speech-to-text'
+  config:
+    defaultProvider: zipformer-vi-local
+    language: auto

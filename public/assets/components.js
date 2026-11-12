@@ -289,7 +289,7 @@ export function renderFooter() {
             <div class="logo-text">Mua<b>Ban</b>Key</div>
           </div>
           <p class="footer-desc">
-            Nền tảng mua bán bản quyền số hàng đầu Việt Nam. Key chính hãng, giao tự động 24/7,
+            Cửa hàng bản quyền số cho game thủ Việt. Key chính hãng, giao tự động 24/7,
             bảo hành 1 đổi 1, thanh toán an toàn qua VietQR.
           </p>
           <div class="flex gap-1 mt-2" style="flex-wrap:wrap">

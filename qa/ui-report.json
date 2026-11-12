@@ -1,0 +1,90 @@
+[
+  {
+    "tab": "dashboard",
+    "nav": 11,
+    "len": 1026,
+    "text": "20.710.000₫ Tổng doanh thu +17.930.000₫ hôm nay 306 Tổng đơn hàng +274 hôm nay 237 Người dùng +170 hôm nay 9 Đơn chờ xử lý Cần xử lý 0 Sản phẩm sắp hết Dưới 5 key 20.710.000₫ Doanh thu 30 ngày Tuần: 2",
+    "path": "/#/admin?tab=dashboard",
+    "errors": []
+  },
+  {
+    "tab": "orders",
+    "nav": 11,
+    "len": 14172,
+    "text": "Đơn hàng (200) Lọc theo trạng thái đơn Tất cả trạng thái Chờ xử lý Đã thanh toán Đã giao Đã huỷ Đã hoàn MÃ ĐƠN KHÁCH HÀNG TỔNG TIỀN TRẠNG THÁI THỜI GIAN THAO TÁC MBK-GWRD4M namhbcf namhbcf 180.000₫ Ch",
+    "path": "/#/admin?tab=orders",
+    "errors": []
+  },
+  {
+    "tab": "topups",
+    "nav": 11,
+    "len": 4397,
+    "text": "9 Đơn chờ chuyển khoản 2 Khách báo đã CK 1 Tiền chưa gán đơn 1.150.000₫ Tổng đã khớp 1 giao dịch tiền vào KHÔNG khớp đơn (tổng 1.800.000₫). Khách có thể ghi sai nội dung. Kiểm tra sao kê rồi xác nhận ",
+    "path": "/#/admin?tab=topups",
+    "errors": []
+  },
+  {
+    "tab": "products",
+    "nav": 11,
+    "len": 437,
+    "text": "Sản phẩm (4) Thêm sản phẩm SẢN PHẨM GIÁ TỒN KHO ĐÃ BÁN TRẠNG THÁI THAO TÁC XArena No Fog — Gói Tuần license-xarena-tuan 70.000₫ 150.000₫ 0 10 Đang bán Key Sửa Ẩn XArena No Fog — Gói Tháng license-xare",
+    "path": "/#/admin?tab=products",
+    "errors": []
+  },
+  {
+    "tab": "keys",
+    "nav": 11,
+    "len": 181,
+    "text": "Quản lý kho key Chọn sản phẩm — Chọn sản phẩm — XArena No Fog — Gói Tuần (0 key) XArena No Fog — Gói Tháng (10 key) XArena No Fog — Gói Năm (0 key) XArena No Fog — Vĩnh Viễn (0 key)",
+    "path": "/#/admin?tab=keys",
+    "errors": []
+  },
+  {
+    "tab": "licenses",
+    "nav": 11,
+    "len": 34777,
+    "text": "4.524 Tổng license 43 Đang hoạt động 4.429 Chưa kích hoạt 1.003 Vĩnh viễn 33 Đã thu hồi 1.335 Hết hạn 7 ngày Tạo license thủ công Số lượng Số ngày Tiền tố Ghi chú Tạo Danh sách license (300) KEY TRẠNG",
+    "path": "/#/admin?tab=licenses",
+    "errors": []
+  },
+  {
+    "tab": "trial",
+    "nav": 11,
+    "len": 855,
+    "text": "10 Tài khoản đã dùng thử 10 Lượt 1 giờ đã dùng 1 Lượt 3 ngày đã dùng 10 + 10 Lượt/tài khoản Dùng thử (10) Tìm tài khoản dùng thử TÀI KHOẢN 1 GIỜ 3 NGÀY TỔNG LƯỢT THAO TÁC limwc9j4ab limwc9j4ab 1/10 (c",
+    "path": "/#/admin?tab=trial",
+    "errors": []
+  },
+  {
+    "tab": "whitelist",
+    "nav": 11,
+    "len": 343,
+    "text": "Dùng thử vô hạn (2) Máy / tài khoản trong danh sách này không bị giới hạn số lượt. Dùng cho máy lập trình, test nội bộ. Khách thật không ảnh hưởng. + Thêm Whitelist máy tôi đang dùng LOẠI GIÁ TRỊ GHI ",
+    "path": "/#/admin?tab=whitelist",
+    "errors": []
+  },
+  {
+    "tab": "users",
+    "nav": 11,
+    "len": 7404,
+    "text": "Người dùng (200) TÊN ĐĂNG NHẬP HỌ TÊN ĐƠN VAI TRÒ TRẠNG THÁI THAO TÁC riskfls8rhkg riskfls8rhkg 8 user active u0h6g0hr6 u0h6g0hr6 0 user active xmwd6l2nq xmwd6l2nq 0 user active e2emwd6l2nq e2emwd6l2n",
+    "path": "/#/admin?tab=users",
+    "errors": []
+  },
+  {
+    "tab": "settings",
+    "nav": 11,
+    "len": 1732,
+    "text": "Cài đặt hệ thống Tên ngân hàng Số tài khoản Chủ tài khoản Đơn hàng tối thiểu (₫) Đơn hàng tối đa (₫) Cửa sổ giờ tự động xác nhận Trong khung giờ này hệ thống tự giao key khi tiền vào. Ngoài khung giờ,",
+    "path": "/#/admin?tab=settings",
+    "errors": []
+  },
+  {
+    "tab": "logs",
+    "nav": 11,
+    "len": 3117,
+    "text": "Nhật ký hoạt động (46) HÀNH ĐỘNG NGƯỜI THỰC HIỆN ĐỐI TƯỢNG THỜI GIAN user.login u-u-admin@invalid u-admin 20:13 12/11/2026 order.manual_deliver u-u-admin@invalid 802508d4-b3f7-442c-a298-273c43d1b577 2",
+    "path": "/#/admin?tab=logs",
+    "errors": []
+  }
+]

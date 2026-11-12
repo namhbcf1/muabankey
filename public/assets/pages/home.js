@@ -28,8 +28,9 @@ export function productCard(p) {
       <a href="#/product/${esc(p.slug)}" class="product-name">${esc(p.name)}</a>
       <div class="product-desc">${esc(p.shortDesc || '')}</div>
       <div class="product-meta">
-        <span class="star">${icon('star', { size: 11, fill: true, stroke: 0 })} ${Number(p.rating).toFixed(1)}</span>
-        <span>${fmtNum(p.ratingCount)} đánh giá</span>
+        <span>${Number(p.ratingCount) > 0
+          ? `${icon('star', { size: 11, fill: true, stroke: 0 })} ${Number(p.rating).toFixed(1)} · ${fmtNum(p.ratingCount)} đánh giá`
+          : 'Chưa có đánh giá'}</span>
         <span>Đã bán ${fmtNum(p.sold)}</span>
       </div>
       <div class="product-foot">

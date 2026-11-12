@@ -12,7 +12,28 @@
 import { ApiError } from '../lib/http.js';
 import { readLicense, normKey } from './license.js';
 
-const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
+/**
+ * Thư mục cài đặt — PHẢI là thư mục RIÊNG của tool, khớp CHÍNH XÁC
+ * `INSTALL_EXE_DIR` trong tool/src/xa_nofog_pro.py.
+ *
+ * TUYỆT ĐỐI KHÔNG dùng `C:\Program Files\XArena`: đó là BẢN CÀI GAME Arena.vn
+ * của khách (có Arena.exe, SoftEther, StartAoE, Game\, Uninstall.exe...).
+ *
+ * LỖI ĐÃ XẢY RA THẬT: trước đây hằng số này là
+ * `C:\Program Files\XArena\_re\chayduoc`, nên bộ cài đẩy EXE vào thẳng thư
+ * mục game. Hệ quả dây chuyền:
+ *   1. `is_installed()` của EXE kiểm `XArenaNoFog\_re\chayduoc` → trả False
+ *      → mỗi lần chạy lại hỏi "Cài đặt vào Program Files?" → sinh BẢN THỨ HAI.
+ *   2. `--uninstall` trỏ `INSTALL_ROOT = XArenaNoFog` → KHÔNG gỡ được bản
+ *      nằm trong thư mục game → EXE mồ côi nằm lại giữa file của game.
+ *   3. File dev trong thư mục build (`.py`, `.pkl`, `build/`, `dist/`) cũng bị
+ *      đẩy lên máy khách → lộ toàn bộ waypoint nghiên cứu.
+ *
+ * EXE tự nó đã có guard chặn ghi vào thư mục game (`_looks_like_game_client`
+ * + `_assert_safe_target`), nhưng bộ cài trên web thì không đi qua guard đó —
+ * nó tự `mkdir` + `move` bằng .cmd/.ps1. Vì vậy hằng số này phải đúng.
+ */
+const INSTALL_DIR = 'C:\\Program Files\\XArenaNoFog\\_re\\chayduoc';
 
 /*
  * NGUON DUY NHAT cho thong tin bo cai.
@@ -23,10 +44,10 @@ const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\chayduoc';
  * cho va rat de lech -> khach tai dung file nhung so sanh hash sai.
  */
 export const EXE_NAME = 'xa_nofog_pro.exe';
-export const EXE_SHA256 = '053A6C494AE3EEE22BCD9044D495CC026C880EC22AC5E4B8FC3BF7B166DEEB75';
-export const EXE_SIZE = 9101312;
+export const EXE_SHA256 = 'D42E1B23ECF9E2CEB8D56BBCDB02CB2E05168C8C757E502E4C9CB0819953EBC2';
+export const EXE_SIZE = 9104896;
 /** Phien ban phat hanh dang phuc vu. Doi o day la trang /tai-ve tu cap nhat. */
-export const EXE_VERSION = '1.4.1.0';
+export const EXE_VERSION = '1.4.2.0';
 /** Ten hien thi cua san pham. */
 export const APP_NAME = 'XArena No Fog';
 

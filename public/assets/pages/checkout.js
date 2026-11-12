@@ -22,6 +22,26 @@ export async function mountCheckout(root, query = {}) {
   const host = root.querySelector('#checkout-content');
   const mode = query.mode || '';
 
+  /*
+   * Cleanup của màn hình QR. showQrPayment tạo interval poll 4s + đồng hồ đếm
+   * ngược và TRẢ hàm dọn dẹp. Trước đây checkout gọi nó ở 2 chỗ nhưng không
+   * chuyển giá trị đó cho router (router chỉ gọi cleanup nếu mount trả về),
+   * nên mỗi lần khách xem QR rồi rời trang là một interval sống vĩnh viễn.
+   * Đo thực tế: 8 interval còn chạy / 28 request trong 14 giây sau khi rời
+   * trang, gọi cả order id cũ đã 404.
+   *
+   * `qrCleanup` là biến đóng kín dùng chung cho cả hai đường vào màn QR
+   * (mở lại đơn có sẵn và tạo đơn mới từ nút), và mọi `return` bên dưới đều
+   * đi qua `done()` để router luôn nhận được hàm dọn dẹp.
+   */
+  let qrCleanup = null;
+  const done = () => () => {
+    if (typeof qrCleanup === 'function') {
+      try { qrCleanup(); } catch { /* ignore */ }
+      qrCleanup = null;
+    }
+  };
+
   if (!state.user) {
     const back = mode === 'buynow' ? '/checkout?mode=buynow' : '/checkout';
     navigate('/login?redirect=' + encodeURIComponent(back), { replace: true });
@@ -35,7 +55,7 @@ export async function mountCheckout(root, query = {}) {
     host.innerHTML = loadingBlock('Đang tải mã thanh toán...');
     try {
       const qrData = await api(`/api/orders/${query.orderId}/qr`, { method: 'POST' });
-      showQrPayment(host, qrData, {
+      qrCleanup = showQrPayment(host, qrData, {
         code: qrData.order?.code, total: qrData.order?.total,
       });
     } catch (e) {
@@ -46,7 +66,7 @@ export async function mountCheckout(root, query = {}) {
         action: '<a class="btn btn-primary btn-sm" href="#/orders">Về đơn hàng</a>',
       });
     }
-    return;
+    return done();
   }
 
   // ===== Chế độ MUA NGAY: chỉ thanh toán 1 sản phẩm, không đụng giỏ hàng =====
@@ -249,13 +269,23 @@ export async function mountCheckout(root, query = {}) {
       const qrData = await api(`/api/orders/${orderData.order.id}/qr`, { method: 'POST' });
       if (mode === 'buynow') { store.del('mbk_buynow'); } else { clearCart(); }
 
-      showQrPayment(host, qrData, orderData.order);
+      /*
+       * Gán vào biến đóng kín `qrCleanup` (KHÔNG phải biến cục bộ): hàm này
+       * chạy trong sự kiện click, tức là SAU khi mountCheckout đã trả về, nên
+       * `return` ở đây không tới được router. Router đã giữ closure `done()`,
+       * nên chỉ cần cập nhật qrCleanup là lần rời trang sau sẽ dọn đúng.
+       */
+      if (typeof qrCleanup === 'function') { try { qrCleanup(); } catch { /* ignore */ } }
+      qrCleanup = showQrPayment(host, qrData, orderData.order);
     } catch (e) {
       toast(e.message, 'error', 5000);
       payBtn.disabled = false;
       payBtn.innerHTML = `${icon('card', { size: 15 })}Tạo mã QR thanh toán`;
     }
   };
+
+  // Router gọi hàm này khi rời /checkout để dọn interval của màn QR.
+  return done();
 }
 
 /**
