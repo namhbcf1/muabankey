@@ -66,6 +66,21 @@ export function int(v, field, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   return n;
 }
 
+/**
+ * Đọc tham số phân trang từ query string.
+ *
+ * VÌ SAO KHÔNG DÙNG `Math.max(1, Number(x))`: `Number('abc')` là NaN, và
+ * `Math.max(1, NaN)` vẫn là NaN (NaN lan truyền). NaN bind xuống D1 làm
+ * câu SQL hỏng -> 500 INTERNAL. Đã tái hiện thật trên production:
+ *   GET /api/products?page=NOT_A_NUMBER  ->  500
+ * Đầu vào từ query string là dữ liệu của client, phải chặn ở biên.
+ */
+export function pageNum(v, fallback = 1, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
 export function enum_ok(v, allowed, field) {
   if (!allowed.includes(v)) {
     throw new ApiError(400, `"${field}" không hợp lệ`, 'VALIDATION');

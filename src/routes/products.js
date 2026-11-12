@@ -1,6 +1,6 @@
 /** Nghiệp vụ danh mục & sản phẩm. */
 import { ok, json, ApiError, readJson } from '../lib/http.js';
-import { int, str, bool, slugify, enum_ok } from '../lib/validate.js';
+import { int, str, bool, slugify, enum_ok, pageNum } from '../lib/validate.js';
 import { uuid } from '../lib/crypto.js';
 import { requireAdmin } from '../lib/auth.js';
 
@@ -70,8 +70,8 @@ export async function listProducts(env, request) {
   const sort = url.searchParams.get('sort') || 'featured';
   const minPrice = url.searchParams.get('minPrice');
   const maxPrice = url.searchParams.get('maxPrice');
-  const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-  const perPage = Math.min(60, Math.max(1, Number(url.searchParams.get('perPage') || 12)));
+  const page = pageNum(url.searchParams.get('page'), 1);
+  const perPage = pageNum(url.searchParams.get('perPage'), 12, { max: 60 });
 
   const where = ['p.active = 1'];
   const binds = [];

@@ -1,0 +1,17 @@
+HTTP/1.1 404 Not Found
+Date: Thu, 12 Nov 2026 12:22:06 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 71
+Connection: keep-alive
+Cache-Control: no-store
+Permissions-Policy: geolocation=(), microphone=(), camera=()
+Referrer-Policy: strict-origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-XSS-Protection: 1; mode=block
+Report-To: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=GjTYpjgGQg6Q%2FUkPtVeN5fZOul5ev5qimVAfxIB0SvRyABMU7Hu12vrNaqbuFELYQY1jSMmd8tGgePl%2BAlY1dMgNgEA9EF62sNttiOtrDBTUgKnd43YHZtPK1A3ScfLsO525%2Fq%2B8E7FfWnkLHqPfw6TJIjc%3D"}]}
+Nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+Server: cloudflare
+CF-RAY: a595800f7dcc515b-HKG
+alt-svc: h3=":443"; ma=86400
+

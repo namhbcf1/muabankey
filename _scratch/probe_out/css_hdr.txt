@@ -1,0 +1,20 @@
+HTTP/1.1 200 OK
+Date: Thu, 12 Nov 2026 12:23:52 GMT
+Content-Type: text/css
+Content-Length: 85602
+Connection: keep-alive
+CF-Cache-Status: HIT
+Cache-Control: public, max-age=3600, must-revalidate
+ETag: "0b294b51f05a103797b7f696ffac98bb"
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://img.vietqr.io; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'
+permissions-policy: geolocation=(), microphone=(), camera=()
+referrer-policy: strict-origin-when-cross-origin
+x-content-type-options: nosniff
+x-frame-options: DENY
+Report-To: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=2ug1eiYuAsB6BNXpcsGH33INQ9elFuSkQC6aSTIH29%2F0dkJklUHtsSuSZ4aSZKasyE8Y5YZ1FLqwvrbpGaGNqT0IutOCIzLJuX%2Bk9zGwepDQy0Z3gX1ZGRb5bQQ2"}]}
+Nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+Server: cloudflare
+CF-RAY: a59582ab8a82051e-HKG
+alt-svc: h3=":443"; ma=86400
+

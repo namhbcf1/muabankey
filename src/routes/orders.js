@@ -1,6 +1,6 @@
 /** Nghiệp vụ đơn hàng: tạo đơn, thanh toán ví, giao key tự động. */
 import { ok, ApiError, readJson } from '../lib/http.js';
-import { int, str } from '../lib/validate.js';
+import { int, str, pageNum } from '../lib/validate.js';
 import { uuid, orderCode } from '../lib/crypto.js';
 import { requireUser, requireAdmin } from '../lib/auth.js';
 import { rateLimit, clientIp } from '../lib/ratelimit.js';
@@ -426,8 +426,8 @@ async function rollbackDelivered(env, orderId, made) {
 export async function listOrders(env, request) {
   const user = await requireUser(env, request);
   const url = new URL(request.url);
-  const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-  const perPage = Math.min(50, Math.max(1, Number(url.searchParams.get('perPage') || 10)));
+  const page = pageNum(url.searchParams.get('page'), 1);
+  const perPage = pageNum(url.searchParams.get('perPage'), 10, { max: 50 });
 
   const { results } = await env.DB.prepare(
     `SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`

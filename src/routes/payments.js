@@ -901,8 +901,6 @@ export async function sepayWebhook(env, request) {
    */
   const { autoWindow } = await import('./sepay-reconcile.js');
   const win = await autoWindow(env);
-  // DEBUG tam thoi: log gia tri that de tim bug cua so gio
-  console.log('[WIN]', JSON.stringify(win), 'amount=', amount);
 
   if (!win.inWindow) {
     // Ngoài cửa sổ: ghi sổ + báo Telegram, KHÔNG giao.

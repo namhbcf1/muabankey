@@ -1,0 +1,17 @@
+HTTP/1.1 206 Partial Content
+Date: Thu, 12 Nov 2026 12:22:06 GMT
+Content-Type: application/octet-stream
+Content-Length: 64
+Connection: keep-alive
+Content-Range: bytes 0-63/9101312
+Accept-Ranges: bytes
+Cache-Control: no-cache
+Content-Disposition: attachment; filename="xa_nofog_pro.exe"
+ETag: "dd0a6697f3752380eca160d4f679c274"
+X-Content-Type-Options: nosniff
+Report-To: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=5kVKDNMXSfLqionMSR6Ia840VgJnhRYJ3jPWD1vpSkOOO7VS6S6yCX7UlJnklfzb9Hg5ANZia26tkhHME%2FCzi8bQUSeu3NT5%2B4DKP6OYCsDTtSoajlzUqTn%2FVWc1"}]}
+Nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+Server: cloudflare
+CF-RAY: a59580120a47dbc4-HKG
+alt-svc: h3=":443"; ma=86400
+

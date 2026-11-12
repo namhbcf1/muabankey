@@ -1,6 +1,6 @@
 /** Ví điện tử: xem số dư, lịch sử giao dịch, tạo lệnh nạp tiền VietQR, webhook ngân hàng. */
 import { ok, ApiError, readJson } from '../lib/http.js';
-import { int, str } from '../lib/validate.js';
+import { int, str, pageNum } from '../lib/validate.js';
 import { uuid, topupCode } from '../lib/crypto.js';
 import { requireUser, requireAdmin, requireAdminStrict } from '../lib/auth.js';
 import { rateLimit, clientIp } from '../lib/ratelimit.js';
@@ -9,8 +9,8 @@ import { audit } from './products.js';
 export async function getWallet(env, request) {
   const user = await requireUser(env, request);
   const url = new URL(request.url);
-  const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-  const perPage = Math.min(50, Math.max(1, Number(url.searchParams.get('perPage') || 20)));
+  const page = pageNum(url.searchParams.get('page'), 1);
+  const perPage = pageNum(url.searchParams.get('perPage'), 20, { max: 50 });
 
   const { results } = await env.DB.prepare(
     `SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
