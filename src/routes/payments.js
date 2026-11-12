@@ -786,14 +786,25 @@ export async function sepayWebhook(env, request) {
   const auth = request.headers.get('authorization') || '';
 
   const okMain = timingSafeEqualStr(auth, `Apikey ${secret}`);
-  // Secret phụ CHỈ để kiểm thử tự động.
-  const testSecret = env.WEBHOOK_SECRET_TEST;
-  const okTest = testSecret ? timingSafeEqualStr(auth, `Apikey ${testSecret}`) : false;
 
-  if (!okMain && !okTest) {
-
+  /*
+   * ĐÃ XOÁ CỬA HẬU `WEBHOOK_SECRET_TEST`.
+   *
+   * Bản trước chấp nhận THÊM một secret phụ lấy từ `env.WEBHOOK_SECRET_TEST`:
+   *   const okTest = testSecret ? timingSafeEqualStr(auth,'Apikey '+testSecret) : false;
+   *   if (!okMain && !okTest) throw 401
+   * Nghĩa là ai biết chuỗi đó là tự ký được webhook "tiền vào" và đúc
+   * license/key vô hạn mà không cần chuyển một đồng nào.
+   *
+   * Đã xảy ra THẬT trên production (qa/results-G.json G1): đơn MBK-2S924V trị
+   * giá 1.290.000đ được giao license VĨNH VIỄN AOE1-UW6N-2X2W-HXRE trong khi
+   * tài khoản ngân hàng không nhận được đồng nào.
+   *
+   * Kiểm thử tự động phải chạy trên worker RIÊNG (wrangler.audit.toml) và dùng
+   * chính WEBHOOK_SECRET của môi trường đó — không mở thêm cửa trên production.
+   */
+  if (!okMain) {
     throw new ApiError(401, 'Sai xác thực webhook', 'UNAUTHORIZED');
-
   }
 
   const body = await readJson(request);

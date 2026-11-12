@@ -260,7 +260,19 @@ export async function handleCallback(env, cq, deps) {
     }
 
     if (action === 'ext30') {
-      const base = Math.max(now / 1000, lic.expires_at || 0);
+      /*
+       * CẨN THẬN: expires_at = 0 nghĩa là VĨNH VIỄN, null là CHƯA KÍCH HOẠT.
+       *
+       * Bản trước: const base = Math.max(now/1000, lic.expires_at || 0);
+       * Với key vĩnh viễn (expires_at = 0), `0 || 0` = 0 -> base = now ->
+       * newExp = now + 30 ngày. Một cú bấm "+30 ngày" biến license VĨNH VIỄN
+       * (gói 1.290.000đ) thành license 30 ngày và KHÔNG hoàn tác được.
+       */
+      if (lic.expires_at === 0) {
+        await tgAnswerCallback(env, cq.id, 'Key vĩnh viễn, không cần gia hạn', true);
+        return { handled: true, forever: true, noop: true };
+      }
+      const base = Math.max(now / 1000, lic.expires_at || now / 1000);
       const newExp = Math.floor(base + 30 * 86400);
       await DB.prepare('UPDATE licenses SET expires_at = ? WHERE key = ?')
         .bind(newExp, target).run();

@@ -1,0 +1,26 @@
+{
+  "name": "@local/voice-input-vi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nhận dạng giọng nói tiếng Việt chạy trên máy, dùng whisper.cpp, cho ô soạn tin của DeepSeek Harness",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/en.json",
+    "locale/vi.json",
+    "icon.svg"
+  ],
+  "license": "MIT",
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

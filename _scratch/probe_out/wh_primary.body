@@ -1,1 +1,0 @@
-{"ok":true,"sepay":{"configured":true,"source":"secret","url":"/api/webhooks/sepay"},"payos":{"configured":false,"source":"none","url":"/api/webhooks/payos"},"telegram":{"configured":true,"source":"secret","webhookSecretSet":true,"url":"/api/telegram/webhook"}}

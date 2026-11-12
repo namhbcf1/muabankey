@@ -1,7 +1,7 @@
-const T = 'cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6';
-const A = '5b62d10947844251d23e0eac532531dd';
+const T = process.env.CLOUDFLARE_API_TOKEN;
+const A = process.env.CLOUDFLARE_ACCOUNT_ID;
 const D = '81f478c9-5627-458a-a35f-d483e69d400b';
-const SEPAY = 'H1RIWPEIYXVYVCAZ1BT9VNTLKG35XMZ0CY9FMKFEWHZFJH2LSNL6UUQGPV8OXBTA';
+const SEPAY = process.env.SEPAY_API_TOKEN;
 import { readFileSync } from 'node:fs';
 
 async function q(sql) {

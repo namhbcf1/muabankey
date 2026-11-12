@@ -643,10 +643,6 @@ export async function adminDeliverManual(env, request, orderId) {
   const o = await env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
   if (!o) throw new ApiError(404, 'Đơn hàng không tồn tại', 'NOT_FOUND');
 
-  if (o.status === 'delivered') {
-    return ok({ id: orderId, already: true });
-  }
-
   // Chỉ giao đơn đã thanh toán
   if (!['paid', 'delivered'].includes(o.status)) {
     throw new ApiError(409,
@@ -654,17 +650,65 @@ export async function adminDeliverManual(env, request, orderId) {
   }
 
   /*
-   * P0: TRƯỚC ĐÂY hàm này chỉ UPDATE status='delivered' mà KHÔNG cấp key.
-   * Khách trả tiền -> admin bấm "Giao" -> đơn báo "đã giao" nhưng
-   * delivered_keys rỗng -> KHÁCH MẤT HÀNG. Đây là đường admin dùng để
-   * cứu đơn giao lỗi, nên cứu sai cách còn tệ hơn không cứu.
-   * Nay phải gọi deliverOrderItems() để thực sự cấp key/license.
+   * ĐƠN ĐÃ 'delivered' NHƯNG RỖNG KEY -> PHẢI CHO SỬA.
+   *
+   * Trước đây hàm này trả ngay {already:true} khi status='delivered'. Nhưng
+   * chính lỗi "delivered mà 0 key" lại tạo ra trạng thái đó, nên đường cứu
+   * duy nhất của admin lại từ chối đúng những đơn cần cứu. Đã có thật trên
+   * production: 4 đơn 'delivered' với delivered_keys NULL.
+   *
+   * Nay: nếu đơn đã 'delivered' mà CHƯA có key nào thì vẫn đi tiếp để cấp bù.
+   * deliverOrderItems() tự bỏ qua dòng đã giao (kind='already') nên gọi lại
+   * không sinh trùng.
    */
-  const result = await deliverOrderItems(env, o);
+  if (o.status === 'delivered') {
+    const pending = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM order_items
+        WHERE order_id = ?
+          AND (delivered_keys IS NULL OR delivered_keys = '' OR delivered_keys = '[]')`
+    ).bind(orderId).first();
+    if (!(pending?.n > 0)) {
+      return ok({ id: orderId, already: true });
+    }
+    // còn dòng rỗng -> rơi xuống dưới để cấp bù
+  }
+
+  /*
+   * GIÀNH ĐƠN NGUYÊN TỬ trước khi giao.
+   *
+   * Trước đây đọc-rồi-ghi không có khoá: admin bấm 2 lần, hoặc bấm trên web
+   * cùng lúc bấm trên Telegram -> cả hai cùng chạy deliverOrderItems():
+   *   - dòng license: sinh 2 license SỐNG, delivered_keys bị ghi đè -> khách
+   *     giữ 1 bộ, ngoài đời tồn tại 2 bộ;
+   *   - dòng key kho: mỗi request giữ một lô key KHÁC nhau, lô thứ nhất bị
+   *     mồ côi ở trạng thái 'sold' -> mất hàng thật.
+   * adminRefund đã dùng đúng mẫu claim này; ở đây còn thiếu.
+   */
+  const claim = await env.DB.prepare(
+    `UPDATE orders SET status = 'processing', processing_started_at = ?
+      WHERE id = ? AND status IN ('paid','delivered')`
+  ).bind(Date.now(), orderId).run();
+  if (!claim.meta || claim.meta.changes !== 1) {
+    throw new ApiError(409,
+      'Đơn đang được xử lý bởi thao tác khác, thử lại sau.', 'BAD_STATE');
+  }
+
+  let result;
+  try {
+    result = await deliverOrderItems(env, o);
+  } catch (e) {
+    // Giao lỗi -> trả đơn về 'paid' để admin còn đường cứu.
+    await env.DB.prepare(
+      `UPDATE orders SET status = 'paid', processing_started_at = NULL
+        WHERE id = ? AND status = 'processing'`
+    ).bind(orderId).run();
+    throw e;
+  }
 
   const finalStatus = result.pendingManual ? 'paid' : 'delivered';
   await env.DB.prepare(
-    `UPDATE orders SET status = ?, delivered_at = ? WHERE id = ?`
+    `UPDATE orders SET status = ?, delivered_at = ?, processing_started_at = NULL
+      WHERE id = ? AND status = 'processing'`
   ).bind(finalStatus, result.pendingManual ? null : Date.now(), orderId).run();
 
   await audit(env, admin.id, 'order.manual_deliver', orderId, {

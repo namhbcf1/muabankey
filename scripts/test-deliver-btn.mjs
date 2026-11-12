@@ -4,8 +4,8 @@
 const B = 'https://xienhl.com';
 import { readFileSync } from 'node:fs';
 
-const T = 'cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6';
-const A = '5b62d10947844251d23e0eac532531dd';
+const T = process.env.CLOUDFLARE_API_TOKEN;
+const A = process.env.CLOUDFLARE_ACCOUNT_ID;
 const D = '81f478c9-5627-458a-a35f-d483e69d400b';
 const PW = readFileSync('ADMIN_CREDENTIALS.txt', 'utf8').match(/Mat khau\s*:\s*(\S+)/)[1];
 
@@ -31,8 +31,8 @@ async function q(sql, params = []) {
  * Cua so that 00:00-11:59 (chu shop chot). Test can tu dong giao de kiem
  * logic, nen tam tat (enabled=0 = luon tu giao) roi bat lai.
  */
-const _CF_T = 'cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6';
-const _CF_A = '5b62d10947844251d23e0eac532531dd';
+const _CF_T = process.env.CLOUDFLARE_API_TOKEN;
+const _CF_A = process.env.CLOUDFLARE_ACCOUNT_ID;
 const _CF_D = '81f478c9-5627-458a-a35f-d483e69d400b';
 async function _cfSql(sql) {
   const r = await fetch(

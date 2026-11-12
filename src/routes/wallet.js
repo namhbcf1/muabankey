@@ -447,19 +447,68 @@ export async function telegramWebhook(env, request) {
       audit,
       siteUrl: new URL(request.url).origin,
       deliverOrder: async (o) => {
-        // Gọi thẳng DB thay vì qua route (route cần Request + session admin).
-        // Điều kiện giống adminDeliverManual: chỉ giao đơn đã thanh toán.
+        /*
+         * Gọi thẳng DB thay vì qua route (route cần Request + session admin).
+         *
+         * P0 ĐÃ SỬA: bản trước CHỈ chạy
+         *   UPDATE orders SET status='delivered'
+         * mà KHÔNG cấp key/license. Admin bấm "📦 Giao đơn" trên Telegram →
+         * đơn thành 'delivered' với delivered_keys rỗng → khách đã trả tiền
+         * nhưng KHÔNG có hàng, và vì trạng thái đã là 'delivered' nên nút
+         * Giao trên web cũng biến mất → không có đường cứu.
+         *
+         * Nay phải đi qua deliverOrderItems() để THẬT SỰ cấp hàng. Nếu không
+         * cấp được thì ném lỗi để đơn ở lại 'paid' (admin còn cứu được).
+         */
         try {
           if (!['paid', 'delivered'].includes(o.status)) {
             return { ok: false, error: `Đơn đang "${o.status}", chỉ giao đơn đã thanh toán` };
           }
+          const { deliverOrderItems } = await import('./orders.js');
+
+          // Giành đơn nguyên tử: chỉ MỘT luồng được giao. Web + Telegram bấm
+          // cùng lúc mà không có bước này sẽ cấp 2 bộ key cho 1 đơn.
           const claim = await env.DB.prepare(
-            "UPDATE orders SET status='delivered', delivered_at = ? WHERE id = ? AND status != 'delivered'"
+            `UPDATE orders SET status = 'processing', processing_started_at = ?
+             WHERE id = ? AND status IN ('paid','delivered')`
           ).bind(Date.now(), o.id).run();
           if (!claim.meta || claim.meta.changes !== 1) {
-            return { ok: false, error: 'Đơn đã được giao trước đó' };
+            return { ok: false, error: 'Đơn đã được giao hoặc đang được xử lý' };
           }
-          return { ok: true };
+
+          const fresh = await env.DB.prepare('SELECT * FROM orders WHERE id = ?')
+            .bind(o.id).first();
+          let result;
+          try {
+            result = await deliverOrderItems(env, fresh);
+          } catch (e) {
+            // Giao lỗi -> trả đơn về 'paid' để admin còn đường cứu.
+            await env.DB.prepare(
+              `UPDATE orders SET status = 'paid', processing_started_at = NULL
+               WHERE id = ? AND status = 'processing'`
+            ).bind(o.id).run();
+            return { ok: false, error: e.message };
+          }
+
+          const finalStatus = result.pendingManual ? 'paid' : 'delivered';
+          const deliveredCount = (result.delivered || [])
+            .reduce((n, d) => n + (d.keys ? d.keys.length : 0), 0);
+
+          // Chốt trạng thái có điều kiện: chỉ đổi khi vẫn đang giữ đơn.
+          await env.DB.prepare(
+            `UPDATE orders SET status = ?, delivered_at = ?, processing_started_at = NULL
+             WHERE id = ? AND status = 'processing'`
+          ).bind(
+            finalStatus,
+            result.pendingManual ? null : Date.now(),
+            o.id,
+          ).run();
+
+          await audit(env, null, 'order.deliver', o.id, {
+            via: 'telegram', delivered: deliveredCount, pendingManual: !!result.pendingManual,
+          });
+
+          return { ok: true, pendingManual: !!result.pendingManual, delivered: deliveredCount };
         } catch (e) {
           return { ok: false, error: e.message };
         }

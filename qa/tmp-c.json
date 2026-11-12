@@ -1,0 +1,17 @@
+{
+  "user": "262cced0-c02b-4d1f-81e1-f720df7f0dd8",
+  "username": "qaCdjg9fw",
+  "orders": [
+    "60aa97d4-cc1b-4289-a06c-d44bea292617",
+    "73f6f7f2-e27a-48d9-9675-de894860f860",
+    "d75cb877-eac8-4c64-96e8-a7feab2929e8",
+    "55db9cbf-1fe5-434f-b1a2-6bc154b97cd2",
+    "d83cf91e-cd58-4e19-8296-657f95797f07",
+    "763e6ac7-1e43-4baf-aa07-1f391afd0a69"
+  ],
+  "ORIG": {
+    "sepay_auto_enabled": "1",
+    "sepay_auto_from": "0",
+    "sepay_auto_to": "12"
+  }
+}

@@ -90,7 +90,7 @@ curl -L -o "%TEMP%\xa.cmd" "https://muabankey.bangachieu2.workers.dev/i/<KEY>.cm
 1. `net session` → nếu chưa admin, tự `Start-Process -Verb RunAs`
 2. Tạo `C:\Program Files\XArena\_re\chayduoc`
 3. Tải EXE: thử `curl` → `WebClient` → `certutil` (3 lớp dự phòng)
-4. Kiểm SHA-256: `1D9737069C01AD6BF043A694AC6656268CB9ECA0AD80CA7FC9E7FE436F229FE4`
+4. Kiểm SHA-256: `053A6C494AE3EEE22BCD9044D495CC026C880EC22AC5E4B8FC3BF7B166DEEB75` (1.4.1.0, 9.101.312 byte)
 5. **Ép RUNASADMIN** vào cả `HKCU` và `HKLM` (AppCompatFlags\Layers)
 6. `xa_nofog_pro.exe --key <KEY>` → kích hoạt
 7. Tạo shortcut Desktop + Start Menu
@@ -151,8 +151,12 @@ Thông tin ngân hàng đã cấu hình:
 | | |
 |---|---|
 | Ngân hàng | MBBank |
-| Số tài khoản | `8990124112002` |
+| Số tài khoản | `0010131639304` |
 | Chủ tài khoản | NGUYEN THANH NAM |
+
+> Số tài khoản lấy từ bảng `settings` (`bank_account`) trên D1, đây là nguồn
+> duy nhất đúng — QR sinh ra từ đó. Đổi TK thì sửa `/#/admin?tab=settings`,
+> đừng chỉ sửa tài liệu.
 
 1. Khách vào `/#/wallet`, nhập số tiền
 2. Hệ thống tạo mã `NAP<5 ký tự>` + QR vietqr.io
@@ -263,7 +267,7 @@ muabankey/
 
 ## 11. Việc cần làm trước khi chạy thật
 
-- [x] Cấu hình thông tin ngân hàng MBBank `8990124112002`
+- [x] Cấu hình thông tin ngân hàng MBBank `0010131639304`
 - [x] Đổi tài khoản admin sang `namhbcf`
 - [x] Khởi tạo git repo
 - [ ] Đăng ký SePay/Casso → trỏ webhook về `/api/webhooks/sepay`

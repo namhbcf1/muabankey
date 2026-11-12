@@ -44,11 +44,28 @@ keys/
 
 # Audit tam
 _audit/
+_audit_tmp/
+_audit_tmp_nowms.txt
+
+# Thu muc lam viec tam - chua file tai ve, dump, model, ban build
+_scratch/
+_qa_exe/
+_qa_shots/
+# tool/dist-nuitka-sec KHONG nam trong rule "tool/dist-nuitka/" ben tren
+tool/dist-nuitka-sec/
 
 
 # File chua mat khau THAT (base64 = plaintext) - KHONG commit
-db/seed-credentials.sql
+#
+# BUG DA SUA: rule cu ghi "db/seed-credentials.sql" nhung file THAT nam o
+# "db/archive/seed-credentials.sql" -> rule tro sai duong dan, file van duoc
+# commit va 69 tai khoan san pham nam trong git. Dung "**/" de bat moi do sau.
+**/seed-credentials.sql
 scripts/gen-credentials.mjs
+
+# Token/credential nhung trong script van hanh - da chuyen sang bien moi truong
+# (.env / .dev.vars, ca hai deu da bi chan). Giu rule de khong tai pham.
+scripts/check-sepay-token.mjs
 
 # Khoa ma hoa product_keys.secret - KHONG commit
 .key-enc.txt

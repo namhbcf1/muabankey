@@ -13,8 +13,8 @@ const SEC = (process.env.WEBHOOK_SECRET
  * (underpaid / duplicate / overpaid) nên cần server luôn tự giao.
  * Bật lại ở cuối, dù pass hay fail.
  */
-const CF_TOKEN = 'cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6';
-const CF_ACCT = '5b62d10947844251d23e0eac532531dd';
+const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+const CF_ACCT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CF_DB = '81f478c9-5627-458a-a35f-d483e69d400b';
 
 async function cfSql(sql) {
