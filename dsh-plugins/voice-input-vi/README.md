@@ -27,9 +27,11 @@ No audio leaves the machine.
 
 Total ~33 MB, downloaded on first use into the configured data root and verified
 before the recognizer is used.
-
-Measured on this machine (Ryzen 7 4800H): 0.13 s per 6.5 s of speech, 100%
-character accuracy on five Vietnamese test sentences.
+Measured on this machine (Ryzen 7 4800H): 0.05 s per 2.4 s of speech, and
+character-perfect on five Vietnamese test sentences, including English terms
+(`file`, `Python`, `CSV`). For comparison, `whisper` base/small were 1.5–4.5 s per
+sentence and misheard `file` as `phai`; the Zipformer model was both faster and
+exact.
 
 ## Usage
 
@@ -46,12 +48,14 @@ in the plugin's page under Settings → Plugins.
 
 | key | default | meaning |
 |---|---|---|
-| `dataRoot` | `<dshHome>/speech-to-text/zipformer-vi` | Where model files are stored |
-| `modelOrigin` | `https://huggingface.co` | Download origin; the mirror is tried if it fails |
 | `providerId` | `zipformer-vi-local` | Recognizer id in the provider list |
+| `modelDisplayName` | `Tiếng Việt (Zipformer 30M)` | Name shown in the microphone menu |
+| `dataRoot` | `<dshHome>/speech-to-text/zipformer-vi` | Where model files are stored |
 | `numThreads` | `4` | Native decode threads |
-| `inferenceTimeoutMs` | `120000` | Deadline for one recording |
+| `maxAudioBytes` | `4194304` | Largest accepted recording |
 | `idleTimeoutMs` | `300000` | Unload the model after this idle period |
 
 All settings are read from the plugin row in `cordis.patch.yml`, so your values
-survive upgrades.
+survive upgrades. Downloads always come from `https://huggingface.co`; the
+`hf-mirror.com` fallback is not wired into this bundle yet — point `dataRoot` at
+a pre-populated directory if that host is unreachable.

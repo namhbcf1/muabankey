@@ -3,6 +3,22 @@
 > Đo thật bằng Chrome headless CDP (port 9222), 1440×900 và 390×844.
 > Ngày: 2026-11-12 · Script: `scripts/qa/*.mjs` · Ảnh: `shots/`
 
+## TRẠNG THÁI CUỐI — đã xác minh lại trên production: **11/11 PASS**
+
+```
+ 1 ✅ /tai-ve không tràn ngang (P0 đã fix)        scrollW=1440, maxSvg=19px, bigSvg=0
+1b ✅ /tai-ve render đủ nội dung                  3.005 ký tự, nút tải + SmartScreen
+1c ✅ /tai-ve có SHA-256 đủ 64 ký tự              D42E1B23...53EBC2
+ 2 ✅ Không còn "5.0 (0 đánh giá)"                 sao hiện=0, "Đã bán 119"
+ 3 ✅ Không còn feature "offline grace"            "...Bắt buộc có mạng khi chạy tool"
+ 4 ✅ Footer không còn "hàng đầu Việt Nam"         "Cửa hàng bản quyền số cho game thủ Việt"
+ 5 ✅ /account không còn "Số dư ví"/"ví"           metrics=["Đơn hàng","Tổng chi tiêu"]
+ 6 ✅ 11/11 tab admin OK, không 1970, users OK
+ 7 ✅ [390px] QR hiện đủ, không tràn ngang         scrollW=390, ảnh 280px, inView
+7b ✅ [390px] QR đúng tiền/memo/STK                180.000 · MBK... · STK ok · 29:54
+ 8 ✅ Rời trang QR KHÔNG còn poll (P0 đã fix)      0 poll /api/orders trong 14s
+```
+
 ---
 
 ## BẢNG KẾT QUẢ
@@ -94,18 +110,18 @@ Hệ quả đo được: khách xem trang QR rồi rời đi, **mỗi lần xem 
 
 ## TOP 10 VIỆC CẦN SỬA (xếp theo ảnh hưởng khách)
 
-| # | Việc | Mức | Vì sao |
-|---|---|---|---|
-| 1 | ~~`/tai-ve` trang trắng do `size: 9101312`~~ **ĐÃ SỬA** | P0 | Trang tải EXE là bước cuối phễu mua. Khách vào thấy trắng → mất niềm tin + không tải được tool = không mua. Nguyên nhân: dung lượng file EXE bị dán nhầm vào tham số `size` của `icon()` |
-| 2 | ~~Rò rỉ poll timer màn QR~~ **ĐÃ SỬA — CẦN DEPLOY** | P0 | Mỗi lần xem QR = 1 interval vĩnh viễn (28 request/14s). Tốn tiền Worker + có thể ghi đè DOM trang khác khi đơn cũ chuyển `paid` |
-| 3 | **Không có cảnh báo webhook chết** | P0 | Nếu SePay ngừng gọi webhook, tiền khách vào mà **không ai biết** cho tới sáng hôm sau (RUNBOOK tự gọi đây là "NGUY HIỂM NHẤT"). Cần: dead-man switch — cron kiểm tra `MAX(created_at)` của bảng `payments`, nếu > 6 giờ không có giao dịch nào **và** giờ đang trong cửa sổ bán hàng → báo Telegram đỏ |
-| 4 | ~~"offline grace 24 giờ" là thông tin SAI~~ **ĐÃ SỬA DB** | P1 | Cam kết với khách một tính năng không tồn tại (`GRACE_HOURS=0`, 4.491/4.491 license `grace_h=0`). Khách mất mạng giữa trận → tool dừng → đòi hoàn tiền, và đúng lý |
-| 5 | ~~Còn "Số dư ví"/ví~~ **ĐÃ SỬA** + **DB còn 5.687.000₫** | P1 | Giao diện nói đã bỏ ví, nhưng **11 user đang giữ tổng 5.687.000₫** trong cột `users.balance`. Số tiền này không tiêu được ở đâu nữa (route `/wallet` đã chuyển sang `/orders`). Phải quyết: hoàn lại, hay giữ và hiển thị lại |
-| 6 | **Admin không có nút gán tiền chưa khớp vào đơn** | P1 | Ô "Tiền chưa gán" chỉ báo SỐ ĐẾM. Admin phải tự dò đơn rồi bấm "Đã nhận tiền". Hiện có **7 giao dịch / 4.350.000₫** tồn đọng — thao tác tay dễ gán sai đơn |
-| 7 | **Không có script backup + chưa diễn tập restore** | P1 | RUNBOOK ghi lệnh export thủ công, dễ quên. Backup chưa test restore thì chưa phải backup. Cần `scripts/backup.ps1` + một lần diễn tập khôi phục thật vào DB tạm |
-| 8 | ~~"5.0 (0 đánh giá)"~~ **ĐÃ SỬA** | P2 | Hiện 5 sao khi chưa có đánh giá nào = tự khen. Khách tinh ý sẽ mất tin |
-| 9 | ~~"hàng đầu Việt Nam"~~ **ĐÃ SỬA** | P2 | Claim không chứng minh được ở footer mọi trang |
-| 10 | Nút Copy / "Tôi đã chuyển khoản" chỉ **30px** trên mobile | P3 | Dưới 44px khuyến nghị. Đây là nút khách bấm nhiều nhất trên điện thoại khi đang chuyển khoản → dễ bấm trượt |
+| # | Việc | Mức | Trạng thái | Vì sao |
+|---|---|---|---|---|
+| 1 | `/tai-ve` trang trắng do `size: 9101312` | P0 | ✅ **ĐÃ SỬA + DEPLOY + VERIFY** | Trang tải EXE là bước cuối phễu mua. Khách vào thấy trắng → mất niềm tin + không tải được tool = không mua. Nguyên nhân: dung lượng file EXE (9.101.312 byte) bị dán nhầm vào tham số `size` của `icon()` ở 25 chỗ |
+| 2 | Rò rỉ poll timer màn QR | P0 | ✅ **ĐÃ SỬA + DEPLOY + VERIFY** | Mỗi lần xem QR = 1 interval 4s vĩnh viễn (đo được 28 request/14s). Tốn tiền Worker + khi đơn cũ chuyển `paid` thì `showSuccess()` ghi đè DOM trang khác đang xem |
+| 3 | **Không có cảnh báo webhook chết** | P0 | ❌ **CHƯA SỬA** | Nếu SePay ngừng gọi webhook, tiền khách vào mà **không ai biết** tới sáng hôm sau (RUNBOOK tự gọi đây là "NGUY HIỂM NHẤT"). Cần dead-man switch: cron kiểm tra `MAX(created_at)` bảng `payments`, nếu > 6 giờ không có giao dịch nào **và** đang trong cửa sổ bán hàng → báo Telegram đỏ |
+| 4 | "offline grace 24 giờ" là thông tin SAI | P1 | ✅ **ĐÃ SỬA DB + VERIFY** | Cam kết tính năng không tồn tại (`GRACE_HOURS=0`, 4.491/4.491 license `grace_h=0`). Khách mất mạng giữa trận → tool dừng → đòi hoàn tiền, đúng lý |
+| 5 | **DB còn 5.687.000₫ trong `users.balance`** | P1 | ❌ **CHƯA QUYẾT** | Giao diện đã bỏ ví nhưng **11 user đang giữ tổng 5.687.000₫** không tiêu được ở đâu nữa (route `/wallet` đã chuyển sang `/orders`). Phải quyết: hoàn lại, hay giữ và hiển thị lại |
+| 6 | **Admin không có nút gán tiền chưa khớp vào đơn** | P1 | ❌ **CHƯA SỬA** | Ô "Tiền chưa gán" chỉ báo SỐ ĐẾM. Admin phải tự dò đơn rồi bấm "Đã nhận tiền". Hiện có **7 giao dịch / 4.350.000₫** tồn đọng — thao tác tay dễ gán sai đơn |
+| 7 | **Không có script backup + chưa diễn tập restore** | P1 | ❌ **CHƯA SỬA** | RUNBOOK ghi lệnh export thủ công, dễ quên. Backup chưa test restore thì chưa phải backup. Cần `scripts/backup.ps1` + một lần khôi phục thật vào DB tạm |
+| 8 | "5.0 (0 đánh giá)" | P2 | ✅ **ĐÃ SỬA + VERIFY** | Hiện 5 sao khi chưa có đánh giá nào = tự khen. Khách tinh ý sẽ mất tin |
+| 9 | "hàng đầu Việt Nam" ở footer | P2 | ✅ **ĐÃ SỬA + VERIFY** | Claim không chứng minh được, xuất hiện trên mọi trang |
+| 10 | Nút Copy / "Tôi đã chuyển khoản" chỉ **30px** mobile | P3 | ⚠️ **CHƯA SỬA** | Dưới 44px khuyến nghị. Đây là nút khách bấm nhiều nhất trên điện thoại khi đang chuyển khoản → dễ bấm trượt |
 
 ### Việc nhỏ nên làm thêm
 - `RUNBOOK.md` mục "CẦN CẤU HÌNH" còn ghi "hiện **chưa có UI**, phải set qua D1" cho hạn QR / tiền tố / tự động giao — nhưng tab **Cài đặt** đã có cửa sổ giờ. Rà lại cho khớp.
