@@ -618,19 +618,29 @@ export async function adminListOrders(env, request) {
     binds.push(status);
   }
   if (q) {
-    where.push('(o.code LIKE ? OR u.email LIKE ?)');
-    binds.push(`%${q}%`, `%${q}%`);
+    where.push('(o.code LIKE ? OR u.email LIKE ? OR u.username LIKE ?)');
+    binds.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
   const { results } = await env.DB.prepare(
-    `SELECT o.*, u.email, u.full_name FROM orders o JOIN users u ON u.id = o.user_id
+    `SELECT o.*, u.email, u.username, u.full_name FROM orders o JOIN users u ON u.id = o.user_id
      WHERE ${where.join(' AND ')} ORDER BY o.created_at DESC LIMIT 200`
   ).bind(...binds).all();
   return ok({
     orders: (results || []).map((o) => ({
       id: o.id,
       code: o.code,
-      email: o.email,
-      customer: o.full_name,
+      /*
+       * `email` KHÔNG được chứa địa chỉ nội bộ `u-<uuid>@invalid`.
+       *
+       * auth.register ghi email nội bộ đó cho mọi tài khoản mới; hiện nguyên
+       * chuỗi UUID ra trang admin chỉ làm rối mắt mà không cho biết khách là
+       * ai. Ưu tiên username (tên đăng nhập thật), rồi tới full_name.
+       * Chỉ trả email khi đó là địa chỉ thật (dữ liệu cũ trước khi bỏ email).
+       */
+      email: (typeof o.email === 'string' && o.email.endsWith('@invalid'))
+        ? (o.username || null)
+        : o.email,
+      customer: o.full_name || o.username || null,
       status: o.status,
       total: o.total,
       createdAt: o.created_at,

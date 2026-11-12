@@ -1,6 +1,6 @@
-// D1 + HTTP helper for QA
-export const T = 'cfut_36vwtVnGqd2KYb59ZWgI9faJGhStWQdeNIdEVWHba90694c6';
-export const A = '5b62d10947844251d23e0eac532531dd';
+﻿// D1 + HTTP helper for QA
+export const T = process.env.CLOUDFLARE_API_TOKEN;
+export const A = process.env.CLOUDFLARE_ACCOUNT_ID;
 export const D = '81f478c9-5627-458a-a35f-d483e69d400b';
 export const BASE = 'https://xienhl.com';
 

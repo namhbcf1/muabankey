@@ -126,13 +126,19 @@ export async function handleCallback(env, cq, deps) {
         await tgAnswerCallback(env, cq.id, '✅ Đơn đã giao rồi', true);
         return { handled: true, duplicated: true };
       }
-      // Đi qua confirmOrderPaid() — cửa duy nhất, có chống trùng
+      // Đi qua confirmOrderPaid() — cửa duy nhất, có chống trùng.
+      //
+      // ratify: true — nút "✅ Duyệt & giao key" nghĩa là admin ĐÃ THẤY tiền
+      // trong sao kê, không phải khách vừa chuyển thêm một khoản mới. Thiếu cờ
+      // này thì đơn đã được webhook ghi sổ ngoài cửa sổ giờ sẽ bị cộng tiền
+      // lần hai (sổ 360.000đ cho đơn 180.000đ) và Telegram báo "thừa" sai.
       const { confirmOrderPaid } = await import('../routes/payments.js');
       const r = await confirmOrderPaid(env, {
         orderId: target,
         amount: o.total,
         source: 'telegram',
         adminId: adminName || 'telegram',
+        ratify: true,
       });
 
       if (r.duplicated) {

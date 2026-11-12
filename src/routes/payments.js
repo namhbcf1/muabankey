@@ -506,63 +506,99 @@ export async function confirmOrderPaid(env, opts = {}) {
 
   const expected = Number(order.total) || 0;
 
-  const paid = Math.floor(Number(amount) || expected);
-
-  // CỘNG DỒN: các lần chuyển trước đó cho cùng đơn.
-  // Khách có thể chuyển thiếu rồi chuyển bù (90k + 90k = 180k).
-  // Nếu chỉ so từng lần thì không bao giờ giao dù đã đủ tiền.
+  /*
+   * CỘNG DỒN: các lần chuyển trước đó cho cùng đơn.
+   * Khách có thể chuyển thiếu rồi chuyển bù (90k + 90k = 180k).
+   * Nếu chỉ so từng lần thì không bao giờ giao dù đã đủ tiền.
+   *
+   * PHẢI TÍNH TRƯỚC `paid` — xem khối "ratify" bên dưới.
+   */
   const prev = await env.DB.prepare(
     `SELECT COALESCE(SUM(amount),0) AS s FROM payments
      WHERE order_id = ? AND state IN ('matched','wrong_amount')`
   ).bind(order.id).first();
   const prevPaid = Math.floor(Number(prev?.s) || 0);
-  const totalPaid = prevPaid + paid;
 
+  /*
+   * ===== `ratify`: ADMIN DUYỆT TIỀN ĐÃ CÓ TRONG SỔ =====
+   *
+   * LỖI THẬT ĐÃ XẢY RA (đo được trên production):
+   *   Ngoài cửa sổ giờ, webhook SePay GHI SỔ 180.000đ (confirmed_by=
+   *   'sepay-window') rồi trả AWAITING_ADMIN_APPROVAL. Admin bấm "Đã nhận
+   *   tiền" → adminConfirmPayment gọi confirmOrderPaid(amount = order.total)
+   *   → `prev` = 180.000, `paid` = 180.000, totalPaid = 360.000. Kết quả:
+   *     • sổ ghi 360.000đ cho một đơn 180.000đ khách chỉ chuyển 180.000đ;
+   *     • API trả `excess: 180000` → Telegram báo "Thừa 180.000đ — cần
+   *       hoàn tay" trong khi thực tế KHÔNG thừa đồng nào.
+   *   Đơn MBK-WGWDM7 / MBK-YLCB36 đã dính đúng lỗi này.
+   *
+   * Quy tắc đúng: `payments` là SỔ TIỀN ĐÃ NHẬN, không phải sổ quyết định.
+   *   • prevPaid > 0  → đã có chứng từ tiền cho đơn này. Admin bấm duyệt chỉ
+   *     là QUYẾT ĐỊNH giao hàng, KHÔNG phải thêm một khoản tiền mới.
+   *     → không ghi thêm dòng nào.
+   *   • prevPaid = 0  → webhook trượt hoàn toàn, admin tự thấy tiền trong app
+   *     ngân hàng. Đây CHÍNH LÀ đường cứu của endpoint này → phải ghi sổ
+   *     đúng số tiền admin xác nhận.
+   *
+   * `ratify` chỉ bật khi bên gọi KHÔNG nhập số tiền cụ thể. Admin gõ tay một
+   * con số khác = đang khai một khoản tiền MỚI (ví dụ khách chuyển bù), khi đó
+   * phải ghi sổ bình thường.
+   */
+  const ratify = opts.ratify === true && prevPaid > 0;
+
+  const paid = ratify ? 0 : Math.floor(Number(amount) || expected);
+
+  const totalPaid = prevPaid + paid;
 
   const state = paid >= expected ? 'matched'
 
     : paid > 0 ? 'wrong_amount' : 'matched';
 
-  try {
+  // ratify: tiền đã có chứng từ trong sổ -> KHÔNG ghi thêm dòng trùng.
+  if (paid > 0) {
+    try {
 
-    await env.DB.prepare(
+      await env.DB.prepare(
 
-      `INSERT INTO payments
+        `INSERT INTO payments
 
-         (id, order_id, order_code, amount, expected, method, txn_ref,
+           (id, order_id, order_code, amount, expected, method, txn_ref,
 
-          content, state, confirmed_by, raw, at, is_test)
+            content, state, confirmed_by, raw, at, is_test)
 
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
-    ).bind(payId, order.id, order.code, paid, expected,
+      ).bind(payId, order.id, order.code, paid, expected,
 
-      source === 'sepay' ? 'sepay' : source === 'payos' ? 'payos' : 'manual',
+        source === 'sepay' ? 'sepay' : source === 'payos' ? 'payos' : 'manual',
 
-      txnRef || null, content || null, state,
+        txnRef || null, content || null, state,
 
-      source === 'sepay' || source === 'payos' ? source : (adminId || 'admin'),
+        source === 'sepay' || source === 'payos' ? source : (adminId || 'admin'),
 
-      raw ? JSON.stringify(raw).slice(0, 4000) : null, now,
-      isTest ? 1 : 0).run();
+        raw ? JSON.stringify(raw).slice(0, 4000) : null, now,
+        isTest ? 1 : 0).run();
 
-  } catch (e) {
+    } catch (e) {
 
-    // UNIQUE txn_ref -> replay đồng thời
+      // UNIQUE txn_ref -> replay đồng thời
 
-    if (String(e?.message || '').includes('UNIQUE')) {
+      if (String(e?.message || '').includes('UNIQUE')) {
 
-      return { ok: true, duplicated: true, reason: 'CONCURRENT_REPLAY', order };
+        return { ok: true, duplicated: true, reason: 'CONCURRENT_REPLAY', order };
+
+      }
+
+      throw e;
 
     }
-
-    throw e;
-
   }
 
-  // Thiếu tiền -> KHÔNG giao, chờ admin quyết
-
-  if (totalPaid < expected) {
+  // Thiếu tiền -> KHÔNG giao, chờ admin quyết.
+  //
+  // ratify = admin đã nhìn sao kê và bấm duyệt tay -> KHÔNG chặn vì thiếu,
+  // nếu không thì nút "Đã nhận tiền" vô dụng đúng lúc cần nhất.
+  if (totalPaid < expected && !ratify) {
     // P0: TRƯỚC ĐÂY IM LẶNG — khách chuyển thiếu mà không ai biết.
     // Tiền vào ngân hàng thật, admin phải thấy để xử lý.
     try {
@@ -1123,8 +1159,22 @@ export async function adminConfirmPayment(env, request, orderId) {
     throw new ApiError(409, 'Đơn đã giao rồi', 'ALREADY_DELIVERED');
   }
 
-  // Admin có thể nhập số tiền thực nhận (mặc định = tổng đơn)
-  const amount = Number(body.amount) > 0 ? Math.floor(Number(body.amount))
+  /*
+   * Admin có thể nhập số tiền thực nhận (mặc định = tổng đơn).
+   *
+   * `ratify: true` chỉ khi admin KHÔNG gõ số tiền — nghĩa là "tôi đã nhìn thấy
+   * tiền trong sao kê và đồng ý giao", KHÔNG phải "có thêm một khoản tiền mới".
+   * Nếu webhook đã ghi sổ (nhánh ngoài cửa sổ giờ ghi `confirmed_by=
+   * 'sepay-window'`) mà vẫn ghi thêm dòng nữa thì tiền bị đếm hai lần
+   * (sổ 360.000đ cho đơn 180.000đ) và Telegram báo "thừa" sai cho admin.
+   * Khi sổ CHƯA có dòng nào (webhook trượt hẳn) thì confirmOrderPaid tự ghi
+   * đúng số tiền — đường cứu vẫn nguyên vẹn.
+   *
+   * Admin gõ tay một con số = đang khai một khoản tiền MỚI (khách chuyển bù),
+   * khi đó KHÔNG ratify để dòng tiền mới vẫn được ghi sổ.
+   */
+  const explicitAmount = Number(body.amount) > 0;
+  const amount = explicitAmount ? Math.floor(Number(body.amount))
     : Number(order.total);
 
   const r = await confirmOrderPaid(env, {
@@ -1133,6 +1183,7 @@ export async function adminConfirmPayment(env, request, orderId) {
     source: 'admin',
     adminId: admin.username || admin.id,
     content: body.note || null,
+    ratify: !explicitAmount,
   });
 
   if (!r.ok) {

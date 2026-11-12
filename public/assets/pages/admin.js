@@ -1239,9 +1239,8 @@ async function renderUsers(host) {
       <div class="table-wrap adm-table-wrap">
         <table class="adm-table">
           <thead><tr>
-            <th scope="col">Email</th>
+            <th scope="col">Tên đăng nhập</th>
             <th scope="col">Họ tên</th>
-            <th scope="col" class="adm-num">Số dư</th>
             <th scope="col" class="adm-num">Đơn</th>
             <th scope="col">Vai trò</th>
             <th scope="col">Trạng thái</th>
@@ -1252,9 +1251,8 @@ async function renderUsers(host) {
               ? `<tr><td colspan="6" class="adm-empty">Chưa có người dùng</td></tr>`
               : d.users.map((u) => `
               <tr>
-                <td class="adm-cell-main">${esc(u.email)}</td>
+                <td class="adm-cell-main mono">${esc(u.username || '—')}</td>
                 <td class="adm-cell-strong">${esc(u.fullName || '—')}</td>
-                <td class="adm-num"><strong class="text-green">${fmtVnd(u.balance)}</strong></td>
                 <td class="adm-num">${u.orderCount}</td>
                 <td><span class="pill ${u.role === 'admin' ? 'pill-red' : 'pill-gray'}">${esc(u.role)}</span></td>
                 <td><span class="pill ${u.status === 'active' ? 'pill-green' : 'pill-red'}">${esc(u.status)}</span></td>
@@ -1271,40 +1269,6 @@ async function renderUsers(host) {
       </div>
     </div>`;
 
-  host.querySelectorAll('[data-adj]').forEach((b) => {
-    b.onclick = () => {
-      openModal(`
-        <div class="modal-title">Điều chỉnh số dư</div>
-        <div class="modal-sub">${esc(b.dataset.email)}</div>
-        <div class="field"><label class="label" for="adj-amount">Số tiền (âm để trừ)</label>
-          <input class="input" id="adj-amount" type="number" placeholder="50000 hoặc -50000"></div>
-        <div class="field"><label class="label" for="adj-reason">Lý do <span class="req">*</span></label>
-          <input class="input" id="adj-reason" placeholder="Bồi thường, hoàn tiền..."></div>
-        <div class="adm-actions-end">
-          <button type="button" class="btn btn-ghost" data-cancel>Huỷ</button>
-          <button type="button" class="btn btn-primary" data-ok>Xác nhận</button>
-        </div>
-      `, {
-        onMount(overlay, close) {
-          overlay.querySelector('[data-cancel]').onclick = close;
-          overlay.querySelector('[data-ok]').onclick = async () => {
-            const amount = Number(overlay.querySelector('#adj-amount').value);
-            const reason = overlay.querySelector('#adj-reason').value.trim();
-            if (!amount || !reason) { toast('Nhập đủ số tiền và lý do', 'error'); return; }
-            try {
-              await api('/api/admin/wallet/adjust', {
-                method: 'POST',
-                body: { userId: b.dataset.adj, amount, reason },
-              });
-              toast('Đã điều chỉnh số dư', 'success');
-              close();
-              renderUsers(host);
-            } catch (e) { toast(e.message, 'error'); }
-          };
-        },
-      });
-    };
-  });
 
   host.querySelectorAll('[data-lock]').forEach((b) => {
     b.onclick = async () => {
@@ -1336,12 +1300,37 @@ async function renderSettings(host) {
         <div class="field"><label class="label" for="st-owner">Chủ tài khoản</label>
           <input class="input adm-upper" id="st-owner" value="${esc(s.bank_owner || '')}"></div>
         <div class="adm-form-row">
-          <div class="field"><label class="label" for="st-min">Nạp tối thiểu (₫)</label>
+          <div class="field"><label class="label" for="st-min">Đơn hàng tối thiểu (₫)</label>
             <input class="input" id="st-min" type="number" value="${esc(s.topup_min || '20000')}"></div>
-          <div class="field"><label class="label" for="st-max">Nạp tối đa (₫)</label>
+          <div class="field"><label class="label" for="st-max">Đơn hàng tối đa (₫)</label>
             <input class="input" id="st-max" type="number" value="${esc(s.topup_max || '50000000')}"></div>
         </div>
-        <div class="panel-title" style="margin-top:26px;font-size:14px">Cấu hình dùng thử</div>
+        <div class="panel-title" style="margin-top:26px;font-size:14px">Cửa sổ giờ tự động xác nhận</div>
+      <p style="font-size:12.5px;color:var(--text-mute);margin:-4px 0 14px">
+        Trong khung giờ này hệ thống tự giao key khi tiền vào. Ngoài khung giờ,
+        tiền vẫn được ghi sổ và báo Telegram — admin duyệt tay ở tab Chờ thanh toán.
+      </p>
+      <div class="grid-3">
+        <div class="field">
+          <label class="label" for="st-auto-en">Chế độ</label>
+          <select class="select" id="st-auto-en">
+            <option value="1"${String(s.sepay_auto_enabled ?? '1') === '1' ? ' selected' : ''}>Bật — theo khung giờ</option>
+            <option value="0"${String(s.sepay_auto_enabled) === '0' ? ' selected' : ''}>Tắt — duyệt tay 24/24</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="st-auto-from">Từ giờ (0–23)</label>
+          <input class="input" id="st-auto-from" type="number" min="0" max="23"
+            value="${esc(s.sepay_auto_from ?? 0)}">
+        </div>
+        <div class="field">
+          <label class="label" for="st-auto-to">Đến giờ (0–23)</label>
+          <input class="input" id="st-auto-to" type="number" min="0" max="23"
+            value="${esc(s.sepay_auto_to ?? 12)}">
+        </div>
+      </div>
+
+      <div class="panel-title" style="margin-top:26px;font-size:14px">Cấu hình dùng thử</div>
 
         <div class="adm-form-row">
           <div class="field"><label class="label" for="st-t1h-en">Gói 1 giờ</label>
@@ -1481,6 +1470,9 @@ async function renderSettings(host) {
           bank_owner: host.querySelector('#st-owner').value.trim(),
           topup_min: Number(host.querySelector('#st-min').value),
           topup_max: Number(host.querySelector('#st-max').value),
+          sepay_auto_enabled: host.querySelector('#st-auto-en').value,
+          sepay_auto_from: Number(host.querySelector('#st-auto-from').value),
+          sepay_auto_to: Number(host.querySelector('#st-auto-to').value),
           trial1h_enabled: host.querySelector('#st-t1h-en').value,
           trial1h_minutes: Number(host.querySelector('#st-t1h-min').value),
           trial1h_limit: Number(host.querySelector('#st-t1h-lim').value),

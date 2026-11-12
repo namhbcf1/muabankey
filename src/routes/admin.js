@@ -92,13 +92,36 @@ export async function listUsers(env, request) {
     binds.push(`%${q}%`, `%${q}%`);
   }
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.email, u.full_name, u.phone, u.role, u.status, u.balance, u.created_at, u.last_login_at,
+    `SELECT u.id, u.email, u.username, u.full_name, u.phone, u.role, u.status, u.balance, u.created_at, u.last_login_at,
        (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count
      FROM users u WHERE ${where} ORDER BY u.created_at DESC LIMIT 200`
   ).bind(...binds).all();
   return ok({
     users: (results || []).map((u) => ({
-      id: u.id, email: u.email, fullName: u.full_name, phone: u.phone, role: u.role,
+      id: u.id,
+      /*
+       * `username` là TÊN ĐĂNG NHẬP — thứ duy nhất khách thật sự có.
+       *
+       * Trước đây API không trả field này, trong khi bảng Người dùng hiển thị
+       * "Tên đăng nhập" -> mọi dòng đều ra "—", admin không biết ai là ai.
+       *
+       * Fallback cho user cũ chưa có username: `email` là địa chỉ nội bộ
+       * `u-<uuid>@invalid` (xem auth.register) — KHÔNG được hiện ra vì nó chỉ
+       * là UUID ngẫu nhiên, vô nghĩa với admin. Suy ra từ full_name, hoặc để
+       * trống cho UI hiện "—".
+       */
+      username: u.username
+        || (typeof u.email === 'string' && u.email.endsWith('@invalid') ? null : u.email)
+        || u.full_name || null,
+      /*
+       * `email` cho UI: ẩn địa chỉ nội bộ `u-<uuid>@invalid` (xem auth.register).
+       * Đó chỉ là UUID ngẫu nhiên, hiện ra không cho biết khách là ai mà còn
+       * trông như dữ liệu hỏng. NULL để UI hiện "—"; username đã ở field riêng.
+       */
+      email: (typeof u.email === 'string' && u.email.endsWith('@invalid'))
+        ? null
+        : u.email,
+      fullName: u.full_name, phone: u.phone, role: u.role,
       status: u.status, balance: u.balance, createdAt: u.created_at,
       lastLoginAt: u.last_login_at, orderCount: u.order_count,
     })),
@@ -294,6 +317,11 @@ export async function saveSettings(env, request) {
     'trial_device_acc_1h', 'trial_device_acc_3d',
     'trial_hold_sec', 'trial_recheck_1h', 'trial_recheck_3d',
     'trial_unlimited_quota',
+    // Cửa sổ giờ tự động xác nhận SePay
+    'sepay_auto_enabled', 'sepay_auto_from', 'sepay_auto_to',
+    // Thanh toán theo đơn
+    'payment_auto_deliver', 'payment_prefix', 'order_ttl_minutes',
+    'order_remind_minutes', 'order_qr_min', 'order_qr_max',
     // Giao diện
     'site_name', 'site_tagline', 'support_zalo', 'support_telegram',
   ];

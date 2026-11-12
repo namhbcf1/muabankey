@@ -1,4 +1,4 @@
-const SEPAY = 'H1RIWPEIYXVYVCAZ1BT9VNTLKG35XMZ0CY9FMKFEWHZFJH2LSNL6UUQGPV8OXBTA';
+﻿const SEPAY = process.env.SEPAY_API_TOKEN;
 
 for (const url of [
   'https://my.sepay.vn/userapi/transactions/list?limit=20',

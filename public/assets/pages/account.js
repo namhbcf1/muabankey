@@ -14,7 +14,7 @@ export function renderAccount() {
       <div class="page-head">
         <div>
           <h1 class="page-title">Tài khoản</h1>
-          <p class="page-desc">Thông tin cá nhân, mật khẩu và số dư ví của bạn.</p>
+          <p class="page-desc">Thông tin cá nhân, mật khẩu và lịch sử mua hàng của bạn.</p>
         </div>
       </div>
       <div id="account-content">${loadingBlock()}</div>
@@ -65,10 +65,6 @@ export async function mountAccount(root) {
           </div>
 
           <div class="metric-row">
-            <div class="metric">
-              <div class="metric-val">${fmtVnd(u.balance)}</div>
-              <div class="metric-lbl">Số dư ví</div>
-            </div>
             <div class="metric">
               <div class="metric-val">${fmtNum(s.orders)}</div>
               <div class="metric-lbl">Đơn hàng</div>
