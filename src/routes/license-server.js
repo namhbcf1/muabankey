@@ -711,6 +711,27 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
 
   // ===== BẮT ĐẦU ĐỒNG HỒ Ở LẦN CHECK ĐẦU TIÊN =====
   if (!use.started_at) {
+    /*
+     * KIỂM HẠN GIỮ (hold) TRƯỚC KHI KHỞI ĐỘNG ĐỒNG HỒ.
+     *
+     * Trước đây nhánh này KHÔNG kiểm `expires_at`, nên một grant đã hết hạn
+     * giữ chỗ từ nhiều tháng vẫn được "hồi sinh" thành 1 giờ / 3 ngày mới.
+     * Hệ quả: mã dùng thử không bao giờ chết thật, `trial_hold_sec` thành
+     * trang trí, và ai giữ mã cũ đều dùng lại được vô hạn.
+     *
+     * Nay: hết hạn giữ -> từ chối, không cấp thời gian mới.
+     */
+    if (use.expires_at && use.expires_at > 0 && use.expires_at < now) {
+      await env.DB.prepare(
+        `UPDATE trial_uses SET ended_at = ?, end_reason = 'hold_expired'
+         WHERE id = ? AND ended_at IS NULL`
+      ).bind(now, use.id).run().catch(() => {});
+      return json({
+        ok: false, code: 'trial_expired',
+        msg: MESSAGES.trial_expired || 'Đã hết hạn dùng thử',
+      }, 403);
+    }
+
     const cfg = await trialCfg(env);
     const kind = normKind(use.kind) || KIND_3D;
     const secs = kind === KIND_1H ? cfg.t1h.sec : cfg.t3d.sec;

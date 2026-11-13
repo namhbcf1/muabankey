@@ -165,44 +165,48 @@ export async function mountLicenses(root) {
           : `/api/licenses/${encodeURIComponent(key)}/install-token`;
         const r = await api(endpoint, { method: 'POST' });
         const zone = host.querySelector(`#zone-${CSS.escape(key)}`);
-        const one = r.oneLiner || r.cmd;
         const isCmdOnly = tool === 'xagrant';
+        const setupUrl = `/download/xa_setup.exe`;
         zone.innerHTML = `
           <div class="install-box">
-            <div class="install-eyebrow">${icon('zap', { size: 13 })} Cài đặt một lệnh — xong</div>
-            <div class="cmd-block">${esc(one)}</div>
-            <div class="btn-row mt-2">
-              <button class="btn btn-primary btn-sm" data-copyone="${esc(one)}">
-                ${icon('copy', { size: 13 })} Sao chép lệnh
-              </button>
-              <a class="btn btn-ghost btn-sm" href="${esc(r.downloadPs1)}" download>
-                ${icon('download', { size: 13 })} Tải .ps1
-              </a>
-              <a class="btn btn-ghost btn-sm" href="${esc(r.exeUrl)}" download>
-                ${icon('download', { size: 13 })} File .exe
+            <div class="install-eyebrow">${icon('zap', { size: 13 })} Cách 1 — Tải bộ cài (dễ nhất)</div>
+            <div class="btn-row">
+              <a class="btn btn-primary btn-sm" href="${esc(setupUrl)}" download>
+                ${icon('download', { size: 13 })} Tải bộ cài (.exe)
               </a>
             </div>
             <p class="note mt-1">
-              Lệnh có hiệu lực <strong>24 giờ</strong>. Mỗi lần lấy sẽ tạo lệnh mới.
+              Bấm đúp file vừa tải, dán <strong>mã cài đặt</strong> bên dưới vào ô,
+              rồi bấm <strong>Cài đặt</strong>. Không cần CMD hay PowerShell.
+            </p>
+            <div class="install-eyebrow mt-2">${icon('key', { size: 13 })} Mã cài đặt của bạn (dán vào bộ cài)</div>
+            <div class="cmd-block">${esc(r.token || '')}</div>
+            <div class="btn-row mt-2">
+              <button class="btn btn-primary btn-sm" data-copytoken="${esc(r.token || '')}">
+                ${icon('copy', { size: 13 })} Sao chép mã cài đặt
+              </button>
+            </div>
+
+            <p class="note mt-1">
+              Mã cài đặt có hiệu lực <strong>24 giờ</strong>. Mỗi lần lấy sẽ tạo mã mới.
               ${isCmdOnly
-                ? 'Tool tự tải, tự cài, tự kích hoạt và tạo shortcut CMD ngoài Desktop.'
-                : 'Tool tự tải, tự cài, tự kích hoạt và tạo shortcut ngoài Desktop.'}
+                ? 'Bộ cài tự tải, tự cài, tự kích hoạt và tạo shortcut CMD ngoài Desktop.'
+                : 'Bộ cài tự tải, tự cài, tự kích hoạt và tạo shortcut ngoài Desktop.'}
             </p>
           </div>
           <details class="guide">
             <summary>
-              ${icon('book', { size: 13 })} Hướng dẫn 3 bước
+              ${icon('book', { size: 13 })} Hướng dẫn bộ cài (2 bước)
               ${icon('chevronDown', { size: 13, cls: 'chev' })}
             </summary>
             <div class="guide-body">
               <ol>
-                <li>Bấm <strong>Win + R</strong> (phím Windows + phím R).</li>
-                <li>Dán lệnh vào ô vừa hiện ra rồi nhấn <strong>Enter</strong>.</li>
-                <li>Windows hỏi quyền — bấm <strong>Yes</strong>.</li>
+                <li>Bấm <strong>Tải bộ cài (.exe)</strong> ở trên, rồi mở file vừa tải.</li>
+                <li>Dán <strong>mã cài đặt</strong> vào ô, bấm <strong>Cài đặt</strong>, chọn <strong>Yes</strong> khi Windows hỏi quyền.</li>
               </ol>
               <p>
-                Chờ khoảng 20 giây. Khi thấy <strong>“HOÀN TẤT”</strong> là xong —
-                shortcut <strong>${isCmdOnly ? 'XArena Grant' : 'XARENA MAP SÁNG'}</strong>
+                Chờ khoảng 20 giây. Khi thấy <strong>“Cài đặt xong”</strong> là hoàn tất —
+                shortcut <strong>${isCmdOnly ? 'XA Grant' : 'XARENA MAP SÁNG'}</strong>
                 đã có ngoài Desktop.
               </p>
               ${isCmdOnly ? `<p>
@@ -213,11 +217,12 @@ export async function mountLicenses(root) {
             </div>
           </details>`;
 
-        zone.querySelectorAll('[data-copyone]').forEach((cb) => {
+        zone.querySelectorAll('[data-copytoken]').forEach((cb) => {
           cb.onclick = async () => {
-            const ok = await copyText(cb.dataset.copyone);
-            toast(ok ? 'Đã sao chép. Bấm Win+R, dán vào, Enter.' : 'Không sao chép được',
-              ok ? 'success' : 'error', 5000);
+            const ok = await copyText(cb.dataset.copytoken);
+            toast(ok
+              ? 'Đã sao chép mã cài đặt. Mở bộ cài và dán vào ô.'
+              : 'Không sao chép được', ok ? 'success' : 'error', 5000);
           };
         });
       } catch (e) {

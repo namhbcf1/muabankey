@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Trang tải bộ cài /tai-ve  (hash route: #/tai-ve).
  *
  * Mục tiêu: khách mở trang là tải được ngay, và tin là file thật. Vì vậy
@@ -58,10 +58,54 @@ export function renderDownload() {
   <div id="site-header"></div>
   <div class="container dl-wrap">
 
-    <!-- ===== HERO + NÚT TẢI ===== -->
+    <!-- ===== BỘ CÀI GUI (khuyến nghị) ===== -->
+    <section class="dl-hero" aria-labelledby="dl-setup-title"
+             style="margin-bottom:18px">
+      <div class="dl-eyebrow">${icon('zap', { size: 15 })}<span>Khuyến nghị — cài tự động</span></div>
+      <h1 class="dl-title" id="dl-setup-title" style="font-size:26px">
+        Bộ cài có giao diện
+      </h1>
+      <p class="dl-sub">
+        Tải một file <strong>.exe</strong>, bấm đúp, dán mã cài đặt, bấm
+        <strong>Cài đặt</strong>. Không cần CMD, không cần PowerShell,
+        không phải dán lệnh dài.
+      </p>
+
+      <div class="dl-cta">
+        <a class="btn btn-primary btn-lg btn-block dl-dl"
+           href="/download/xa_setup.exe" download="xa_setup.exe" rel="noopener">
+          ${icon('download', { size: 15 })} Tải bộ cài có giao diện (.exe)
+        </a>
+        <div class="dl-hint">
+          Tự tải bộ xử lý · tự kiểm SHA-256 · tự tạo shortcut ngoài Desktop
+        </div>
+      </div>
+
+      <details class="guide" style="margin-top:14px">
+        <summary>
+          ${icon('book', { size: 13 })} Cách dùng (2 bước)
+          ${icon('chevronDown', { size: 13, cls: 'chev' })}
+        </summary>
+        <div class="guide-body">
+          <ol>
+            <li>Mở file <code class="mono">xa_setup.exe</code> vừa tải, bấm
+              <strong>Yes</strong> khi Windows hỏi quyền.</li>
+            <li>Dán <strong>mã cài đặt</strong> (48 ký tự) hoặc
+              <strong>license key</strong> vào ô, bấm <strong>Cài đặt</strong>.</li>
+          </ol>
+          <p>
+            Lấy <strong>mã cài đặt</strong> tại
+            <a href="#/licenses">License của tôi</a> — bấm
+            “Lấy lệnh cài đặt tự động” rồi sao chép mã.
+          </p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ===== TẢI TRỰC TIẾP (nâng cao) ===== -->
     <section class="dl-hero" aria-labelledby="dl-title">
-      <div class="dl-eyebrow">${icon('download', { size: 15 })}<span>Bộ cài chính thức</span></div>
-      <h1 class="dl-title" id="dl-title">Tải XARENA MAP SÁNG</h1>
+      <div class="dl-eyebrow">${icon('download', { size: 15 })}<span>Tải trực tiếp file .exe</span></div>
+      <h1 class="dl-title" id="dl-title" style="font-size:26px">Tải XARENA MAP SÁNG</h1>
       <p class="dl-sub">
         Bộ xử lý bỏ sương mù toàn map + minimap. Tải trực tiếp từ máy chủ
         xienhl.com, không qua trung gian, không cần đăng nhập.
@@ -75,10 +119,10 @@ export function renderDownload() {
       </div>
 
       <div class="dl-cta">
-        <a class="btn btn-primary btn-lg btn-block dl-dl"
+        <a class="btn btn-ghost btn-block dl-dl"
            href="${EXE_URL}" download="${EXE_FILE}"
            data-dl-url rel="noopener">
-          ${icon('download', { size: 15 })} Tải bộ cài (EXE)
+          ${icon('download', { size: 15 })} Tải bộ xử lý (EXE)
         </a>
       <div style="margin-top:26px;padding-top:22px;border-top:1px solid rgba(255,255,255,.08)">
         <div style="font-size:13px;font-weight:700;margin-bottom:6px">

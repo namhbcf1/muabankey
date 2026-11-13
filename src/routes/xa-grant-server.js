@@ -244,13 +244,47 @@ async function sealEngine(gateHex) {
   return { av: b64u(ct), as: b64u(gate) };
 }
 
-/** Tạo token `xg1.<payload>.<sig>` đã ký ECDSA P-256. */
+/**
+ * Chuẩn hoá chữ ký ECDSA về dạng "low-S" (s <= N/2).
+ *
+ * LỖI ĐÃ SỬA: bản trước ký thẳng không chuẩn hoá. WebCrypto trả `s` KHÔNG
+ * chuẩn hoá — khoảng một nửa số lần `s > N/2`. Client Python từ chối
+ * `s > N/2` (chặn malleability), nên ~50% lượt lấy token thất bại với
+ * `bad_sig`. Đây là lỗi NGẪU NHIÊN, cực khó tìm: cùng một key, lần được
+ * lần không, và tái hiện đúng chỉ khi đo 200 lần.
+ *
+ * No Fog đã vá lỗi này từ lâu (license-server.js `toLowS`); XAGrant bị bỏ
+ * sót nên vẫn còn. Đã kiểm chứng bằng token thật: `s` rơi vào high-S và
+ * client trả `bad_sig`.
+ *
+ * Đổi (r, s) -> (r, N-s) khi s > N/2 — phép biến đổi chuẩn BIP-62.
+ */
+const P256_N = BigInt(
+  '0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551'
+);
+const P256_HALF_N = P256_N >> 1n;
+
+function toLowS(sig) {
+  const b = new Uint8Array(sig);
+  if (b.length !== 64) return b;
+  const s = BigInt('0x' + Array.from(b.slice(32))
+    .map((x) => x.toString(16).padStart(2, '0')).join(''));
+  if (s <= P256_HALF_N) return b;
+  const flipped = P256_N - s;
+  const hex = flipped.toString(16).padStart(64, '0');
+  for (let i = 0; i < 32; i++) {
+    b[32 + i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return b;
+}
+
+/** Tạo token `xg1.<payload>.<sig>` đã ký ECDSA P-256 (chuẩn hoá low-S). */
 async function mintToken(env, payload) {
   const body = 'xg1.' + b64u(enc.encode(JSON.stringify(payload)));
   const sig = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' }, await signKey(env), enc.encode(body)
   );
-  return body + '.' + b64u(sig);
+  return body + '.' + b64u(toLowS(sig));
 }
 
 /* ------------------------------------------------------------------ */
@@ -379,7 +413,19 @@ async function issueSession(env, lic, key, hwid, ip, fp, ua) {
     p: lic.plan || PID,
     e: lic.expires_at || 0,
     n: now,
-    g: Number.isFinite(lic.grace_h) ? lic.grace_h : GRACE_HOURS,
+    /*
+     * `g` = số GIỜ ÂN HẠN client được chạy tiếp khi không làm mới token.
+     *
+     * LỖI ĐÃ SỬA: `Number.isFinite(lic.grace_h)` đúng cả khi grace_h = 0
+     * (0 là số hữu hạn), nên license tạo mới — mặc định grace_h = 0 —
+     * nhận g = 0. Kết hợp với `c` = 120 giây, token chỉ sống 2 PHÚT: khách
+     * mất mạng 3 phút là tool chết, dù đã mua key vĩnh viễn.
+     *
+     * Nay: giá trị <= 0 coi như "dùng mặc định", không phải "không ân hạn".
+     * Muốn thật sự tắt ân hạn thì đặt số âm (hiếm, không dùng).
+     */
+    g: (Number.isFinite(lic.grace_h) && lic.grace_h > 0)
+      ? lic.grace_h : GRACE_HOURS,
     m: 'cmd',
     s: sid,
     c: CHECK_AFTER,

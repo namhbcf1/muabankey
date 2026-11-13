@@ -117,6 +117,22 @@ async function requireUsableLicense(env, key) {
   if (!lic) throw new ApiError(404, 'Mã license không hợp lệ', 'NOT_FOUND');
   if (lic.revoked) throw new ApiError(403, 'Mã license đã bị thu hồi', 'REVOKED');
 
+  /*
+   * KIỂM HẠN — trước đây hàm này BỎ QUA `expires_at`.
+   *
+   * Hệ quả: một mã dùng thử 1 giờ đã hết hạn vẫn sinh được .cmd/.ps1 mãi mãi
+   * -> khách (hoặc người mua lại key) cài lại bao nhiêu lần cũng được, và
+   * mỗi lần cài lại có thể khởi động đồng hồ mới.
+   *
+   * `expires_at = 0` nghĩa là VĨNH VIỄN (gói vĩnh viễn) -> không chặn.
+   * `expires_at = null` nghĩa là CHƯA KÍCH HOẠT -> không chặn.
+   */
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (lic.expires_at && lic.expires_at > 0 && lic.expires_at < nowSec) {
+    throw new ApiError(403,
+      'Mã đã hết hạn. Mua key mới để tiếp tục.', 'EXPIRED');
+  }
+
   // KHÔNG cho key của tool khác đi qua bộ cài No Fog.
   //
   // Trước đây hàm này chỉ kiểm revoked: khách mua key XAGR (tool tăng tài
@@ -133,6 +149,77 @@ async function requireUsableLicense(env, key) {
     throw new ApiError(500, 'Mã license chứa ký tự không hợp lệ', 'INVALID_KEY_CHARS');
   }
   return lic;
+}
+
+/**
+ * Bắt đầu đồng hồ dùng thử NGAY KHI KHÁCH TẢI bộ cài.
+ *
+ * YÊU CẦU CỦA CHỦ SHOP: "1 giờ cũng cấp quyền cấp hạn 1 giờ cho mỗi lượt tải".
+ *
+ * Trước đây đồng hồ chạy từ lúc TẠO MÃ (trial-command.js), nên:
+ *   - khách mất 15 phút đọc hướng dẫn -> chỉ còn 45 phút
+ *   - thời gian tải 9 MB cũng bị trừ
+ *
+ * Nay: mã trial được cấp ở trạng thái GIỮ (started_at = NULL), và đồng hồ
+ * chỉ bắt đầu ở đây — đúng khoảnh khắc khách tải/cài.
+ *
+ * NGUYÊN TỬ: UPDATE ... WHERE started_at IS NULL, nên tải lại nhiều lần
+ * không reset được đồng hồ. Lần tải thứ 2 trở đi giữ nguyên hạn cũ.
+ *
+ * Trả { started: bool, expiresAt: number }.
+ */
+async function trialBeginOnDownload(env, lic) {
+  if (String(lic.plan || '').toLowerCase() !== 'trial') {
+    return { started: false, expiresAt: lic.expires_at || 0 };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // Đọc kind + cấu hình thời lượng
+  const use = await env.DB.prepare(
+    'SELECT * FROM trial_uses WHERE lic_key = ? LIMIT 1'
+  ).bind(lic.key).first();
+
+  // Không có grant (dữ liệu cũ) -> giữ nguyên hành vi cũ
+  if (!use) return { started: false, expiresAt: lic.expires_at || 0 };
+
+  // Đã bắt đầu rồi -> KHÔNG reset, trả hạn hiện tại
+  if (use.started_at) {
+    return { started: false, expiresAt: use.expires_at || 0 };
+  }
+
+  // Hết hạn GIỮ -> mã chết, không cho cài
+  if (use.expires_at && use.expires_at > 0 && use.expires_at < now) {
+    throw new ApiError(403,
+      'Mã dùng thử đã hết hạn giữ chỗ. Lấy mã mới trên web.', 'TRIAL_HOLD_EXPIRED');
+  }
+
+  const { trialCfg, normKind, KIND_1H, KIND_3D } =
+    await import('../lib/trial-quota.js');
+  const cfg = await trialCfg(env);
+  const kind = normKind(use.kind) || KIND_3D;
+  const secs = kind === KIND_1H ? cfg.t1h.sec : cfg.t3d.sec;
+  const expiresAt = now + secs;
+
+  // Nguyên tử: chỉ request ĐẦU TIÊN đổi được started_at
+  const claim = await env.DB.prepare(
+    `UPDATE trial_uses SET started_at = ?, expires_at = ?
+     WHERE id = ? AND started_at IS NULL`
+  ).bind(now, expiresAt, use.id).run();
+
+  if (!claim.meta || claim.meta.changes !== 1) {
+    // Request khác vừa thắng -> trả hạn của nó
+    const fresh = await env.DB.prepare(
+      'SELECT expires_at FROM trial_uses WHERE id = ?'
+    ).bind(use.id).first();
+    return { started: false, expiresAt: fresh?.expires_at || 0 };
+  }
+
+  await env.DB.prepare(
+    'UPDATE licenses SET activated_at = COALESCE(activated_at, ?), expires_at = ? WHERE key = ?'
+  ).bind(now, expiresAt, lic.key).run();
+
+  return { started: true, expiresAt };
 }
 
 /**
@@ -783,6 +870,8 @@ try { if (-not [Console]::IsInputRedirected) { Read-Host 'Nhan Enter de dong' | 
 export async function serveInstaller(env, request, rawKey) {
   const lic = await requireUsableLicense(env, rawKey);
   await assertCanInstall(env, request, lic.key);
+  // Bat dau dong ho dung thu NGAY khi khach tai bo cai (khong phai luc tao ma).
+  await trialBeginOnDownload(env, lic);
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';
@@ -810,6 +899,8 @@ export async function serveInstaller(env, request, rawKey) {
 export async function servePs1(env, request, rawKey) {
   const lic = await requireUsableLicense(env, rawKey);
   await assertCanInstall(env, request, lic.key);
+  // Bat dau dong ho dung thu NGAY khi khach tai bo cai (khong phai luc tao ma).
+  await trialBeginOnDownload(env, lic);
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';
@@ -836,6 +927,8 @@ export async function servePs1(env, request, rawKey) {
 export async function installerCommand(env, request, rawKey) {
   const lic = await requireUsableLicense(env, rawKey);
   await assertCanInstall(env, request, lic.key);
+  // Bat dau dong ho dung thu NGAY khi khach tai bo cai (khong phai luc tao ma).
+  await trialBeginOnDownload(env, lic);
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';

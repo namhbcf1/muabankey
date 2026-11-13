@@ -240,11 +240,36 @@ export async function apiTrialClaim(env, request) {
   const secs = kc ? kc.sec : cfg.t3d.sec;
 
   if (!use.started_at) {
+    /*
+     * KIỂM HẠN GIỮ TRƯỚC KHI KHỞI ĐỘNG ĐỒNG HỒ.
+     *
+     * Trước đây nhánh này không kiểm `expires_at`, nên một mã dùng thử đã
+     * hết hạn giữ chỗ từ lâu vẫn được cấp lại nguyên 1 giờ / 3 ngày.
+     * `trial_hold_sec` vì thế không có tác dụng thật.
+     */
+    if (use.expires_at && use.expires_at > 0 && use.expires_at < now) {
+      await env.DB.prepare(
+        `UPDATE trial_uses SET ended_at = ?, end_reason = 'hold_expired'
+         WHERE id = ? AND ended_at IS NULL`
+      ).bind(now, use.id).run().catch(() => {});
+      return json({
+        ok: false, code: 'trial_expired',
+        msg: MESSAGES.trial_expired || 'Đã hết hạn dùng thử',
+      }, 403);
+    }
+
     const expiresAt = now + secs;
-    await env.DB.prepare(
+    // Nguyên tử: chỉ request đầu tiên thắng, tải/claim lại không reset đồng hồ.
+    const claim = await env.DB.prepare(
       `UPDATE trial_uses SET hwid = COALESCE(hwid, ?), started_at = ?, expires_at = ?
-       WHERE id = ? AND ended_at IS NULL`
+       WHERE id = ? AND ended_at IS NULL AND started_at IS NULL`
     ).bind(ids.hwid, now, expiresAt, use.id).run();
+    if (!claim.meta || claim.meta.changes !== 1) {
+      // Request khác vừa khởi động đồng hồ -> trả trạng thái hiện tại
+      const cur = await env.DB.prepare('SELECT * FROM trial_uses WHERE id = ?')
+        .bind(use.id).first();
+      return json({ ...publicUse(cur, cfg, kind), trial_kind_state: 'active', now });
+    }
     await env.DB.prepare(
       'UPDATE licenses SET hwid = ?, activated_at = ?, expires_at = ? WHERE key = ?'
     ).bind(ids.hwid, now, expiresAt, key).run();

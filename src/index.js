@@ -26,6 +26,7 @@ import * as installer from './routes/installer.js';
 import * as appInfo from './routes/app-info.js';
 import * as xgServer from './routes/xa-grant-server.js';
 import * as xgInstaller from './routes/xa-grant-installer.js';
+import * as installInfo from './routes/install-info.js';
 
 const r = new Router();
 
@@ -88,6 +89,15 @@ r.post('/api/xg/violation', xgServer.xgViolation);
 r.get('/api/xg/health', (env) => xgServer.xgHealth(env));
 r.post('/api/licenses/:key/xg-install-token',
   (env, req, p) => xgInstaller.issueXgInstallToken(env, req, p.key));
+
+/*
+ * Bộ cài GUI (xa_setup.exe) dùng 2 endpoint này thay cho việc khách phải
+ * dán lệnh PowerShell vào Win+R. Cùng mức xác thực: install token còn hạn
+ * HOẶC session đăng nhập sở hữu key.
+ */
+r.get('/api/install-info', installInfo.installInfo);
+r.get('/api/install-info/resolve', installInfo.installResolve);
+r.get('/api/setup/version', (env) => installInfo.setupVersion(env));
 
 /* ---------- Dùng thử 3 ngày ---------- */
 r.post('/api/trial/start', trial.apiTrialStart);
@@ -458,6 +468,14 @@ export default {
           return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
         }
         return await xgInstaller.downloadXgExe(env, request);
+      }
+
+      // /download/xa_setup.exe — bộ cài GUI (thay lệnh CMD/PowerShell)
+      if (url.pathname === `/download/xa_setup.exe`) {
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          return fail(405, 'Phuong thuc khong duoc ho tro', 'METHOD_NOT_ALLOWED');
+        }
+        return await installInfo.downloadSetup(env, request);
       }
     } catch (err) {
       if (err instanceof ApiError) {

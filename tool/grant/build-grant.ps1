@@ -95,9 +95,9 @@ try {
         --output-filename=$EXE_NAME `
         --remove-output `
         --no-pyi-file `
-        --include-module=xa_sec `
-        --include-module=xa_grant_lic `
-        --include-module=xa_const `
+        --include-module=xa_grant_sec `
+        --include-module=xa_grant_const `
+        --include-module=xa_grant_guard `
         --nofollow-import-to=tkinter `
         --nofollow-import-to=unittest `
         --nofollow-import-to=pydoc `

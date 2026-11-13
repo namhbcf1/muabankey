@@ -49,10 +49,23 @@ async function tgCall(env, method, payload) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
+      /*
+       * LƯỚI AN TOÀN: log mọi lần gửi hỏng.
+       *
+       * Trước đây hàm trả {ok:false} nhưng mọi nơi gọi đều bọc
+       * `try { ... } catch {}` nên lỗi bị nuốt hoàn toàn — admin không
+       * nhận được thông báo mà không biết vì sao. Đã có lần Telegram từ
+       * chối toàn bộ tin nhắn MarkdownV2 vì một dấu chấm không escape,
+       * và không ai phát hiện cho tới khi khách phàn nàn.
+       */
+      console.error('[TG_FAIL]', method, data.description || `http_${res.status}`);
       return { ok: false, error: data.description || `http_${res.status}`, raw: data };
     }
+    // Ghi lại lần gửi thành công: `wrangler tail` thấy được là admin biết
+    // thông báo đã tới Telegram, không phải đoán.
+    console.log('[TG_OK]', method, data.result?.message_id ?? '');
     return { ok: true, result: data.result };
-  } catch (e) {
+  } catch (e) {    console.error('[TG_FAIL]', method, e.message || 'network');
     return { ok: false, error: e.message || 'network' };
   }
 }
@@ -74,6 +87,22 @@ function mdEsc(s) {
 /** Định dạng tiền VN. */
 function vnd(n) {
   return Number(n || 0).toLocaleString('vi-VN') + 'đ';
+}
+
+/**
+ * Escape cho parse_mode HTML.
+ *
+ * Chỉ cần 3 ký tự: & < >
+ * Không giống MarkdownV2 — ở đó phải escape 18 ký tự và một dấu chấm
+ * sót trong chuỗi cứng là Telegram từ chối TOÀN BỘ tin nhắn với lỗi
+ * "can't parse entities". Đó chính là lỗi đã làm mọi thông báo thanh
+ * toán im lặng suốt thời gian qua.
+ */
+function hEsc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /**
@@ -239,4 +268,4 @@ export async function tgAnswerCallback(env, callbackQueryId, text, showAlert = f
   });
 }
 
-export { tgConfig, tgCall, mdEsc, vnd };
+export { tgConfig, tgCall, mdEsc, hEsc, vnd };

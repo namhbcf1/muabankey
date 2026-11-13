@@ -14,7 +14,7 @@
  * Bảo mật: chỉ chat_id trong TG_CHAT_ID mới bấm được.
  * Nút hoàn tiền yêu cầu xác nhận 2 bước.
  */
-import { mdEsc, vnd, tgAnswerCallback, tgUpdateMessage, tgCall } from './telegram.js';
+import { mdEsc, hEsc, vnd, tgConfig, tgAnswerCallback, tgUpdateMessage, tgCall } from './telegram.js';
 
 /** Kiểm tra user bấm có phải admin không. */
 function isAdminChat(env, cq, chatId) {
@@ -314,25 +314,25 @@ export async function handleCallback(env, cq, deps) {
 export async function notifyOrderPending(env, opts) {
   const { order, email, items } = opts;
   const lines = [
-    '📦 *ĐƠN CẦN GIAO TAY*',
+    '📦 <b>ĐƠN CẦN GIAO TAY</b>',
     '',
-    `Mã đơn: \`${mdEsc(order.code)}\``,
-    `Khách: ${mdEsc(email || 'không rõ')}`,
-    `Tổng: *${mdEsc(vnd(order.total))}*`,
+    `Mã đơn: <code>${hEsc(order.code)}</code>`,
+    `Khách: ${hEsc(email || 'không rõ')}`,
+    `Tổng: <b>${hEsc(vnd(order.total))}</b>`,
   ];
   if (items?.length) {
     lines.push('');
     for (const it of items.slice(0, 6)) {
-      lines.push(`• ${mdEsc(it.name)} × ${it.quantity}`);
+      lines.push(`• ${hEsc(it.name)} × ${it.quantity}`);
     }
   }
   lines.push('');
-  lines.push('_Bấm Giao đơn sau khi đã gửi key cho khách_');
+  lines.push('<i>Bấm Giao đơn sau khi đã gửi key cho khách</i>');
 
   return tgCall(env, 'sendMessage', {
-    chat_id: env.TG_CHAT_ID,
+    chat_id: (await tgConfig(env)).chatId,
     text: lines.join('\n'),
-    parse_mode: 'MarkdownV2',
+    parse_mode: 'HTML',
     disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
@@ -348,17 +348,17 @@ export async function notifyOrderPending(env, opts) {
  */
 export async function notifyLowStock(env, products) {
   if (!products?.length) return { ok: true, skipped: true };
-  const lines = ['⚠️ *SẮP HẾT HÀNG*', ''];
+  const lines = ['⚠️ <b>SẮP HẾT HÀNG</b>', ''];
   for (const p of products.slice(0, 10)) {
-    lines.push(`• ${mdEsc(p.name)}: *${p.stock_count}* còn lại`);
+    lines.push(`• ${hEsc(p.name)}: <b>${p.stock_count}</b> còn lại`);
   }
   lines.push('');
-  lines.push('_Nhập thêm key để không gián đoạn bán hàng_');
+  lines.push('<i>Nhập thêm key để không gián đoạn bán hàng</i>');
 
   return tgCall(env, 'sendMessage', {
-    chat_id: env.TG_CHAT_ID,
+    chat_id: (await tgConfig(env)).chatId,
     text: lines.join('\n'),
-    parse_mode: 'MarkdownV2',
+    parse_mode: 'HTML',
     disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
@@ -374,18 +374,18 @@ export async function notifyLowStock(env, products) {
  */
 export async function notifyExpiring(env, rows) {
   if (!rows?.length) return { ok: true, skipped: true };
-  const lines = ['⏰ *LICENSE SẮP HẾT HẠN*', ''];
+  const lines = ['⏰ <b>LICENSE SẮP HẾT HẠN</b>', ''];
   for (const r of rows.slice(0, 10)) {
     const d = Math.max(0, Math.ceil((r.expires_at - Date.now() / 1000) / 86400));
-    lines.push(`• \`${mdEsc(r.key)}\` — còn *${d}* ngày`);
+    lines.push(`• <code>${hEsc(r.key)}</code> — còn <b>${d}</b> ngày`);
   }
   lines.push('');
-  lines.push('_Khách có thể gia hạn để không mất quyền dùng_');
+  lines.push('<i>Khách có thể gia hạn để không mất quyền dùng</i>');
 
   return tgCall(env, 'sendMessage', {
-    chat_id: env.TG_CHAT_ID,
+    chat_id: (await tgConfig(env)).chatId,
     text: lines.join('\n'),
-    parse_mode: 'MarkdownV2',
+    parse_mode: 'HTML',
     disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: rows.slice(0, 3).map((r) => ([
@@ -401,22 +401,22 @@ export async function notifyExpiring(env, rows) {
  */
 export async function notifyDailyReport(env, stats) {
   const lines = [
-    '📊 *BÁO CÁO HÔM NAY*',
+    '📊 <b>BÁO CÁO HÔM NAY</b>',
     '',
-    `Đơn hàng: *${stats.orders}*`,
-    `Doanh thu: *${mdEsc(vnd(stats.revenue))}*`,
-    `Khách mới: *${stats.newUsers}*`,
-    `Key đã giao: *${stats.keysDelivered}*`,
+    `Đơn hàng: <b>${stats.orders}</b>`,
+    `Doanh thu: <b>${hEsc(vnd(stats.revenue))}</b>`,
+    `Khách mới: <b>${stats.newUsers}</b>`,
+    `Key đã giao: <b>${stats.keysDelivered}</b>`,
   ];
-  if (stats.trialStarted) lines.push(`Dùng thử: *${stats.trialStarted}*`);
-  if (stats.trialConverted) lines.push(`Chuyển đổi: *${stats.trialConverted}*`);
+  if (stats.trialStarted) lines.push(`Dùng thử: <b>${stats.trialStarted}</b>`);
+  if (stats.trialConverted) lines.push(`Chuyển đổi: <b>${stats.trialConverted}</b>`);
   lines.push('');
-  lines.push('_Báo cáo tự động hằng ngày_');
+  lines.push('<i>Báo cáo tự động hằng ngày</i>');
 
   return tgCall(env, 'sendMessage', {
-    chat_id: env.TG_CHAT_ID,
+    chat_id: (await tgConfig(env)).chatId,
     text: lines.join('\n'),
-    parse_mode: 'MarkdownV2',
+    parse_mode: 'HTML',
     disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[

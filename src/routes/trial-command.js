@@ -275,9 +275,22 @@ export async function apiTrialCommand(env, request) {
   const key = trialKey();
   const useId = crypto.randomUUID();
   const now = nowSec();
-  // CHỦ SHOP CHỐT: thời gian dùng thử tính NGAY TỪ LÚC TẠO MÃ,
-  // không phải từ lúc chạy tool. Đơn giản, không phụ thuộc client.
-  const expiresAt = now + kc.sec;
+  /*
+   * ĐỒNG HỒ BẮT ĐẦU TỪ LÚC **TẢI**, KHÔNG phải lúc tạo mã.
+   *
+   * Trước đây: `expiresAt = now + kc.sec` và `activated_at = now` ngay khi
+   * tạo -> khách mất 15 phút đọc hướng dẫn là chỉ còn 45 phút dùng thử.
+   * Tệ hơn: nếu khách tải bộ cài rồi mới cài, thời gian chờ tải (7-9 MB)
+   * cũng bị trừ vào 1 giờ.
+   *
+   * Nay: grant vào trạng thái GIỮ (hold) như đường đăng nhập:
+   *   started_at = NULL, expires_at = now + holdSec
+   * Đồng hồ thật bắt đầu ở `trialBeginOnDownload()` — gọi từ handler tải
+   * installer, tức đúng khoảnh khắc khách bắt đầu cài.
+   *
+   * Giữ (hold) vẫn có hạn để mã không tồn tại vĩnh viễn.
+   */
+  const holdUntil = now + cfg.holdSec;
   const hwid = ids ? ids.hwid : null;
   const weak = ids ? ids.weak : null;
 
@@ -287,17 +300,17 @@ export async function apiTrialCommand(env, request) {
         `INSERT INTO licenses
            (key, hwid, plan, note, created_at, activated_at, expires_at,
             last_seen, last_ip, revoked, max_rebind, rebinds, source)
-         VALUES (?,?, 'trial', ?,?, ?, ?, NULL, ?, 0, 0, 0, 'trial')`
+         VALUES (?,?, 'trial', ?,?, NULL, ?, NULL, ?, 0, 0, 0, 'trial')`
       ).bind(key, hwid, `Trial ${kind} - ${userLabel || 'web'}`,
-        now, now, expiresAt, ip),
+        now, holdUntil, ip),
       env.DB.prepare(
         `INSERT INTO trial_uses
            (id, user_id, kind, lic_key, hwid, device_weak, ip, ua,
             started_at, expires_at, created_at)
-         VALUES (?,?,?,?,?,?,?,?, ?, ?, ?)`
+         VALUES (?,?,?,?,?,?,?,?, NULL, ?, ?)`
       ).bind(useId, userId, kind, key, hwid, weak,
         ip, (request.headers.get('user-agent') || '').slice(0, 200),
-        now, expiresAt, now),
+        holdUntil, now),
     ]);
   } catch (e) {
     await refundUse(env, userId, kind);
@@ -336,6 +349,15 @@ async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quo
     kind,
     label,
     resumed,
+    /*
+     * TOKEN: trước đây KHÔNG trả ra, nên bộ cài GUI (xa_setup.exe) không có
+     * gì để dán vào. Nay trả tường minh để khách chỉ cần:
+     *   tải xa_setup.exe -> dán token -> Cài đặt.
+     * Vẫn giữ `command`/`oneLiner` cho ai quen dán lệnh (tương thích ngược).
+     */
+    token,
+    app: 'nofog',
+    setupUrl: `${base}/download/xa_setup.exe`,
     // Không trả "unlimited"/quota nội bộ ra cho khách:
     // trước đây response công khai lộ quota:999999 và unlimited:true
     // -> khách thấy "999999 lượt" (vô lý) và biết ai trong whitelist.
@@ -349,6 +371,6 @@ async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quo
     minutes: Math.round(kc.sec / 60),
     days: Math.round(kc.sec / 86400),
     userLabel,
-    hint: 'Mở CMD (Win+R → cmd) → dán lệnh → Enter → bấm Yes khi Windows hỏi quyền.',
+    hint: 'Tải bộ cài, dán mã cài đặt vào ô rồi bấm Cài đặt. Không cần CMD.',
   });
 }

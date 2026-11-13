@@ -139,7 +139,7 @@ export function renderHome() {
 
       <div class="alert alert-info" style="margin-top:16px">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Không cần đăng ký, không nhập gì. Bấm nút → copy 1 dòng lệnh → dán vào PowerShell → Enter.</span>
+        <span>Không cần đăng ký, không nhập gì. Bấm nút → tải bộ cài → dán mã cài đặt → bấm Cài đặt.</span>
       </div>
 
       <div class="alert alert-warn" style="margin-top:10px">
@@ -275,45 +275,62 @@ async function startTrialFlow(kind, onDone) {
 }
 
 function showTrialCommand(data, label) {
-  // Đóng modal loading trước khi hiện kết quả
-  // Dùng oneLiner (PowerShell) chứ KHÔNG dùng command (CMD):
-  // "curl ... && ..." chết trong PowerShell vì && không phải statement
-  // separator ở PS 5.1. Win11 Win+X mở Terminal = PowerShell -> phần lớn
-  // khách dán vào đó và nhận lỗi "The token '&&' is not a valid statement
-  // separator". oneLiner dùng "iex (irm URL)" chạy được ở CẢ cmd và PS.
-  const isPowerShell = data.oneLiner;
-  const cmd = isPowerShell ? data.oneLiner : (data.command || '');
-  // Nhãn hướng dẫn theo loại lệnh
-  const shellName = isPowerShell ? 'PowerShell hoặc CMD' : 'CMD';
+  /*
+   * ĐÃ BỎ HOÀN TOÀN LỆNH PowerShell/CMD.
+   *
+   * Trước đây modal này đưa khách một dòng:
+   *   powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm ...)"
+   * Khách phải Win+R -> dán -> Enter -> Yes. Rất nhiều người bỏ cuộc, và
+   * chuỗi đó còn dạy họ bypass execution policy + pipe script từ Internet.
+   *
+   * Nay: tải bộ cài (.exe) -> bấm đúp -> dán mã cài đặt -> Cài đặt.
+   * `data.token` do /api/trial/command trả về; nếu server cũ chưa trả token
+   * thì vẫn rút được từ cmdUrl để không chặn khách.
+   */
   const key = data.key || '';
+  let token = data.token || '';
+  if (!token && data.cmdUrl) {
+    const m = String(data.cmdUrl).match(/[?&]t=([0-9a-fA-F]{48})/);
+    if (m) token = m[1];
+  }
+  // Nếu chỉ có token (server không trả key) thì vẫn dán được.
+  const paste = token || key;
+  const setupUrl = data.setupUrl || '/download/xa_setup.exe';
 
   openModal(`
-    <div class="modal-title">Lệnh dùng thử ${label} đã sẵn sàng</div>
+    <div class="modal-title">Mã dùng thử ${label} đã sẵn sàng</div>
     <div class="modal-sub">
-      Copy 1 dòng → dán vào CMD → Enter. Không cần nhập gì thêm.
+      Tải bộ cài, dán mã cài đặt, bấm Cài đặt. Không cần CMD hay PowerShell.
     </div>
 
     <div class="field">
-      <label class="label">Lệnh (copy nguyên dòng)</label>
+      <label class="label">Bước 1 — Tải bộ cài</label>
+      <a class="btn btn-primary btn-block btn-lg" href="${esc(setupUrl)}"
+         download="xa_setup.exe" rel="noopener" style="margin-bottom:4px">
+        ${icon('download', { size: 15 })} Tải bộ cài (.exe)
+      </a>
+    </div>
+
+    <div class="field">
+      <label class="label">Bước 2 — Mã cài đặt (dán vào bộ cài)</label>
       <div class="mono" style="font-size:11px;line-height:1.7;word-break:break-all;
         background:rgba(0,0,0,.5);padding:14px;border-radius:9px;
         border:1px solid rgba(74,222,128,.35);color:#4ade80;user-select:all">
-        ${esc(cmd)}
+        ${esc(paste)}
       </div>
     </div>
 
     <button class="btn btn-primary btn-block btn-lg" data-copycmd style="margin-bottom:14px">
-      Copy lệnh
+      ${icon('copy', { size: 15 })} Copy mã cài đặt
     </button>
 
     <div class="alert alert-info" style="margin-bottom:14px">
       <span class="ico">${icon('info', { size: 15 })}</span>
       <span>
-        <strong>Cách chạy (${shellName}):</strong><br>
-        1. Bấm <strong>Copy lệnh</strong><br>
-        2. Nhấn <kbd>Win</kbd>+<kbd>R</kbd> gõ <code class="mono">powershell</code> rồi Enter<br>
-        3. Dán (<kbd>Ctrl</kbd>+<kbd>V</kbd>) rồi Enter<br>
-        4. Windows hỏi quyền → bấm <strong>Yes</strong>
+        <strong>Cách cài (2 bước):</strong><br>
+        1. Mở file <code class="mono">xa_setup.exe</code> vừa tải<br>
+        2. Dán mã cài đặt vào ô, bấm <strong>Cài đặt</strong>,
+           chọn <strong>Yes</strong> khi Windows hỏi quyền
       </span>
     </div>
 
@@ -324,7 +341,8 @@ function showTrialCommand(data, label) {
         ${data.left == null
           ? '<strong>Không giới hạn lượt</strong> cho thiết bị này.'
           : `Còn <strong>${data.left}/${data.quota}</strong> lượt.`}
-        Giờ bắt đầu tính ngay khi tạo mã. Nếu chưa chạy tool trong 24h, mã hết hiệu lực.
+        <strong>Giờ dùng thử bắt đầu tính từ lúc bạn tải bộ cài</strong> —
+        không bị trừ khi bạn đang đọc hướng dẫn.
       </span>
     </div>
 
@@ -340,9 +358,9 @@ function showTrialCommand(data, label) {
         navigate('/products?category=license-xarena');
       };
       overlay.querySelector('[data-copycmd]').onclick = async () => {
-        const okc = await copyText(cmd);
-        toast(okc ? 'Đã copy — dán vào CMD và Enter'
-          : 'Không copy được, chọn tay dòng lệnh',
+        const okc = await copyText(paste);
+        toast(okc ? 'Đã copy mã — dán vào bộ cài rồi bấm Cài đặt'
+          : 'Không copy được, chọn tay mã trên',
           okc ? 'success' : 'error', 6000);
       };
     },
