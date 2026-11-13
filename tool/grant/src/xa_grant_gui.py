@@ -12,6 +12,7 @@ Thiet ke:
 import os
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -22,6 +23,10 @@ if _HERE not in sys.path:
 
 try:
     import xa_grant as XG
+    # GUI chay voi console bi an (--windows-console-mode=disable).
+    # engine.log() goi print() cho tung buoc -> ghi vao handle console
+    # khong ton tai. Vo hieu hoa de GUI khong bi cham/treo.
+    XG.log = lambda *a, **k: None
 except Exception as _e:  # pragma: no cover
     import traceback
     traceback.print_exc()
@@ -35,15 +40,15 @@ except Exception as _e:  # pragma: no cover
 # ======================================================================
 # (nhan, so luong, mo ta, mau)
 BUTTONS = [
-    ('+1.000', 1000, 'Thịt · Gỗ · Đá · Vàng', '#2563eb'),
-    ('+5.000', 5000, 'Thịt · Gỗ · Đá · Vàng', '#7c3aed'),
-    ('+10.000', 10000, 'Thịt · Gỗ · Đá · Vàng', '#db2777'),
-    ('+50.000', 50000, 'Thịt · Gỗ · Đá · Vàng', '#ea580c'),
-    ('+100.000', 100000, 'Thịt · Gỗ · Đá · Vàng', '#dc2626'),
+    ('+1.000', 1000, 'Thịt · Gỗ · Vàng', '#2563eb'),
+    ('+5.000', 5000, 'Thịt · Gỗ · Vàng', '#7c3aed'),
+    ('+10.000', 10000, 'Thịt · Gỗ · Vàng', '#db2777'),
+    ('+50.000', 50000, 'Thịt · Gỗ · Vàng', '#ea580c'),
+    ('+100.000', 100000, 'Thịt · Gỗ · Vàng', '#dc2626'),
 ]
 
-RES_ORDER = ['F', 'W', 'S', 'G']          # thit, go, da, vang
-RES_VN = {'F': 'thịt', 'W': 'gỗ', 'S': 'đá', 'G': 'vàng'}
+RES_ORDER = ['F', 'W', 'G']                # thit, go, vang  (BO DA)
+RES_VN = {'F': 'thịt', 'W': 'gỗ', 'G': 'vàng'}
 
 BG = '#0b1220'
 CARD = '#151f33'
@@ -66,6 +71,7 @@ class App(tk.Tk):
         self.pid = None
         self.base = None
         self.busy = False
+        self._stop_flag = False
 
         self._build()
         self.after(300, self._boot)
@@ -350,7 +356,7 @@ class App(tk.Tk):
         if amount >= 10000:
             if not messagebox.askyesno(
                     'Xác nhận',
-                    'Cộng %s mỗi loại?\n\nThịt · Gỗ · Đá · Vàng' % f'{amount:,}'.replace(',', '.'),
+                    'Cộng %s mỗi loại?\n\nThịt · Gỗ · Vàng' % f'{amount:,}'.replace(',', '.'),
                     parent=self):
                 return
         self._do(amount)
@@ -369,7 +375,7 @@ class App(tk.Tk):
         if n >= 10000:
             if not messagebox.askyesno(
                     'Xác nhận',
-                    'Cộng %s mỗi loại?\n\nThịt · Gỗ · Đá · Vàng' % f'{n:,}'.replace(',', '.'),
+                    'Cộng %s mỗi loại?\n\nThịt · Gỗ · Vàng' % f'{n:,}'.replace(',', '.'),
                     parent=self):
                 return
         self._do(n)
@@ -389,7 +395,29 @@ class App(tk.Tk):
             self.after(0, lambda: self._say('→ Đang cộng %s mỗi loại…' % label))
 
             okn = 0
-            for r in RES_ORDER:
+            ntot = len(RES_ORDER)
+            for i, r in enumerate(RES_ORDER):
+                # --------------------------------------------------
+                # DELAY 1 GIAY GIUA MOI LAN CONG
+                #
+                # Engine game can thoi gian tieu hoa record truoc va ghi
+                # lai playerdata. Cong lien tuc 3 loai trong ~50ms lam
+                # game bo qua vai record (dedup 500ms cua 0x42BA10) ->
+                # bao "thanh cong" nhung so luong khong tang.
+                # --------------------------------------------------
+                if i > 0:
+                    self.after(0, lambda: self._say('   … đợi 1 giây'))
+                    for _ in range(10):
+                        time.sleep(0.1)
+                        if self._stop_flag:
+                            break
+                    if self._stop_flag:
+                        break
+
+                self.after(0, lambda k=i + 1, rr=r: self._state(
+                    '● Đang cộng %d/%d — %s' % (k, ntot, RES_VN[rr]), '#f59e0b',
+                    '+%s mỗi loại' % f'{amount:,}'.replace(',', '.')))
+
                 try:
                     XG.do_grant(self.h, self.base, r, amount, False, True, None)
                     okn += 1
@@ -401,14 +429,14 @@ class App(tk.Tk):
                     self.after(0, lambda rr=r, ee=e: self._say(
                         '   ✗ %s: %s: %s' % (RES_VN[rr], type(ee).__name__, ee)))
 
-            if okn == 4:
+            if okn == len(RES_ORDER):
                 self.after(0, lambda: self._state(
                     '● Đã cộng %s mỗi loại' % label, OK,
-                    'Thịt · Gỗ · Đá · Vàng'))
-                self.after(0, lambda: self._say('[ok] Xong: +%s × 4 loại' % label))
+                    'Thịt · Gỗ · Vàng'))
+                self.after(0, lambda: self._say('[ok] Xong: +%s × %d loại' % (label, len(RES_ORDER))))
             elif okn:
                 self.after(0, lambda: self._state(
-                    '● Cộng được %d/4 loại' % okn, '#f59e0b', 'Xem log bên dưới'))
+                    '● Cộng được %d/%d loại' % (okn, len(RES_ORDER)), '#f59e0b', 'Xem log bên dưới'))
             else:
                 self.after(0, lambda: self._state(
                     '● Không cộng được', ERR, 'Xem log bên dưới để biết lý do'))
@@ -478,10 +506,9 @@ class App(tk.Tk):
                 return
 
             v = me.get('vals') or {}
-            txt = 'Thịt %s · Gỗ %s · Đá %s · Vàng %s' % (
+            txt = 'Thịt %s · Gỗ %s · Vàng %s' % (
                 f"{int(v.get('F', 0)):,}".replace(',', '.'),
                 f"{int(v.get('W', 0)):,}".replace(',', '.'),
-                f"{int(v.get('S', 0)):,}".replace(',', '.'),
                 f"{int(v.get('G', 0)):,}".replace(',', '.'),
             )
             self.after(0, lambda: self._state('● Sẵn sàng', OK, txt))

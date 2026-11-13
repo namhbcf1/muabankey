@@ -19,8 +19,8 @@ import { readLicense, normKey } from './license.js';
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\xagrant';
 export const EXE_NAME = 'xa_grant.exe';
 /** Cập nhật sau mỗi lần build bằng tool/grant/build-grant.ps1. */
-export const EXE_SHA256 = '6CA445B4C75DB4FAE972647714598AAAA27A1EDC73E72705017EEECA88D06A23';
-export const EXE_SIZE = 9619456;
+export const EXE_SHA256 = 'B954767E8F9AEF943C4C36AA93470F9A8BE7CD7399342B125B905F2FC10510C7';
+export const EXE_SIZE = 9622016;
 
 const PID = 'xagrant';
 

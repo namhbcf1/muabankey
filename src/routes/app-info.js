@@ -52,7 +52,7 @@ export function grantVersionData(request) {
   return {
     name: 'XA THÊM TÀI NGUYÊN',
     filename: 'xa_grant.exe',
-    version: '2.1.0.0',
+    version: '',
     sha256: GRANT_SHA,
     size: GRANT_SIZE,
     sizeText: humanSize(GRANT_SIZE),
