@@ -2842,6 +2842,52 @@ def interactive():
         # lap lai vong ngoai
 
 
+
+def activate_key(key):
+    """Kich hoat key XAGR tu GUI. Tra dict {ok, plan?, msg?}.
+
+    Goi /api/xg/activate voi HWID that cua may nay, roi luu token bang DPAPI.
+    Khong bao gio raise — GUI can hien thi thong bao loi.
+    """
+    key = (key or '').strip().upper().replace(' ', '')
+    if not key:
+        return {'ok': False, 'msg': 'Chua nhap key.'}
+
+    try:
+        hwid = _sec.compute_hwid()
+    except Exception as e:
+        return {'ok': False,
+                'msg': 'Khong doc duoc HWID cua may nay: %s' % e}
+
+    status, data = _sec._post_json(
+        _sec.API_BASE.rstrip('/') + '/api/xg/activate',
+        {'key': key, 'hwid': hwid, 'app': _sec.APP},
+        timeout=20,
+    )
+
+    if status != 200 or not isinstance(data, dict):
+        code = (data or {}).get('code') if isinstance(data, dict) else ''
+        msg = (data or {}).get('msg') if isinstance(data, dict) else ''
+        return {'ok': False,
+                'code': code or 'http_%s' % status,
+                'msg': msg or 'Khong ket noi duoc may chu (HTTP %s)' % status}
+
+    if not data.get('ok'):
+        return {'ok': False,
+                'code': data.get('code') or 'deny',
+                'msg': data.get('msg') or 'Key khong hop le.'}
+
+    tok = data.get('token') or ''
+    if not tok:
+        return {'ok': False, 'msg': 'May chu khong tra token.'}
+
+    if not write_token(tok):
+        return {'ok': False,
+                'msg': 'Khong luu duoc token (DPAPI loi). Thu chay lai.'}
+
+    return {'ok': True, 'plan': data.get('plan'), 'token': tok}
+
+
 def main():
     args = sys.argv[1:]
 
