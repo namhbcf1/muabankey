@@ -18,9 +18,17 @@ import { readLicense, normKey } from './license.js';
 /** Thư mục cài RIÊNG của XAGrant (khác No Fog). */
 const INSTALL_DIR = 'C:\\Program Files\\XArena\\_re\\xagrant';
 export const EXE_NAME = 'xa_grant.exe';
+/*
+ * PHIEN BAN ban grant — DUNG CHO TU DONG CAP NHAT.
+ *
+ * Client so sanh CLIENT_VERSION cua no voi so nay. Lon hon -> tai ban
+ * moi. PHAI tang so nay MOI LAN build lai xa_grant.exe, neu khong
+ * client se khong biet co ban moi.
+ */
+export const EXE_VERSION = '1.0.3.0';
 /** Cập nhật sau mỗi lần build bằng tool/grant/build-grant.ps1. */
-export const EXE_SHA256 = 'B954767E8F9AEF943C4C36AA93470F9A8BE7CD7399342B125B905F2FC10510C7';
-export const EXE_SIZE = 9622016;
+export const EXE_SHA256 = 'ADF6DA3962FCF79362C1727F9145F87F2871882CF4A6EA8FD3833AC3DEF1FA73';
+export const EXE_SIZE = 20386304;
 
 const PID = 'xagrant';
 
@@ -51,6 +59,23 @@ async function requireXgLicense(env, key) {
       'Mã này là của sản phẩm khác (không phải XArena Grant)', 'WRONG_PRODUCT');
   }
   if (lic.revoked) throw new ApiError(403, 'Mã license đã bị thu hồi', 'REVOKED');
+
+  /*
+   * KIỂM HẠN — trước đây hàm này BỎ QUA hoàn toàn.
+   *
+   * Hệ quả: mã XAGR đã hết hạn vẫn sinh được .cmd/.ps1 mãi mãi, khách cài
+   * lại bao nhiêu lần cũng được. Bộ cài No Fog (installer.js) đã kiểm từ
+   * trước; bản XAGrant thiếu -> hai sản phẩm lệch nhau.
+   *
+   * `expires_at = 0` = VĨNH VIỄN -> không chặn.
+   * `expires_at = null` = CHƯA KÍCH HOẠT -> không chặn.
+   */
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (lic.expires_at && lic.expires_at > 0 && lic.expires_at < nowSec) {
+    throw new ApiError(403,
+      'Mã đã hết hạn. Mua key mới để tiếp tục.', 'EXPIRED');
+  }
+
   if (!/^[A-Z0-9-]+$/.test(lic.key)) {
     throw new ApiError(500, 'Mã license chứa ký tự không hợp lệ', 'INVALID_KEY_CHARS');
   }

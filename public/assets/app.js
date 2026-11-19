@@ -1,28 +1,34 @@
 /** MuaBanKey SPA — bộ định tuyến & khởi tạo. */
-import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks, bindScrollHints } from './lib.js';
+import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks, bindScrollHints, closeAllModals } from './lib.js';
 import { state, loadUser, loadCategories } from './state.js';
 import { icon } from './icons.js';
 import {
   renderHeader, bindHeader, renderFooter, renderAiWidget, bindAiWidget,
+  hydrateFooterCategories,
 } from './components.js';
 
 import { renderHome, mountHome } from './pages/home.js';
 import { renderProducts, mountProducts } from './pages/products.js';
 import { renderProductDetail, mountProductDetail } from './pages/product-detail.js';
 import { renderLogin, mountLogin, renderRegister, mountRegister } from './pages/auth.js';
-import { renderCheckout, mountCheckout } from './pages/checkout.js';
+import { renderCheckout, mountCheckout, buyNowById } from './pages/checkout.js';
 import { renderAccount, mountAccount } from './pages/account.js';
 import { renderOrders, mountOrders } from './pages/orders.js';
 import { renderSupport, mountSupport } from './pages/support.js';
 import { renderLicenses, mountLicenses } from './pages/licenses.js';
-import { renderAdmin, mountAdmin } from './pages/admin.js';
 import { renderGuide, mountGuide } from './pages/guide.js';
 import { renderDownload, mountDownload } from './pages/download.js';
+/*
+ * pages/admin.js KHÔNG còn import tĩnh ở đây.
+ *
+ * Trước đây nó nằm trong import tĩnh nên 100% khách (kể cả người chỉ vào
+ * trang chủ) phải tải 78.644 B mã quản trị không bao giờ dùng tới. Nay chỉ
+ * tải khi thật sự mở /admin (xem `load` trong ROUTES + nhánh lazy ở router).
+ */
 
 const ROUTES = [
   { pattern: /^\/$/, render: renderHome, mount: mountHome },
-  { pattern: /^\/products$/, render: renderProducts, mount: mountProducts },
-  { pattern: /^\/product\/([^/]+)$/, render: renderProductDetail, mount: mountProductDetail, param: true },
+  { pattern: /^\/products$/, render: renderProducts, mount: mountProducts },  { pattern: /^\/product\/([^/]+)$/, render: renderProductDetail, mount: mountProductDetail, param: true },
   { pattern: /^\/login$/, render: renderLogin, mount: mountLogin },
   { pattern: /^\/register$/, render: renderRegister, mount: mountRegister },
   { pattern: /^\/checkout$/, render: renderCheckout, mount: mountCheckout },
@@ -33,7 +39,7 @@ const ROUTES = [
   // Trang thanh toán QR theo đơn.
   // PHẢI bọc mount: route có param:true nên app gọi mount(app, param, query)
   // trong khi mountCheckout(root, query) -> nếu truyền thẳng thì UUID thành
-  // query, query.mode=undefined, items=state.cart -> TẠO ĐƠN MỚI SAI GIÁ.
+  // query, query.mode=undefined -> trang không biết phải mở QR của đơn nào.
   {
     pattern: /^\/order\/([^/]+)$/,
     render: renderCheckout,
@@ -49,7 +55,18 @@ const ROUTES = [
    * mua, và nút tải phải chạy ngay từ lần mở đầu tiên.
    */
   { pattern: /^\/tai-ve$/, render: renderDownload, mount: mountDownload },
-  { pattern: /^\/admin$/, render: renderAdmin, mount: mountAdmin },
+  /*
+   * /admin — NẠP THEO YÊU CẦU (code-split thủ công).
+   * `load` trả {render, mount} đúng hợp đồng của route; router await nó
+   * trước khi render nên phần còn lại của app không phải biết gì thêm.
+   */
+  {
+    pattern: /^\/admin$/,
+    load: async () => {
+      const m = await import('./pages/admin.js');
+      return { render: m.renderAdmin, mount: m.mountAdmin };
+    },
+  },
 ];
 
 let currentCleanup = null;
@@ -76,16 +93,45 @@ function bindNotFound(app) {
   app.querySelector('[data-nf-products]')?.addEventListener('click', () => navigate('/products'));
 }
 
+/**
+ * Chưa biết trạng thái đăng nhập -> hiện KHỐI CHỜ thay vì nút "Đăng nhập".
+ *
+ * Nếu vẽ thẳng nút "Đăng nhập" rồi 650ms sau thay bằng avatar, khách đã đăng
+ * nhập sẽ thấy trạng thái SAI (nhấp nháy) — đúng lỗi cần tránh. Khối chờ nói
+ * "chưa biết", không nói sai.
+ *
+ * Không sửa components.js (ngoài phạm vi) nên thay tại chỗ: bỏ 2 nút
+ * login/register trong .header-actions rồi gắn một ô xám cùng kích thước.
+ */
+function paintAuthSkeleton(headerHost) {
+  const area = headerHost.querySelector('.header-actions');
+  if (!area) return;
+  area.querySelectorAll('[data-nav="/login"], [data-nav="/register"]').forEach((el) => el.remove());
+  const ph = document.createElement('span');
+  ph.setAttribute('aria-hidden', 'true');
+  ph.style.cssText =
+    'display:inline-block;width:112px;height:28px;border-radius:8px;' +
+    'background:rgba(148,163,184,.22)';
+  area.appendChild(ph);
+}
+
 function mountChrome(app) {
   // Header
   const headerHost = document.getElementById('site-header');
   if (headerHost) {
     headerHost.innerHTML = renderHeader();
     bindHeader();
+    // Chỉ lần đầu, khi /api/auth/me chưa trả lời.
+    if (!state.authReady) paintAuthSkeleton(headerHost);
   }
   // Footer
   const footerHost = document.getElementById('site-footer');
-  if (footerHost) footerHost.innerHTML = renderFooter();
+  if (footerHost) {
+    footerHost.innerHTML = renderFooter();
+    // Cột "Sản phẩm" chỉ chứa danh mục THẬT SỰ có hàng (footer vẽ trước khi
+    // nạp danh mục nên phải vá sau, không chặn lần vẽ đầu).
+    hydrateFooterCategories().catch(() => { /* bỏ qua: footer vẫn dùng được */ });
+  }
 
   // AI widget (một lần duy nhất)
   if (!document.getElementById('ai-fab')) {
@@ -123,15 +169,31 @@ function ensureMain(app) {
   app.appendChild(main);
 }
 
+/**
+ * Số thứ tự điều hướng. router() giờ có 2 điểm await (lazy chunk + nạp auth)
+ * nên nếu khách bấm link trong lúc còn đang nạp, lượt cũ phải TỰ BỎ thay vì
+ * mount chồng lên trang mới.
+ */
+let navSeq = 0;
+
 async function router() {
+  const seq = ++navSeq;
   const route = parseRoute();
   const app = document.getElementById('app');
   if (!app) return;
 
-  // Đóng mọi overlay (giỏ hàng, modal) khi chuyển trang
-  document.getElementById('drawer-overlay')?.classList.remove('open');
-  document.getElementById('cart-drawer')?.classList.remove('open');
-  document.querySelectorAll('.modal-overlay.open').forEach((m) => m.remove());
+  /*
+   * Giỏ hàng ĐÃ BỊ GỠ HOÀN TOÀN. Link cũ (#/cart trong bookmark, tin nhắn cũ)
+   * được đưa thẳng về danh sách sản phẩm thay vì trả 404.
+   */
+  if (route.path === '/cart') {
+    navigate('/products', { replace: true });
+    return;
+  }
+
+  // Đóng mọi modal khi chuyển trang. Modal phải đóng qua close() của nó: xoá
+  // node trực tiếp sẽ bỏ sót listener Escape trên document và không trả focus.
+  closeAllModals();
 
   if (currentCleanup) {
     try { currentCleanup(); } catch { /* ignore */ }
@@ -153,6 +215,29 @@ async function router() {
     return;
   }
 
+  /*
+   * Route nạp theo yêu cầu (hiện chỉ /admin). Chỉ tải chunk khi vào đúng
+   * trang; lỗi mạng/chunk -> trang 404 sạch thay vì trắng màn hình.
+   */
+  if (typeof matched.load === 'function') {
+    try {
+      matched = { ...matched, ...(await matched.load()) };
+    } catch (e) {
+      console.error('Route load error:', e);
+      app.innerHTML = renderNotFound();
+      mountChrome(app);
+      bindNotFound(app);
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (seq !== navSeq) return; // đã có điều hướng mới hơn
+  }
+
+  /*
+   * VẼ SHELL NGAY (P0): markup của mọi trang là HTML tĩnh, không phụ thuộc
+   * /api/auth/me. Trước đây boot chờ auth+danh mục (~650ms) rồi mới vẽ nên
+   * khách nhìn màn hình chờ suốt thời gian đó.
+   */
   app.innerHTML = matched.render(route.query || {}, param);
   /*
    * Bọc nội dung trong <main> NGAY sau khi render, trước mountChrome: skip
@@ -163,6 +248,18 @@ async function router() {
   ensureMain(app);
   mountChrome(app);
   window.scrollTo({ top: 0, behavior: 'instant' });
+
+  /*
+   * Nạp auth + danh mục SAU khi đã vẽ (không chặn lần vẽ đầu).
+   * Ở lần điều hướng sau, promise này đã xong nên không chờ gì cả.
+   *
+   * Vì sao vẫn phải await TRƯỚC mount(): các trang orders/licenses/account/
+   * admin/checkout đọc state.user ngay trong mount và tự chuyển sang /login
+   * nếu null -> chạy mount trước khi auth xong sẽ đá khách đã đăng nhập ra
+   * trang đăng nhập. Đổi đúng thứ tự: shell trước, auth sau, nội dung cuối.
+   */
+  await hydrateState();
+  if (seq !== navSeq) return; // khách đã chuyển trang trong lúc nạp auth
 
   /*
    * Trang có thể trả về hàm dọn dẹp (vd checkout phải clear poll timer).
@@ -190,6 +287,7 @@ async function router() {
    */
   bindImageFallbacks(app);
   bindScrollHints(app);
+  labelBuyButtons(app);
 
   // Cuộn tới anchor nếu có (#/support#warranty)
   if (route.anchor) {    const el = document.getElementById(route.anchor);
@@ -197,18 +295,70 @@ async function router() {
   }
   // Dọn toast cũ khi chuyển trang
   document.querySelectorAll('.toast-wrap .toast').forEach((t) => t.remove());
-  // Đóng cart drawer
-  document.getElementById('drawer-overlay')?.classList.remove('open');
-  document.getElementById('cart-drawer')?.classList.remove('open');
+}
+
+/* ---------------- Mua ngay (không còn giỏ hàng) ---------------- */
+
+/**
+ * Nút mua trên thẻ sản phẩm (do home.js vẽ) luôn ghi đúng luồng: "Mua ngay".
+ * home.js nằm ngoài phạm vi sửa nên nhãn được chuẩn hoá ở đây, sau khi trang
+ * đã mount xong (mọi trang đều nạp danh sách trong chính mount của nó).
+ */
+function labelBuyButtons(root) {
+  root.querySelectorAll('[data-add]').forEach((btn) => {
+    if (!btn.dataset.add || btn.disabled) return;
+    btn.textContent = 'Mua ngay';
+  });
+}
+
+/**
+ * Bắt cú bấm "Mua" ở pha CAPTURE trên document.
+ *
+ * Thẻ sản phẩm của home.js gắn `data-add="<id>"` và bindProductCards() gắn
+ * addToCart cho chúng. Giỏ hàng đã bị gỡ, nên mọi nút chưa được trang tự gắn
+ * luồng mua (`data-buy-bound="1"`, xem bindBuyNowCards trong checkout.js) đều
+ * được chuyển thẳng sang "Mua ngay". stopPropagation ở pha capture khiến
+ * listener addToCart không bao giờ chạy.
+ */
+function bindBuyNow() {
+  document.addEventListener('click', (e) => {
+    const el = e.target && e.target.closest ? e.target.closest('[data-add]') : null;
+    if (!el || el.disabled || !el.dataset.add || el.dataset.buyBound === '1') return;
+    e.preventDefault();
+    e.stopPropagation();
+    buyNowById(el.dataset.add);
+  }, true);
 }
 
 /* ---------------- Khởi tạo ---------------- */
-async function boot() {
-  try {
-    await Promise.all([loadUser(), loadCategories()]);
-  } catch (e) {
-    console.warn('Boot warning:', e);
+
+/**
+ * Nạp trạng thái mà header + các trang cần (auth, danh mục) — MỘT LẦN.
+ *
+ * Không chặn lần vẽ đầu: router vẽ shell trước rồi mới await promise này.
+ * loadUser() và loadCategories() chạy SONG SONG (trước đây cũng vậy, nhưng
+ * cả hai đều bị chờ TRƯỚC khi vẽ).
+ */
+let hydration = null;
+function hydrateState() {
+  if (!hydration) {
+    hydration = Promise.all([loadUser(), loadCategories()])
+      .catch((e) => console.warn('Boot warning:', e))
+      .then(() => {
+        // Auth xong -> thay skeleton bằng trạng thái thật.
+        const headerHost = document.getElementById('site-header');
+        if (headerHost) {
+          headerHost.innerHTML = renderHeader();
+          bindHeader();
+        }
+      });
   }
+  return hydration;
+}
+
+async function boot() {
+  // Bắt đầu nạp auth + danh mục NGAY, song song với việc vẽ shell bên dưới.
+  const hydrated = hydrateState();
 
   // Refresh header khi đăng nhập/đăng xuất
   window.addEventListener('app:refresh-header', () => {
@@ -221,19 +371,48 @@ async function boot() {
 
   // Router
   window.addEventListener('hashchange', router);
+  // "Mua ngay" cho mọi nút mua chưa được trang tự gắn (xem bindBuyNow).
+  bindBuyNow();
 
   if (!location.hash) history.replaceState(null, '', '#/');
-  await router();
 
-  // Xoá boot screen
+  /*
+   * Trước đây: boot chờ /api/auth/me + /api/categories (~650ms) rồi mới gọi
+   * router() => khách nhìn .boot-screen (position:fixed, z-index 9999) suốt
+   * thời gian đó. Nay router() được gọi ngay: nó thay #app bằng markup trang
+   * ở nhịp đồng bộ đầu tiên (trừ route lazy /admin), nên .boot-screen bị
+   * chính lần vẽ đó xoá và nội dung hiện ra ở ~0ms.
+   */
+  const nav = router();
+  await nav;
+  await hydrated;
+
+  // Xoá boot screen (nếu router chưa kịp thay #app)
   document.querySelector('.boot-screen')?.remove();
 
-  // Refresh số dư định kỳ (60s) khi đã đăng nhập
-  setInterval(() => {
-  }, 60000);
+  /*
+   * Làm mới phiên đăng nhập định kỳ + khi quay lại tab.
+   *
+   * Trước đây chỗ này là `setInterval(() => {}, 60000)` và một listener
+   * `visibilitychange` rỗng — code chết, chỉ tốn một timer vĩnh viễn. Nay làm
+   * thật: hỏi lại /api/auth/me để header biết phiên còn hiệu lực hay đã hết
+   * hạn ở tab khác, và cập nhật số liệu trong state.user.
+   */
+  const sessionKey = () => (state.user ? (state.user.id || state.user.email || 'user') : null);
 
-  // Làm mới khi quay lại tab
+  const refreshSession = async () => {
+    if (document.hidden) return;
+    const before = sessionKey();
+    await loadUser(); // tự nuốt 401, không ném lỗi
+    if (before !== sessionKey()) {
+      window.dispatchEvent(new CustomEvent('app:refresh-header'));
+    }
+  };
+
+  setInterval(refreshSession, 60000);
+
   document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshSession();
   });
 }
 

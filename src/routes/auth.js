@@ -59,7 +59,12 @@ export async function register(env, request) {
     .bind(id, emailForDb, loginName, hash, salt, fullName, now, now)
     .run();
 
-  const ttl = Number(env.SESSION_TTL_DAYS || 30);
+  // FAIL CLOSED: SESSION_TTL_DAYS khong phai so -> dung 30.
+  // Truoc day `Number(x || 30)` cho NaN; NaN*864000 = NaN ->
+  // expires_at thanh NaN -> `if (row.expires_at < Date.now())`
+  // khong bao gio dung -> phien dang nhap KHONG BAO GIO het han.
+  const _ttlRaw = Number(env.SESSION_TTL_DAYS);
+  const ttl = Number.isFinite(_ttlRaw) && _ttlRaw > 0 ? _ttlRaw : 30;
   const session = await createSession(env, id, request, ttl);
   await audit(env, id, 'user.register', id, { loginName });
 
@@ -119,18 +124,50 @@ export async function login(env, request) {
    * Nay: đếm số lần SAI theo từng tài khoản trong 15 phút. Quá ngưỡng thì
    * chặn, kể cả khi mật khẩu đúng — buộc kẻ tấn công phải chờ.
    *
-   * Đếm trong KV (không phải D1) để không thêm 1 write DB cho mỗi lần đăng
-   * nhập sai. KV lỗi -> bỏ qua lớp này (fail-open có chủ ý: không khoá oan
-   * khách vì hạ tầng đếm hỏng).
+   * ===== AUDIT #11: BỘ ĐẾM NAY LÀ D1 NGUYÊN TỬ, KHÔNG PHẢI KV =====
+   *
+   * BẢN CŨ (lỗi): `CACHE.get` rồi `CACHE.put(failCount + 1)` — read-modify-
+   * write KHÔNG nguyên tử. N request song song cùng đọc 0 và cùng ghi 1, nên
+   * ngưỡng 10 thực tế cho dò được hàng trăm lần nếu bắn song song; ngoài ra
+   * mỗi isolate có bản KV riêng (eventual consistency) nên "toàn cục" chỉ là
+   * danh nghĩa.
+   *
+   * NAY: dùng bảng `rate_limits` (đã có từ trước, PK (key, window_at)) với
+   * MỘT câu `INSERT ... ON CONFLICT DO UPDATE count = count + 1 RETURNING
+   * count` — nguyên tử ở tầng D1, đúng toàn cục. Xem d1Bump/rateLimit ở
+   * src/lib/ratelimit.js và counterPeek/counterClear bên dưới.
+   *
+   * KHOẢNG HỞ CÒN LẠI (nói thẳng, không giấu):
+   *   1. Bước ĐỌC đầu tiên (để trả 429 sớm) vẫn là một SELECT thường. Hai
+   *      request đồng thời có thể cùng đọc 9 và cùng đi tiếp vào bước kiểm
+   *      mật khẩu -> mỗi request dò được 1 mật khẩu trước khi bộ đếm chặn.
+   *      Số lần dò tối đa vì thế là N + (số request đang bay cùng lúc), không
+   *      phải vô hạn. Lớp chặn THẬT là bước TĂNG nguyên tử: kể cả khi lọt vào
+   *      kiểm mật khẩu, lần sai thứ 10 trở đi vẫn bị chặn ngay tại đây.
+   *   2. D1 lỗi -> lùi về KV (đọc rồi ghi) như cũ, và nếu lỗi tiếp thì
+   *      fail-open (không khoá oan khách vì hạ tầng đếm hỏng). Đây là đánh đổi
+   *      có chủ ý, giữ nguyên như bản trước.
    */
   const FAIL_LIMIT = 10;
   const FAIL_WINDOW = 900;
   const failKey = `lf:${loginName}`;
+  const {
+    counterPeek, counterClear,
+    rateLimit: bumpCounterAtomic,
+  } = await import('../lib/ratelimit.js');
+
+  // ĐỌC (không tăng): D1 trước, KV chỉ khi D1 lỗi.
   let failCount = 0;
+  let counterOk = true;
   try {
-    const rawFail = await env.CACHE.get(failKey);
-    failCount = rawFail ? Number(rawFail) : 0;
-  } catch { /* KV lỗi -> không chặn */ }
+    failCount = await counterPeek(env, failKey, FAIL_WINDOW);
+  } catch {
+    counterOk = false;
+    try {
+      const rawFail = await env.CACHE.get(failKey);
+      failCount = rawFail ? Number(rawFail) : 0;
+    } catch { /* KV lỗi -> không chặn */ }
+  }
   if (failCount >= FAIL_LIMIT) {
     throw new ApiError(
       429,
@@ -138,16 +175,30 @@ export async function login(env, request) {
       'TOO_MANY_ATTEMPTS',
     );
   }
-  /** Ghi nhận 1 lần sai; reset khi đúng. */
+  /** Ghi nhận 1 lần sai NGUYÊN TỬ; reset khi đúng. */
   const bumpFail = async () => {
+    /*
+     * `FAIL_LIMIT - 1`: rateLimit(failClosed) ném RATE_LIMITED khi
+     * count > limit, nên lần sai thứ 10 (count=10 > 9) là lần bị chặn — đúng
+     * ngưỡng như bản cũ (khoá NGAY khi chạm ngưỡng, không đợi lượt sau).
+     */
+    try {
+      await bumpCounterAtomic(env, failKey, FAIL_LIMIT - 1, FAIL_WINDOW, { failClosed: true });
+      return;
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'RATE_LIMITED') {
+        throw new ApiError(
+          429,
+          'Tài khoản tạm khoá do sai mật khẩu quá nhiều lần. Thử lại sau 15 phút.',
+          'TOO_MANY_ATTEMPTS',
+        );
+      }
+      if (e instanceof ApiError) throw e;
+      /* D1 lỗi -> lớp dự phòng KV (đọc rồi ghi), giữ đúng hành vi cũ. */
+    }
     try {
       const next = failCount + 1;
       await env.CACHE.put(failKey, String(next), { expirationTtl: FAIL_WINDOW });
-      /*
-       * Khoá NGAY khi vừa chạm ngưỡng, không đợi lượt sau: nếu chỉ kiểm ở
-       * đầu hàm thì lần sai thứ LIMIT vẫn trả 401 bình thường, và ngưỡng
-       * thực tế thành LIMIT+1. Chặn tại đây làm ngưỡng đúng như đặt.
-       */
       if (next >= FAIL_LIMIT) {
         throw new ApiError(
           429,
@@ -161,6 +212,9 @@ export async function login(env, request) {
     }
   };
   const clearFail = async () => {
+    if (counterOk) {
+      try { await counterClear(env, failKey, FAIL_WINDOW); } catch { /* ignore */ }
+    }
     try { await env.CACHE.put(failKey, '0', { expirationTtl: 60 }); } catch { /* ignore */ }
   };
 
@@ -184,7 +238,12 @@ export async function login(env, request) {
   }
   await clearFail();
 
-  const ttl = Number(env.SESSION_TTL_DAYS || 30);
+  // FAIL CLOSED: SESSION_TTL_DAYS khong phai so -> dung 30.
+  // Truoc day `Number(x || 30)` cho NaN; NaN*864000 = NaN ->
+  // expires_at thanh NaN -> `if (row.expires_at < Date.now())`
+  // khong bao gio dung -> phien dang nhap KHONG BAO GIO het han.
+  const _ttlRaw = Number(env.SESSION_TTL_DAYS);
+  const ttl = Number.isFinite(_ttlRaw) && _ttlRaw > 0 ? _ttlRaw : 30;
   const session = await createSession(env, user.id, request, ttl);
   await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(Date.now(), user.id).run();
   await audit(env, user.id, 'user.login', user.id, {});

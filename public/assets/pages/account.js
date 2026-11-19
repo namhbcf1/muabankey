@@ -111,7 +111,7 @@ export async function mountAccount(root) {
             <div class="field">
               <label class="label" for="pw-new">Mật khẩu mới</label>
               <input class="input" id="pw-new" type="password" autocomplete="new-password"
-                placeholder="Tối thiểu 6 ký tự" aria-describedby="pw-new-hint" required>
+                placeholder="Tối thiểu 8 ký tự" aria-describedby="pw-new-hint" required>
               <span class="form-hint" id="pw-new-hint">Tối thiểu 8 ký tự, nên có cả chữ và số.</span>
             </div>
             <div class="field">
@@ -124,6 +124,19 @@ export async function mountAccount(root) {
       </div>
 
       <div>
+        <div class="panel" style="margin-bottom:12px">
+          <h2 class="panel-title">${icon('shieldCheck', { size: 15 })} Bản quyền của bạn</h2>
+          <div class="def-list" data-my-lic>
+            <div class="def-row">
+              <span class="def-k">Đang tải…</span>
+              <span class="def-v"></span>
+            </div>
+          </div>
+          <a class="btn btn-ghost btn-sm mt-1" href="#/licenses">
+            Xem chi tiết ${icon('chevronRight', { size: 13 })}
+          </a>
+        </div>
+
         <div class="panel">
           <h2 class="panel-title">${icon('sliders', { size: 15 })} Thao tác nhanh</h2>
           <div class="action-list">
@@ -131,7 +144,7 @@ export async function mountAccount(root) {
               ${icon('package', { size: 15 })} Đơn hàng của tôi ${icon('chevronRight', { size: 14, cls: 'chev' })}
             </button>
             <button class="action-item" data-go="/licenses">
-              ${icon('key', { size: 15 })} License của tôi ${icon('chevronRight', { size: 14, cls: 'chev' })}
+              ${icon('checkCircle', { size: 15 })} License của tôi ${icon('chevronRight', { size: 14, cls: 'chev' })}
             </button>
             <button class="action-item" data-go="/products">
               ${icon('bag', { size: 15 })} Tiếp tục mua sắm ${icon('chevronRight', { size: 14, cls: 'chev' })}
@@ -167,6 +180,61 @@ export async function mountAccount(root) {
   host.querySelectorAll('[data-go]').forEach((b) => {
     b.onclick = () => navigate(b.dataset.go);
   });
+
+  // ------------------------------------------------------------------
+  // KHỐI "BẢN QUYỀN CỦA BẠN" — hiện NGAY hạn dùng.
+  //
+  // Chủ shop: "check cái thời gian của tài khoản ở đâu? không có trang đấy à?"
+  // Trước đây trang Tài khoản không hiện hạn, phải bấm sang "License của tôi".
+  // Nay hiện tại chỗ: mỗi sản phẩm một dòng, còn bao nhiêu ngày.
+  // ------------------------------------------------------------------
+  (async () => {
+    const box = host.querySelector('[data-my-lic]');
+    if (!box) return;
+    const row = (name, l) => {
+      if (!l) {
+        return '<div class="def-row"><span class="def-k">' + esc(name)
+          + '</span><span class="def-v" style="opacity:.6">Chưa có</span></div>';
+      }
+      let val;
+      let tone = '';
+      if (!l.active) {
+        val = (l.revoked ? 'Đã thu hồi' : 'Đã hết hạn');
+        tone = 'color:var(--danger)';
+      } else if (l.forever || !l.expires_at) {
+        val = 'Không giới hạn';
+        tone = 'color:var(--ok)';
+      } else {
+        const d = Math.max(0, Math.ceil(
+          (l.expires_at * 1000 - Date.now()) / 86400000));
+        val = (d <= 0) ? 'Đã hết hạn' : ('Còn ' + d + ' ngày');
+        tone = d <= 7 ? 'color:var(--warning)' : 'color:var(--ok)';
+        if (d <= 0) tone = 'color:var(--danger)';
+      }
+      return '<div class="def-row"><span class="def-k">' + esc(name)
+        + '</span><span class="def-v" style="' + tone + ';font-weight:600">'
+        + esc(val) + '</span></div>';
+    };
+    try {
+      const d = await api('/api/entitlement');
+      const lics = (d && d.licenses) || [];
+      // Bản đã mua đi theo TÀI KHOẢN (đổi máy nào cũng được) nên không lọc
+      // theo máy nữa: chỉ cần licence còn hiệu lực là hiện.
+      const pick = (pid) => lics.find((L) => {
+        if (!L.active) return false;
+        const p = String(L.pid || '').toLowerCase();
+        return pid === 'xagrant' ? (p === 'xagrant') : (p !== 'xagrant');
+      }) || lics.find((L) => {
+        const p = String(L.pid || '').toLowerCase();
+        return pid === 'xagrant' ? (p === 'xagrant') : (p !== 'xagrant');
+      });
+      box.innerHTML = row('Map sáng', pick('nofog'))
+        + row('Tài nguyên', pick('xagrant'));
+    } catch (e) {
+      box.innerHTML = '<div class="def-row"><span class="def-k">'
+        + 'Không tải được</span></div>';
+    }
+  })();
 
   host.querySelector('#profile-form').onsubmit = async (e) => {
     e.preventDefault();

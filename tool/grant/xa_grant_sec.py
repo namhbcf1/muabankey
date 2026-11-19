@@ -39,6 +39,7 @@ import base64
 import hashlib
 import json
 import struct
+import subprocess
 
 # ---------------------------------------------------------------------------
 # Hang so cau truc (khong phai dia chi engine -> khong can ma hoa)
@@ -188,7 +189,7 @@ def verify_sig(message, sig_b64u, pub_xy):
 
 
 # ---------------------------------------------------------------------------
-# Giai ma khoi ENGINE
+# giai du lieu
 # ---------------------------------------------------------------------------
 
 def open_engine(payload):
@@ -206,18 +207,18 @@ def open_engine(payload):
     gate_b64 = payload.get('as') or payload.get('gk')
     ct_b64 = payload.get('av')
     if not gate_b64 or not ct_b64:
-        raise TokenError('token thieu khoi ENGINE')
+        raise TokenError('token thieu du lieu')
 
     try:
         gate = b64u_dec(gate_b64)
         ct = b64u_dec(ct_b64)
     except TokenError:
-        raise TokenError('khoi ENGINE khong phai base64')
+        raise TokenError('du lieu khong hop le')
 
     if len(gate) != GATE_LEN:
         raise TokenError('gate sai kich thuoc')
     if len(ct) < 16 or len(ct) > MAX_PLAIN:
-        raise TokenError('khoi ENGINE sai kich thuoc')
+        raise TokenError('du lieu sai kich thuoc')
 
     out = bytearray(len(ct))
     blocks = (len(ct) + 31) // 32
@@ -233,15 +234,15 @@ def open_engine(payload):
     # sua de "return {}" se bi bat o day, khong am tham roi vao dia chi rac
     # (goi ham lung tung trong tien trinh game => crash hoac hong tran).
     if not out.startswith(b'{'):
-        raise TokenError('khoi ENGINE giai ra khong phai JSON')
+        raise TokenError('du lieu sai dinh dang')
 
     try:
         eng = json.loads(out.decode('utf-8'))
     except Exception:
-        raise TokenError('khoi ENGINE khong phai JSON hop le')
+        raise TokenError('du lieu khong hop le')
 
     if not isinstance(eng, dict) or 'a' not in eng:
-        raise TokenError('khoi ENGINE thieu truong "a"')
+        raise TokenError('du lieu thieu truong')
 
     _validate_engine(eng)
     return eng
@@ -402,10 +403,10 @@ def verify_token(token, pub_xy, app=APP, now=None, hwid=None):
         eng = open_engine(payload)
     except TokenError as e:
         msg = str(e)
-        code = 'no_engine' if ('thieu khoi' in msg) else 'bad_engine'
+        code = 'no_data' if ('thieu du lieu' in msg) else 'bad_data'
         return {'ok': False, 'code': code, 'msg': msg}
     except Exception as e:  # noqa: BLE001
-        return {'ok': False, 'code': 'bad_engine', 'msg': str(e)}
+        return {'ok': False, 'code': 'bad_data', 'msg': str(e)}
 
     return {'ok': True, 'engine': eng, 'payload': payload,
             'expires_at': exp,
@@ -480,16 +481,6 @@ def refresh_token(api_base, key, hwid, sid=None, timeout=20):
     if not tok:
         return False, '', 'server khong tra token'
     return True, tok, 'ok'
-    try:
-        import subprocess
-        out = subprocess.run(
-            cmd, capture_output=True, timeout=25,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if out.returncode != 0:
-            return ''
-        return out.stdout.decode('utf-8', 'ignore').strip()
-    except Exception:
-        return ''
 
 
 def report_violation(api_base, key, hwid, code, sid=None, timeout=12):

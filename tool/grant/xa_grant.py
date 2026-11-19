@@ -76,6 +76,9 @@ for _s in (sys.stdout, sys.stderr):
 # khi da dong goi thanh .exe (Nuitka/PyInstaller gom ca goi).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import xa_grant_sec as _sec  # noqa: E402
+
+# URL server — lay tu _sec de chi co MOT nguon su that.
+API_BASE = getattr(_sec, 'API_BASE', 'https://xienhl.com')
 import xa_grant_guard as _guard  # noqa: E402
 
 # ----------------------------------------------------------------------------
@@ -92,6 +95,9 @@ import xa_grant_guard as _guard  # noqa: E402
 # Khi chay that, `load_engine_from_token()` ghi de toan bo.
 # ----------------------------------------------------------------------------
 PREFERRED_BASE = 0x400000
+# PHAI khop EXE_VERSION trong src/routes/xa-grant-installer.js.
+# Tang so nay MOI LAN build phat hanh -> client tu cap nhat.
+APP_VERSION = '1.0.3.0'   # in ra boi --version
 DLLCHAR_OFF = 0x46                      # DllCharacteristics trong PE optional header
 
 # ===== GIA TRI MAC DINH: TAT CA = 0 =====
@@ -101,9 +107,15 @@ DLLCHAR_OFF = 0x46                      # DllCharacteristics trong PE optional h
 # chi nam trong binary -> nguoi go EXE van doc duoc. Da kiem chung bang cach
 # quet binary: SENDER van lo ra dang chuoi hex.
 #
-# Nay dat 0. Moi gia tri that den TU TOKEN. Neu chua nap token ma van goi
-# vao game thi se bi chan boi `_require_engine()` (bao loi ro rang), khong
-# am tham goi vao dia chi rong.
+# Nay dat 0. Mọi giá trị thật đến TỪ TOKEN, nạp trong
+# `verify_engine_token()` (có `global`, nên gán đúng vào module).
+#
+# Nếu chưa nạp token mà vẫn gọi vào game: các biến vẫn = 0, và
+# `do_grant` tự chối với GrantError rõ ràng (đã kiểm chứng thực tế —
+# không bao giờ âm thầm gọi vào địa chỉ rỗng).
+#
+# (Trước đây comment này nhắc `_require_engine()` — hàm đó KHÔNG tồn tại.
+#  Việc chặn thật nằm ở các kiểm tra bên trong `do_grant`.)
 BUILDER        = 0
 SENDER         = 0
 APPLY_GATE     = 0
@@ -132,7 +144,10 @@ OFF_ONLINE     = 0x10E4
 
 # chuoi tai nguyen cua xa_measure.py (de validate da vao tran)
 OFF_MANAGER, OFF_SLOTS, OFF_WRAPARRAY, OFF_PLAYER = 0x3F4, 0x3C, 0x40, 0x50
-OFF_LOCAL_IDX  = 0x1590      # HANG SO 2 — KHONG phai local index (giu ten cu)
+OFF_LOCAL_IDX  = 0x1590
+# Ten nguoi choi nam o [wrapper+0x44] (xem read_name_of_wrapper).
+# Truoc day thieu hang so nay -> NameError moi lan doc ten.
+OFF_NAME_PTR   = 0x44      # HANG SO 2 — KHONG phai local index (giu ten cu)
 OFF_LOCAL_SLOT = 0x7C        # int16 [manager+0x7C] = LOCAL PLAYER SLOT INDEX
 OFF_BITMASK    = 0xD8        # dword [wrapper+0xD8] = bitmask NHOM, KHONG phai 1<<slot
                              # do 2026-11-11: tran 9 slot -> slot1..4 = 0x1E, slot5..8 = 0x1E0
@@ -240,9 +255,7 @@ def load_engine_from_token(token, pub_xy, app=None, hwid=None):
     global BUILDER, SENDER, APPLY_GATE, APPLY_IMPL, CHANGE_RES
     global VTABLE, WRAPPER_VTABLE, PTR_WORLD
     global OFF_CTX, OFF_PLAYERIDX, OFF_SENDER, OFF_APPLY, OFF_ONLINE
-    global VT_SLOT_VAL, VT_SLOT_OFF, SIG
-    global ALLOC_ADDR, WRAP_CR, GAME_PKT, LOCAL_APPLY, BUILDER_SIB, RING_COPY
-    global VTABLE_SETTINGS
+    global VT_SLOT_VAL, VT_SLOT_OFF
 
     if app is None:
         app = 'xagrant'
@@ -301,9 +314,9 @@ def load_engine_from_token(token, pub_xy, app=None, hwid=None):
             if hx:
                 SIG[globals()[nm]] = bytes.fromhex(hx)
     except GrantError as e:
-        return {'ok': False, 'code': 'bad_engine', 'msg': str(e)}
+        return {'ok': False, 'code': 'bad_data', 'msg': str(e)}
     except (KeyError, ValueError, TypeError) as e:
-        return {'ok': False, 'code': 'bad_engine',
+        return {'ok': False, 'code': 'bad_data',
                 'msg': 'khoi ENGINE sai cau truc: %s' % e}
 
     _ENGINE_LOADED.update({
@@ -387,7 +400,12 @@ def read_token():
 
     if raw.startswith(_DPAPI_PREFIX):
         out = _dpapi_call('CryptUnprotectData', raw[len(_DPAPI_PREFIX):])
-        return out.decode('utf-8', 'ignore').strip() if out else ''
+        if out:
+            # Da co token DPAPI dung duoc -> file token.txt PLAINTEXT cua ban
+            # cu khong con ly do ton tai tren may. Xoa ngay.
+            _drop_legacy_plaintext_token()
+            return out.decode('utf-8', 'ignore').strip()
+        return ''
 
     # Tuong thich ban cu: token.txt plaintext
     try:
@@ -396,6 +414,18 @@ def read_token():
             return f.read().strip()
     except Exception:
         return ''
+
+
+def _drop_legacy_plaintext_token():
+    """Xoa %LOCALAPPDATA%\\XAGrant\\token.txt (token PLAINTEXT cua ban cu)."""
+    try:
+        old = os.path.join(state_dir(), 'token.txt')
+        if os.path.exists(old):
+            os.remove(old)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def write_token(tok):
@@ -631,12 +661,42 @@ class GrantError(Exception):
 
 
 # ----------------------------------------------------------------------------
+def _debug_on():
+    """Có bật ghi vết kỹ thuật không?
+
+    MỘT công tắc, giống app: XA_DEBUG=1 (biến môi trường) hoặc cờ
+    --debug-log. File này chạy được cả khi đóng gói riêng (xa_grant.exe)
+    nên không import xa_arena_api được — luật giữ y hệt.
+    """
+    try:
+        if str(os.environ.get('XA_DEBUG') or '').strip().lower() in (
+                '1', 'true', 'yes', 'on'):
+            return True
+        return '--debug-log' in [str(a).lower() for a in sys.argv]
+    except Exception:
+        return False
+
+
 def log(step, msg, va=None):
+    """Ghi MỘT bước vào LOG (RAM của phiên) — không in, không ghi đĩa.
+
+    LOG giữ lại trong RAM vì đường chạy thành công còn dùng tới. Nội dung
+    dòng có địa chỉ nội bộ (VA), world/mgr/sender/vtable nên:
+        - KHÔNG in ra khi tắt debug (console/GUI-subsystem trước đây in vô ích),
+        - TUYỆT ĐỐI không ghi ra file (không có đường nào ghi LOG xuống đĩa).
+    """
     line = ('[%s] ' % step) + msg
     if va is not None:
         line += '  <VA 0x%08X>' % va
-    LOG.append(line)
-    print(line)
+    try:
+        LOG.append(line)
+    except Exception:
+        pass
+    if _debug_on():
+        try:
+            print(line)
+        except Exception:
+            pass
 
 
 # ----------------------------------------------------------------------------
@@ -690,7 +750,10 @@ def build_record(player, slot, amount):
 # build record 12 byte roi goi thang engine.
 # ----------------------------------------------------------------------------
 
-DISPATCH_SENDER = SENDER
+# KHONG gan `DISPATCH_SENDER = SENDER` o day!
+# Luc import, SENDER con = 0 (chua nap tu token), nen hang so se
+# chup gia tri 0 -> moi lan goi dispatch deu nhay vao dia chi 0.
+# Thay bang ham tra gia tri HIEN TAI ben duoi.
 TYPE_OBJ_RESOURCE = 0x77
 RES_ID_FOOD = 4
 
@@ -732,7 +795,15 @@ def build_record_obj_resource(obj_id, resource_id, delta):
     return bytes(rec)
 
 
-def build_stub_dispatch(this_ptr, rec, rec_va, dispatch=DISPATCH_SENDER):
+def _dispatch_sender():
+    """Dia chi ham dispatch HIEN TAI (SENDER da nap tu token).
+
+    Khong dung hang so vi no bi chup luc import khi SENDER = 0.
+    """
+    return SENDER
+
+
+def build_stub_dispatch(this_ptr, rec, rec_va, dispatch=None):
     """Stub goi engine(sender, rec, len) -- stdcall ret 8.
 
         B9 <sender>       mov  ecx, sender
@@ -742,6 +813,11 @@ def build_stub_dispatch(this_ptr, rec, rec_va, dispatch=DISPATCH_SENDER):
         FF D0             call eax
         C3                ret
     """
+    if dispatch is None:
+        dispatch = _dispatch_sender()
+    if not dispatch:
+        raise GrantError('chua nap dia chi SENDER (token chua duoc nap?)')
+
     n = len(rec)
     code = bytearray()
     code += b'\xB9' + struct.pack('<I', this_ptr)
@@ -811,7 +887,9 @@ def build_stub_dispatch_owned(this_ptr, rec, rec_va, dispatch=None,
     trong allocation của stub, rồi gọi dispatch. Con trỏ do game sở hữu.
     """
     if dispatch is None:
-        dispatch = DISPATCH_SENDER
+        dispatch = _dispatch_sender()
+    if not dispatch:
+        raise GrantError('chua nap dia chi SENDER (token chua duoc nap?)')
     if alloc is None:
         alloc = 0x528450          # GAME_ALLOC
 
@@ -964,8 +1042,23 @@ def find_game():
 
 
 def open_game(pid):
-    for acc, label in ((PROCESS_ALL_ACCESS, 'ALL_ACCESS'),
-                       (0x0008 | 0x0010 | 0x0020 | 0x0400, 'RVM_READ|WRITE|OPER|QUERY')):
+    # ------------------------------------------------------------------
+    # QUYỀN TỐI THIỂU TRƯỚC — GIẢM DẤU VẾT.
+    #
+    # Trước đây thử PROCESS_ALL_ACCESS (0x1F0FFF) TRƯỚC. Đó là quyền rộng
+    # nhất, và là thứ anti-cheat / EDR / phần mềm quản net liệt kê ĐẦU
+    # TIÊN khi soi "có process lạ mở handle tới game".
+    #
+    # Nay thử quyền tối thiểu trước (VM_OPERATION|VM_READ|VM_WRITE|
+    # QUERY_INFORMATION = 0x438). Chỉ khi game từ chối mới lùi về
+    # ALL_ACCESS. Đa số máy chạy quyền admin thì 0x438 là đủ.
+    # ------------------------------------------------------------------
+    # PHẢI có PROCESS_CREATE_THREAD (0x0002) thì CreateRemoteThread
+    # mới chạy được. Bug đã sửa: 0x438 thiếu bit này ⇒ mọi lần
+    # cộng tài nguyên đều thất bại dù chạy admin.
+    _MIN = 0x0002 | 0x0008 | 0x0010 | 0x0020 | 0x0400   # = 0x43A
+    for acc, label in ((_MIN, 'RVM_READ|WRITE|OPER|QUERY'),
+                       (PROCESS_ALL_ACCESS, 'ALL_ACCESS')):
         h = k32.OpenProcess(acc, False, pid)
         if h:
             log('open', 'OpenProcess(%s) thanh cong' % label)
@@ -980,21 +1073,6 @@ def module_base(h):
     if not psapi.EnumProcessModules(h, mods, ctypes.sizeof(mods), ctypes.byref(need)):
         raise GrantError('EnumProcessModules that bai')
     return int(mods[0] or 0)
-
-
-def rd(h, va, n):
-    buf = ctypes.create_string_buffer(n)
-    got = ctypes.c_size_t(0)
-    if not k32.ReadProcessMemory(h, ctypes.c_void_p(va), buf, n, ctypes.byref(got)):
-        return None
-    if got.value != n:
-        return None
-    return buf.raw[:n]
-
-
-def u32(h, va):
-    b = rd(h, va, 4)
-    return None if b is None else struct.unpack('<I', b)[0]
 
 
 def rd(h, va, n):
@@ -1101,8 +1179,94 @@ def read_player_name(h, pd, wrap=0):
 # Vậy: số người chơi = vị trí trong danh sách sau khi bỏ slot 0 (1..N).
 # ============================================================================
 
-VTABLE_PLAYER  = WRAPPER_VTABLE   # lớp người chơi thật
-VTABLE_SETTINGS = VTABLE_SETTINGS  # lớp game-settings (slot 0)
+# KHONG dat VTABLE_PLAYER = WRAPPER_VTABLE o day!
+#
+# LOI DA SUA: o cap module, WRAPPER_VTABLE con = 0 (chua nap tu token), nen
+# VTABLE_PLAYER bi chup vinh vien = 0. Hau qua day chuyen:
+#     _list_players_inner loc  p['vt'] == 0  -> KHONG BAO GIO khop
+#     -> danh sach rong
+#     -> resolve_chain nem 'khong doc duoc player nao'
+#     -> BAM CONG LUON THAT BAI du license hop le.
+# Cung mot loai loi voi DISPATCH_SENDER. Nay dung ham _player_vtable().
+# ---------------------------------------------------------------------------
+# TỰ ĐỘNG CẬP NHẬT — dùng chung tool/ui/xa_update.py
+# ---------------------------------------------------------------------------
+
+def _updater():
+    """Nạp module xa_update. None nếu không có."""
+    try:
+        import xa_update
+        return xa_update
+    except Exception:
+        pass
+    try:
+        import os as _os
+        import sys as _sys
+        here = _os.path.dirname(_os.path.abspath(__file__))
+        for cand in (_os.path.join(here, '..', 'ui'), here):
+            cand = _os.path.abspath(cand)
+            if cand not in _sys.path:
+                _sys.path.insert(0, cand)
+        import xa_update
+        return xa_update
+    except Exception:
+        return None
+
+
+def _exe_path():
+    """Duong dan TUYET DOI cua file .exe nguoi dung bam.
+
+    Nuitka onefile: sys.frozen = False, sys.executable =
+    TEMP/onefile_*/python.exe. Duong dan that nam o sys.argv[0].
+    """
+    try:
+        a0 = sys.argv[0] if sys.argv else ''
+        if a0 and a0.lower().endswith('.exe'):
+            ap = os.path.abspath(a0)
+            low = ap.replace('/', chr(92)).lower()
+            if os.path.exists(ap) and (chr(92) + 'onefile_') not in low:
+                return ap
+        p = sys.executable or ''
+        if p.lower().endswith('.exe'):
+            ap = os.path.abspath(p)
+            low = ap.replace('/', chr(92)).lower()
+            if (os.path.exists(ap)
+                    and (chr(92) + 'onefile_') not in low
+                    and os.path.basename(ap).lower() != 'python.exe'):
+                return ap
+        return ''
+    except Exception:
+        return ''
+
+def _enforce_status(msg):
+    """Hiện tiến trình khi chưa có GUI (hộp thoại Windows gốc)."""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None, str(msg), 'XA THÊM TÀI NGUYÊN', 0x40)
+    except Exception:
+        pass
+
+
+def update_enforce():
+    """ÉP CẬP NHẬT. Trả False nếu đã lên lịch thay file (phải thoát)."""
+    U = _updater()
+    if not U:
+        return True
+    exe = _exe_path()
+    if not exe:
+        return True
+    try:
+        st, msg = U.enforce_update(
+            API_BASE, 'grant', APP_VERSION, exe, on_status=_enforce_status)
+    except Exception:
+        return True
+    return st != 'updating'
+
+
+def _player_vtable():
+    """Vtable cua lop nguoi choi THAT (WRAPPER_VTABLE da nap tu token)."""
+    return WRAPPER_VTABLE
 
 
 def list_players(h):
@@ -1158,8 +1322,9 @@ def _list_players_inner(h):
                     'vt': vt or 0, 'bm': bm,
                     'ten': read_name_of_wrapper(h, wrap), 'vals': vals})
 
+    want_vt = _player_vtable()
     players = [p for p in raw
-               if p['slot'] > 0 and p['vt'] == VTABLE_PLAYER]
+               if p['slot'] > 0 and p['vt'] == want_vt]
     for n, p in enumerate(players, start=1):
         p['so'] = n
     return players
@@ -1446,7 +1611,64 @@ def do_check(h, base):
     return 0 if ok else 1
 
 
+# ---------------------------------------------------------------------------
+# TRANG STUB BỊ RÒ RỈ — KHÔNG ĐƯỢC GIẢI PHÓNG
+#
+# LỖI ĐÃ SỬA (P0): khi `WaitForSingleObject` hết 5 giây, code cũ ném lỗi
+# rồi `finally` gọi `VirtualFreeEx`. Nhưng `CloseHandle` chỉ đóng handle,
+# KHÔNG dừng thread — thread vẫn đang chạy trên trang vừa bị giải phóng
+# ⇒ execute-freed-memory ⇒ game crash `0xC0000005`.
+#
+# Nay: trang rò rỉ được ghi vào danh sách này và KHÔNG bao giờ free.
+# Rò rỉ 4 KB mỗi lần timeout — chấp nhận được, crash thì không.
+# ---------------------------------------------------------------------------
+# R5: lưu (pid, mem) thay vì chỉ mem.
+#
+# Game có ASLR TẮT nên process MỚI dùng lại CÙNG địa chỉ ảo. Nếu chỉ so
+# theo `mem`, trang của process cũ sẽ khiến process mới KHÔNG BAO GIỜ
+# được free (rò 4 KB mỗi lần grant). Kèm pid để phân biệt.
+_LEAKED_PAGES = []
+
+
+def _mark_leaked(h, mem):
+    """Đánh dấu trang KHÔNG được free (thread có thể còn chạy trên đó)."""
+    try:
+        import ctypes as _ct
+        k32 = _ct.WinDLL('kernel32', use_last_error=True)
+        pid = k32.GetProcessId(_ct.c_void_p(h)) or 0
+    except Exception:
+        pid = 0
+    _LEAKED_PAGES.append((pid, mem))
+    # Dọn bớt để list không phình mãi (giữ 32 mục gần nhất).
+    while len(_LEAKED_PAGES) > 32:
+        _LEAKED_PAGES.pop(0)
+
+
+def _is_leaked(h, mem):
+    """Trang này của process này đã bị đánh dấu rò rỉ chưa?"""
+    try:
+        import ctypes as _ct
+        k32 = _ct.WinDLL('kernel32', use_last_error=True)
+        pid = k32.GetProcessId(_ct.c_void_p(h)) or 0
+    except Exception:
+        pid = 0
+    return (pid, mem) in _LEAKED_PAGES
+
+
 def do_grant(h, base, res, amount, dry_run, gate, so=None):
+    """Cộng tài nguyên — TỰ GIỮ KHOÁ ENGINE.
+
+    R8: trước đây hàm này không tự lấy khoá, nên đường CLI
+    (`--grant`, chế độ tương tác) chạy KHÔNG được bảo vệ: có thể chồng
+    với map sáng hoặc với watcher ⇒ crash game.
+
+    `_ENGINE_LOCK` là RLock nên gọi lồng nhau vẫn an toàn.
+    """
+    with _ENGINE_LOCK:
+        return _do_grant_locked(h, base, res, amount, dry_run, gate, so)
+
+
+def _do_grant_locked(h, base, res, amount, dry_run, gate, so=None):
     # ---- thu tu gate: tat ca deu phai qua truoc khi cap phat byte nao ----
     if not gate:
         raise GrantError(
@@ -1587,6 +1809,14 @@ def do_grant(h, base, res, amount, dry_run, gate, so=None):
         try:
             r = k32.WaitForSingleObject(th, 5000)
             if r == WAIT_TIMEOUT:
+                # KHÔNG free trang: thread có thể còn chạy trên đó.
+                # Ghi lại để không bao giờ giải phóng (xem _LEAKED_PAGES).
+                _mark_leaked(h, mem)
+                try:
+                    log('exec', 'RO RI: giu lai trang 0x%08X (thread chua xong)'
+                        % mem, mem)
+                except Exception:
+                    pass
                 raise GrantError('thread khong ket thuc trong 5s -- KHONG xac dinh duoc trang thai')
             code = wt.DWORD(0)
             k32.GetExitCodeThread(th, ctypes.byref(code))
@@ -1594,7 +1824,10 @@ def do_grant(h, base, res, amount, dry_run, gate, so=None):
         finally:
             k32.CloseHandle(th)
     finally:
-        if k32.VirtualFreeEx(h, ctypes.c_void_p(mem), 0, MEM_RELEASE):
+        # KHÔNG giải phóng trang đã bị đánh dấu rò rỉ (thread còn chạy).
+        if _is_leaked(h, mem):
+            log('exec', 'BO QUA VirtualFreeEx 0x%08X (dang ro ri)' % mem, mem)
+        elif k32.VirtualFreeEx(h, ctypes.c_void_p(mem), 0, MEM_RELEASE):
             log('exec', 'VirtualFreeEx 0x%08X' % mem, mem)
         else:
             log('exec', 'CANH BAO: VirtualFreeEx that bai (0x%08X con nam lai)'
@@ -1646,6 +1879,8 @@ def do_grant(h, base, res, amount, dry_run, gate, so=None):
             % (RES_NAME[res], RES_OFF[res], before))
         print('  [!] Khong doc lai duoc gia tri sau khi grant.')
         print('      Process co the da dong. Chay --check de kiem tra.')
+        # TRẢ 0 = KHÔNG xác minh được. Người gọi phải GIỮ "nợ" để lần
+        # sau hoàn tiếp, không được coi là đã hoàn.
         return 0
 
     log('result', '%s tai playerdata+0x%02X: %g -> %g  (delta %+g, yeu cau %+g)'
@@ -1692,12 +1927,817 @@ def do_grant(h, base, res, amount, dry_run, gate, so=None):
         print('  [!] Khong tai nguyen nao doi sau 5s.')
 
     if (after - before) < need:
+        # ------------------------------------------------------------------
+        # LỖI ĐÃ SỬA (P0 — "cái được cái không"):
+        #
+        # Vòng `while` phía trên CHỈ thoát khi `(v - before) >= need`.
+        # Nghĩa là khi ta tới được nhánh này thì XÁC MINH ĐÃ THẤT BẠI.
+        #
+        # Nhưng code cũ chỉ in cảnh báo rồi rơi xuống `return 1` — mà 1
+        # nghĩa là "ĐÃ GỬI VÀ XÁC MINH". `RefundWatcher` tin giá trị đó
+        # nên XOÁ "nợ", dù record chưa hề được game áp dụng. Đó chính là
+        # cảm giác "cái được cái không": lần thì hoàn đủ, lần thì mất
+        # trắng mà nút vẫn báo đã hoàn.
+        #
+        # Nay: giữ "nợ" để lần sau hoàn tiếp, đúng tinh thần "thiếu đâu
+        # cộng đấy".
+        # ------------------------------------------------------------------
         print()
         print('  [!] Gia tri KHONG tang du sau 5s.')
         print('      Kiem tra: online flag, ring drain, hoac amount.')
+        try:
+            log('result', 'KHONG xac minh duoc: delta %+g < can %+g'
+                % (after - before, need))
+        except Exception:
+            pass
+        return 0
+
     print()
     print('Sau khi grant, chay:  python xa_grant.py --check')
-    return 0
+    # TRẢ 1 = ĐÃ GỬI VÀ XÁC MINH THẬT (delta >= 50% amount).
+    # Người gọi (RefundWatcher) chỉ được xoá "nợ" khi nhận 1.
+    return 1
+
+
+# ===========================================================================
+# HOAN TIEN KHI MUA QUAN  ("MUA 2 TINH 1")  — CHI CHU SHOP
+#
+# Khac han "sua bang chi phi": KHONG dung vao du lieu game. Thay vao do
+# theo doi tai nguyen, khi thay TUT (ban vua mua quan) thi hoan lai phan
+# vua tut qua chinh duong dong bo cua engine.
+#
+# Vi du: ban mua 2 quan mat 100 thoc. Tool hoan 50 -> thuc chi 50.
+# Ca 2 may deu nhan cung record -> checksum khop -> KHONG bi kick.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# KHOÁ ENGINE — CHỈ MỘT LỆNH ENGINE TẠI MỘT THỜI ĐIỂM
+#
+# LỖI ĐÃ SỬA (nghiêm trọng): nút cộng tài nguyên (GrantWorker) và nút
+# "Mua 2 tính 1" (RefundWatcher) có thể chạy CÙNG LÚC. Cả hai đều gọi
+# BUILDER và cùng ghi vào một ô nhớ `[session+8]` của game.
+#
+# Chính comment trong file này (phần ALLOC/RING_COPY) đã ghi: giải phóng
+# hai lần qua `0x5284F0` ⇒ `0xC0000005` = CRASH game.
+#
+# Nay: mọi lệnh engine đi qua một khoá duy nhất.
+# ---------------------------------------------------------------------------
+import threading as _threading
+import random as _random
+
+_ENGINE_LOCK = _threading.RLock()
+
+
+def engine_lock():
+    """Lấy khoá engine (dùng làm context manager hoặc gọi tay)."""
+    return _ENGINE_LOCK
+
+
+REFUND_RATIO = 0.5          # tỷ lệ TRUNG BÌNH (hoàn một nửa)
+# Tỷ lệ thật dao động ngẫu nhiên trong khoảng dưới đây, KHÔNG cố định
+# 50% nữa — vì 50% chính xác là một quy luật máy lọc được.
+REFUND_RATIO_MIN = 0.40     # thấp nhất 40%
+REFUND_RATIO_MAX = 0.60     # cao nhất 60%
+# Độ trễ trước khi hoàn cũng ngẫu nhiên, để nhịp không đều.
+REFUND_DELAY_MIN_MS = 2500
+# LỖI ĐÃ SỬA (R1 — nguyên nhân khớp nhất với "vừa mua xong drop"):
+#
+# `do_grant` ghi vào game từ một REMOTE THREAD của ta, trong khi thread
+# CHÍNH của game vẫn đang chạy mô phỏng. Khách vừa MUA ⇒ game đang cập
+# nhật tài nguyên ⇒ ta chèn record đúng lúc đó ⇒ cùng ghi
+# `[session+8]`/allocator game ⇒ free chéo ⇒ `0xC0000005`.
+#
+# `_ENGINE_LOCK` chỉ loại trừ thread CỦA TA, không loại trừ thread game.
+# Nên phải giãn thời gian: 2,5 giây là đủ để game xử lý xong cú mua.
+# (Trước đây 500 ms — quá sát.)
+REFUND_DELAY_MAX_MS = 3000
+REFUND_MIN = 20             # tụt ít hơn mức này = nhiễu (không phải mua quân)
+# TRẦN "NỢ" MỖI LOẠI TÀI NGUYÊN.
+#
+# LỖI ĐÃ SỬA: trước đây `owed` cộng dồn KHÔNG GIỚI HẠN. Mọi lần tài
+# nguyên giảm — kể cả giảm HỢP LỆ như nâng cấp nhà, cống nạp cho đồng
+# minh — đều thành "nợ" và được hoàn lại. Một trận dài có thể tích luỹ
+# thành cục lớn rồi hoàn một lần, đúng thứ thiết kế muốn tránh.
+#
+# Nay: mỗi loại tài nguyên chỉ giữ tối đa 5.000 nợ. Đủ cho vài lần mua
+# quân liên tiếp, không thể tích luỹ thành cục.
+REFUND_OWED_MAX = 5000
+
+# MỘT LẦN TỤT LỚN HƠN TỶ LỆ NÀY = KHÔNG PHẢI MUA HÀNG.
+#
+# Nguyên nhân "vừa vào trận mới thì drop": khi trận mới bắt đầu, tài
+# nguyên về giá trị khởi đầu (5000 → 200). Watcher thấy "tụt 4800" và
+# hoàn ~2400 ngay trong 3 giây đầu trận ⇒ ghi 4 record vào game đúng
+# lúc trận mới khởi tạo ⇒ desync / drop.
+#
+# Mua hàng thật không bao giờ tụt 50%: xây nhà 35 gỗ khi có 200 gỗ là
+# 17%. Nên 50% là ngưỡng an toàn, rộng rãi.
+REFUND_MAX_DROP_PCT = 0.90
+
+# LỖI ĐÃ SỬA (chủ shop: "cơ chế hoàn lại không chính xác lắm nhỉ? cái
+# được cái không, bắt nhầm cái"):
+#
+# Ngưỡng cũ 50% QUÁ THÔ. Đo thật với 400 tài nguyên:
+#   mua 5 dân làng (250 thịt) = 62%  → BỊ CHẶN → "cái không"
+#   nhà chính đời 3 (500 gỗ)  = 125% → BỊ CHẶN → "cái không"
+#   mua 1 dân (50 thịt)       = 12%  → được hoàn → "cái được"
+# Đó chính xác là cảm giác "cái được cái không".
+#
+# Nay 90% — chỉ chặn khi tụt GẦN HẾT (dấu hiệu reset trận, không phải
+# mua hàng), VÀ chỉ áp dụng trong 20 giây đầu trận / sau khi đổi world.
+REFUND_MAX_DROP_PCT = 0.90
+
+# Chỉ coi là "reset trận" khi tài nguyên tụt >= ngưỡng trên VÀ đang ở
+# trong khoảng này kể từ lúc phát hiện world mới.
+REFUND_RESET_WINDOW_MS = 20000
+
+# Sau khi `do_grant` trả 0 (không xác minh), nghỉ bao lâu mới thử lại.
+# Tránh tiêm engine dồn dập đúng lúc game đang bận.
+REFUND_FAIL_BACKOFF_MS = 1500
+
+# Slot của máy này đổi (người chơi khác vào/ra) → phải đọc lại
+# playerdata. Kiểm tra mỗi 400 ms (2 nhịp).
+REFUND_SLOT_CHECK_MS = 400
+REFUND_POLL_MS = 200        # kiem tra moi 200ms
+REFUND_COOLDOWN_MS = 2500   # nghỉ sau mỗi lần hoàn (xem R1 ở trên)
+# 1200ms qua dai: mua lien tuc phai cho lau moi duoc hoan bu.
+# 500ms = 2,5 lan poll, du de tranh hoan chong ma van phan ung nhanh.
+
+
+class RefundWatcher:
+    """Theo doi tai nguyen cua CHINH MINH, hoan lai phan vua tut.
+
+    Dung:
+        w = RefundWatcher(h, base, chain)
+        w.tick()        # goi lap lai moi 200ms
+        w.stop()
+    """
+
+    def __init__(self, h, base, chain, ratio=None, on_event=None):
+        self.h = h
+        self.base = base
+        self.chain = chain or {}
+        self.ratio = float(REFUND_RATIO if ratio is None else ratio)
+        self.on_event = on_event
+        self.prev = None
+        # Tổng phần đã tụt mà CHƯA hoàn ("còn nợ"). Dùng bộ đếm này thay
+        # vì so mốc, để mua dồn dập không bị mất phần nào.
+        self.owed = {'F': 0.0, 'W': 0.0, 'S': 0.0, 'G': 0.0}
+        # LỖI ĐÃ SỬA (nguyên nhân "vừa mua xong drop"):
+        #
+        # Trước đây = 0. Hàm `_tick_locked` có `if self.last_refund_ms:`
+        # nên giá trị 0 làm BỎ QUA kiểm tra chờ ⇒ LẦN HOÀN ĐẦU TIÊN xảy
+        # ra chỉ ~200 ms sau khi mua, đúng lúc thread chính của game đang
+        # cập nhật tài nguyên ⇒ ghi chéo ⇒ game drop.
+        #
+        # Nay neo mốc ngay lúc BẬT: lần hoàn đầu cũng phải chờ đủ
+        # REFUND_DELAY_MIN_MS.
+        try:
+            self.last_refund_ms = int(time.time() * 1000)
+        except Exception:
+            self.last_refund_ms = 1
+        self.total_refunded = {'F': 0.0, 'W': 0.0, 'S': 0.0, 'G': 0.0}
+        self.running = False
+        # Đánh dấu khi process đã chết (GUI dùng để bật lại).
+        self._dead = False
+        # World hiện tại — đổi world nghĩa là sang trận mới (R4).
+        self._world = 0
+        # Mốc thời gian phát hiện world mới — chỉ trong
+        # REFUND_RESET_WINDOW_MS đầu mới coi lần tụt lớn là reset trận.
+        self._world_ms = 0
+        # Slot của máy này lần đọc trước (A: slot đổi ⇒ playerdata đổi).
+        self._slot = None
+        # Mốc lần kiểm slot gần nhất.
+        self._slot_ms = 0
+        # Mốc lần `do_grant` thất bại gần nhất (C: backoff).
+        self._fail_ms = 0
+        self._pd = self._playerdata()
+
+    def alive(self):
+        """Process game còn sống không?
+
+        LỖI ĐÃ SỬA (nghiêm trọng): trước đây watcher giữ handle VĨNH VIỄN
+        và không kiểm tra. Khách thoát game rồi vào trận mới: handle cũ
+        vẫn là số hợp lệ nhưng trỏ vào process đã chết ⇒ đọc RÁC ⇒ thấy
+        "tài nguyên tụt" giả ⇒ refund vào process sai ⇒ GAME DROP.
+
+        Nay: GetExitCodeProcess mỗi nhịp. STILL_ACTIVE = 259.
+        """
+        try:
+            import ctypes as _ct
+            k32 = _ct.WinDLL('kernel32', use_last_error=True)
+            code = _ct.c_ulong(0)
+            ok = k32.GetExitCodeProcess(_ct.c_void_p(self.h),
+                                        _ct.byref(code))
+            if not ok:
+                return False
+            return code.value == 259
+        except Exception:
+            return False
+
+    def _is_match_start(self):
+        """Đang ở đầu trận không? (dùng để phân biệt reset vs mua lớn)
+
+        True khi:
+          - world vừa đổi trong REFUND_RESET_WINDOW_MS, HOẶC
+          - đồng hồ trận < 20 giây
+
+        Ở đầu trận tài nguyên còn ít, nên một lần tụt >= 90% gần như
+        chắc chắn là reset, không phải mua hàng.
+        """
+        try:
+            _now = int(time.time() * 1000)
+        except Exception:
+            _now = 0
+        if self._world_ms and (_now - self._world_ms) <= REFUND_RESET_WINDOW_MS:
+            return True
+        # P2-1: dùng `match_ms` (ms thô), KHÔNG dùng `match_seconds`.
+        #
+        # LỖI ĐÃ SỬA: `match_seconds()` trả 0 trong 999 ms đầu trận, mà
+        # 0 nghĩa là "không biết" ⇒ điều kiện `if sec and sec < 20` bỏ
+        # qua đúng khoảnh khắc trận vừa bắt đầu — lúc cần nhận ra reset
+        # nhất. Nay: có đọc được (ms > 0) và < 20 giây ⇒ đầu trận.
+        try:
+            ms = match_ms(self.h, self.base)
+        except Exception:
+            ms = 0
+        if ms and ms < 20000:
+            return True
+        return False
+
+    def _read_slot(self):
+        """Đọc slot của MÁY NÀY: int16 [mgr+OFF_LOCAL_SLOT].
+
+        Trả None nếu chưa vào trận hoặc đọc lỗi.
+        """
+        try:
+            world = u32(self.h, PTR_WORLD)
+            if not world:
+                return None
+            mgr = u32(self.h, world + OFF_MANAGER)
+            if not mgr:
+                return None
+            raw = rd(self.h, mgr + OFF_LOCAL_SLOT, 2)
+            if not raw or len(raw) != 2:
+                return None
+            slot = struct.unpack('<h', raw)[0]
+            # P1-1: KIỂM THEO SỐ SLOT THẬT, không phải hằng số 64.
+            #
+            # LỖI ĐÃ SỬA: chỉ có `slot > 64`. Nếu game báo ít slot hơn,
+            # `arr + slot*4` đọc ra ngoài mảng ⇒ rác, mà rác lọt vào
+            # khoảng 0..1e7 thì `_read` chấp nhận ⇒ "nợ" giả ⇒ hoàn sai.
+            cnt = self._slot_count()
+            if cnt is not None and (slot < 0 or slot >= cnt):
+                return None
+            if slot < 0 or slot > 64:
+                return None
+            return slot
+        except Exception:
+            return None
+
+    def _slot_count(self):
+        """Số slot người chơi: u16 [mgr+OFF_SLOTS]. None nếu không đọc được."""
+        try:
+            world = u32(self.h, PTR_WORLD)
+            if not world:
+                return None
+            mgr = u32(self.h, world + OFF_MANAGER)
+            if not mgr:
+                return None
+            raw = rd(self.h, mgr + OFF_SLOTS, 2)
+            if not raw or len(raw) != 2:
+                return None
+            n = struct.unpack('<H', raw)[0]
+            if n <= 0 or n > 64:
+                return None
+            return n
+        except Exception:
+            return None
+
+    def _playerdata(self):
+        """Đọc con trỏ playerdata của CHÍNH MÌNH.
+
+        LỖI ĐÃ SỬA (chủ shop báo: xây 6 nhà vẫn hết 180 gỗ, mua 4 dân vẫn
+        hết 200 thịt — không hoàn được gì):
+
+            arr = u32(self.h, ctx + OFF_MANAGER)      # ❌ SAI
+
+        `ctx` là WRAPPER của người chơi, còn `OFF_MANAGER` (0x3F4) là
+        offset tính từ WORLD. Cộng vào nhau ⇒ đọc vùng nhớ vô nghĩa ⇒
+        không bao giờ thấy tài nguyên tụt ⇒ không hoàn.
+
+        Chuỗi ĐÚNG (theo `_list_players_inner`, đã kiểm chứng):
+            world -> [+0x3F4] mgr -> [+0x40] mảng wrapper
+            slot của máy này = int16 [mgr+0x7C]
+            wrap = u32(arr + slot*4)
+            pd   = u32(wrap + 0x50)      <-- playerdata
+        """
+        try:
+            world = u32(self.h, PTR_WORLD)
+            if not world:
+                return None
+            mgr = u32(self.h, world + OFF_MANAGER)
+            if not mgr:
+                return None
+            arr = u32(self.h, mgr + OFF_WRAPARRAY)
+            if not arr:
+                return None
+            # Slot của máy này
+            raw = rd(self.h, mgr + OFF_LOCAL_SLOT, 2)
+            if not raw or len(raw) != 2:
+                return None
+            slot = struct.unpack('<h', raw)[0]
+            # P1-1: kiểm theo số slot thật (xem `_slot_count`).
+            cnt = self._slot_count()
+            if cnt is not None and (slot < 0 or slot >= cnt):
+                return None
+            if slot < 0 or slot > 64:
+                return None
+            wrap = u32(self.h, arr + slot * 4)
+            if not wrap:
+                return None
+            pd = u32(self.h, wrap + OFF_PLAYER)
+            return pd or None
+        except Exception:
+            return None
+
+    def _read(self):
+        """Đọc 4 tài nguyên. Trả dict hoặc None.
+
+        TỰ TÍNH LẠI ĐỊA CHỈ khi cần. Lỗi đã sửa: `_pd` trước đây chỉ tính
+        một lần lúc bật nút. Nếu khách bật nút KHI CHƯA vào trận thì
+        `_pd` rỗng và không bao giờ đọc được nữa; nếu vào trận MỚI thì
+        playerdata đổi địa chỉ và `_pd` cũ trỏ vào rác.
+        """
+        try:
+            # R4: TRẬN MỚI TRONG CÙNG PROCESS.
+            #
+            # Game có thể bắt đầu trận mới mà KHÔNG tạo process mới.
+            # `_pd` cache chỉ được reset khi đọc ra giá trị vô lý, nên
+            # trận mới vẫn dùng `pd` cũ ⇒ tính "nợ" sai ⇒ refund vào
+            # trận mới.
+            #
+            # Nay: theo dõi `world`. Đổi world ⇒ reset toàn bộ mốc.
+            try:
+                _w = u32(self.h, PTR_WORLD)
+                if _w and _w != self._world:
+                    if self._world:
+                        # Đổi trận: xoá mốc để không tính nợ của trận cũ.
+                        self.prev = None
+                        self.owed = {'F': 0.0, 'W': 0.0, 'S': 0.0,
+                                     'G': 0.0}
+                    self._world = _w
+                    # Ghi mốc để `_is_match_start` biết ta vừa sang trận.
+                    try:
+                        self._world_ms = int(time.time() * 1000)
+                    except Exception:
+                        self._world_ms = 0
+                    self._slot = None
+                    self._pd = None
+            except Exception:
+                pass
+
+            # A: KIỂM TRA SLOT — mỗi 400 ms.
+            #
+            # LỖI ĐÃ SỬA ("bắt nhầm cái"): `_pd` chỉ được tính lại khi
+            # đọc ra giá trị vô lý. Khi có người chơi khác vào/ra trận,
+            # slot của máy này đổi ⇒ `_pd` cũ trỏ vào NGƯỜI KHÁC ⇒ đọc
+            # tài nguyên người khác ⇒ hoàn sai số rất lớn.
+            #
+            # Nay: đọc lại slot định kỳ. Slot đổi ⇒ tính lại `_pd`, xoá
+            # mốc, không hoàn phần chênh lệch do đổi người.
+            try:
+                _nowr = int(time.time() * 1000)
+            except Exception:
+                _nowr = 0
+            if _nowr - self._slot_ms >= REFUND_SLOT_CHECK_MS or not self._pd:
+                self._slot_ms = _nowr
+                _sl = self._read_slot()
+                if _sl is not None:
+                    if self._slot is not None and _sl != self._slot:
+                        # Đổi slot ⇒ đổi người ⇒ mọi mốc cũ vô nghĩa.
+                        try:
+                            log('refund', 'slot doi %s -> %s, reset moc'
+                                % (self._slot, _sl))
+                        except Exception:
+                            pass
+                        self.prev = None
+                        self.owed = {'F': 0.0, 'W': 0.0, 'S': 0.0,
+                                     'G': 0.0}
+                        self._pd = None
+                    self._slot = _sl
+
+            if not self._pd:
+                self._pd = self._playerdata()
+                if not self._pd:
+                    return None
+            out = {}
+            for k in ('F', 'W', 'S', 'G'):
+                v = f32(self.h, self._pd + RES_OFF[k])
+                # Tài nguyên âm hoặc vô lý = đọc nhầm vùng nhớ -> tính lại
+                if v < 0 or v > 1e7:
+                    self._pd = None
+                    return None
+                out[k] = v
+            return out
+        except Exception:
+            self._pd = None
+            return None
+
+    def tick(self, now_ms=None):
+        """Kiem 1 lan. Tra list cac tai nguyen da hoan (rong = khong lam gi).
+
+        KHÔNG BAO GIỜ chạy chồng với lệnh engine khác: nếu engine đang bận
+        (ví dụ khách vừa bấm nút cộng tài nguyên) thì BỎ QUA nhịp này —
+        không xếp hàng, để `owed` giữ nguyên và hoàn ở nhịp sau.
+        """
+        import time as _t
+        if now_ms is None:
+            now_ms = int(_t.time() * 1000)
+        # Không lấy được khoá -> engine đang bận -> bỏ nhịp này
+        if not _ENGINE_LOCK.acquire(blocking=False):
+            return []
+        # ------------------------------------------------------------------
+        # LỖI ĐÃ SỬA (P0): từ đây tới cuối hàm PHẢI mở khoá trong mọi
+        # trường hợp. Trước đây có 2 nhánh `return` sớm quên mở khoá
+        # (nhánh `self.prev is None` chạy ngay nhịp ĐẦU TIÊN), nên bật
+        # nút 200 ms là TREO VĨNH VIỄN mọi lệnh engine sau đó — nút cộng
+        # tài nguyên chết hẳn, đóng app cũng bị treo.
+        # ------------------------------------------------------------------
+        try:
+            return self._tick_locked(now_ms)
+        finally:
+            _ENGINE_LOCK.release()
+
+    def _tick_locked(self, now_ms):
+        """Phần thân của tick(), đã giữ khoá engine."""
+        # KIỂM TRA PROCESS CÒN SỐNG — TRƯỚC MỌI THỨ.
+        #
+        # Không có bước này: game tắt -> handle cũ -> đọc rác -> refund
+        # vào process sai -> GAME DROP. Đây là lỗi chủ shop báo.
+        if not self.alive():
+            self._dead = True
+            return []
+
+        cur = self._read()
+        if cur is None:
+            return []
+        if self.prev is None:
+            self.prev = cur
+            return []
+        cur = self._read()
+        if cur is None:
+            return []
+        if self.prev is None:
+            self.prev = cur
+            return []
+
+        # ------------------------------------------------------------------
+        # BƯỚC 1: CỘNG DỒN PHẦN ĐÃ TỤT VÀO "CÒN NỢ".
+        #
+        # LỖI ĐÃ SỬA (đo được): cách cũ so mốc `prev` với giá trị hiện tại,
+        # và trong thời gian cooldown lại đẩy `prev` xuống ⇒ phần tụt ở giữa
+        # bị MẤT.
+        #   Đo thật: mua 4 thứ trong 1,2 s, tiêu 600 → chỉ hoàn 200
+        #   (thiếu 100 so với lý tưởng 300).
+        #
+        # Nay: mỗi lần thấy tụt thì CỘNG VÀO `owed`, không bao giờ mất.
+        # Đúng tinh thần "thiếu đâu cộng đấy".
+        # ------------------------------------------------------------------
+        for k, v in cur.items():
+            d = self.prev[k] - v
+            if d > 0:
+                # CHẶN LẦN TỤT VÔ LÝ (reset trận / đọc nhầm vùng).
+                #
+                # LỖI ĐÃ SỬA — đây là nguyên nhân "vừa vào trận mới thì
+                # drop": trận mới đưa tài nguyên về giá trị khởi đầu
+                # (5000 → 200) ⇒ thấy "tụt 4800" ⇒ hoàn ~2400 ngay 3
+                # giây đầu trận ⇒ ghi record đúng lúc trận khởi tạo.
+                #
+                # Mua hàng thật không tụt tới 50% (xây nhà 35 gỗ khi có
+                # 200 gỗ = 17%). Nên bỏ qua lần tụt ≥ 50% và coi đó là
+                # mốc mới.
+                # D: PHÂN BIỆT "RESET TRẬN" VÀ "MUA LỚN".
+                #
+                # LỖI ĐÃ SỬA ("cái được cái không"): ngưỡng cũ 50% chặn
+                # cả MUA HÀNG THẬT:
+                #   mua 5 dân làng (250 thịt/400) = 62%  → bị chặn
+                #   nhà chính đời 3 (500 gỗ/400)  = 125% → bị chặn
+                # Đó chính là cảm giác "cái được cái không".
+                #
+                # Nay chỉ coi là RESET khi ĐỒNG THỜI:
+                #   1. tụt >= 90% (gần hết), VÀ
+                #   2. đang ở đầu trận (world vừa đổi, hoặc < 20 giây)
+                # Ngoài điều kiện đó => MUA HÀNG => hoàn bình thường.
+                _base = max(self.prev[k], v)
+                _pct = (d / _base) if _base > 0 else 0.0
+                if _pct >= REFUND_MAX_DROP_PCT and self._is_match_start():
+                    try:
+                        log('refund', 'reset tran: bo qua %s %.0f -> %.0f'
+                            % (k, self.prev[k], v))
+                    except Exception:
+                        pass
+                    self.prev[k] = v
+                    continue
+                self.owed[k] += d
+                # Cắt trần nợ: không để tích luỹ thành cục lớn.
+                if self.owed[k] > REFUND_OWED_MAX:
+                    self.owed[k] = REFUND_OWED_MAX
+            self.prev[k] = v
+
+        # Đang trong thời gian nghỉ -> chưa hoàn, nhưng `owed` vẫn giữ.
+        #
+        # ĐỘ TRỄ NGẪU NHIÊN: lỗi đã sửa — trước đây hoàn sau đúng ~240ms
+        # mỗi lần (200ms poll + trễ cố định), nên nhịp đều tuyệt đối.
+        # Nay mỗi lần chờ ngẫu nhiên 0,5–3 giây, nhịp không còn đều.
+        # LUÔN kiểm tra chờ — KHÔNG có ngoại lệ nào.
+        #
+        # LỖI ĐÃ SỬA: trước đây bọc trong `if self.last_refund_ms:` nên
+        # lần đầu (giá trị 0) bỏ qua hoàn toàn ⇒ hoàn ngay 200 ms sau cú
+        # mua đầu tiên ⇒ trùng lúc game đang cập nhật ⇒ game drop.
+        try:
+            _gap = _random.randint(REFUND_DELAY_MIN_MS,
+                                   REFUND_DELAY_MAX_MS)
+        except Exception:
+            _gap = REFUND_COOLDOWN_MS
+        if now_ms - self.last_refund_ms < max(REFUND_COOLDOWN_MS, _gap):
+            return []
+        # C: sau một lần thất bại, nghỉ lâu hơn hẳn.
+        if self._fail_ms and now_ms - self._fail_ms < REFUND_FAIL_BACKOFF_MS:
+            return []
+
+        # BƯỚC 2: HOÀN THEO "CÒN NỢ"
+        #
+        # LỖI ĐÃ SỬA (đo từ byte thật của EMPIRESX.EXE):
+        # Hàm dedup `0x42BA10` có `cmp eax,0x1F4` (= 500 ms) — nó HUỶ một
+        # record nếu CÙNG kích thước và CÙNG type byte trong vòng 500 ms.
+        #
+        # Vòng lặp cũ hoàn MỌI loại trong một lần, không nghỉ:
+        #   tiêu gỗ + vàng cùng lúc -> 2 record type 0x05 size 8 trong cùng
+        #   một mili giây -> RECORD THỨ 2 BỊ NUỐT.
+        # Hậu quả: tưởng đã hoàn 50% nhưng thực tế chỉ hoàn 1 loại.
+        #
+        # Nay: nghỉ 600 ms giữa các loại (> 500 ms dedup).
+        # MỖI NHỊP CHỈ GỬI 1 RECORD.
+        #
+        # LỖI ĐÃ SỬA: trước đây một đợt gửi TỚI 4 record liên tiếp (F, W,
+        # S, G), mỗi record là một lần tiêm remote thread vào game. Càng
+        # nhiều lần tiêm sát nhau, càng dễ trùng đúng lúc thread chính
+        # của game đang cập nhật ⇒ free chéo ⇒ game drop.
+        #
+        # Nay: mỗi nhịp (200 ms) chỉ gửi MỘT record. Nhịp sau gửi loại
+        # tiếp theo. Tổng thời gian hoàn đủ vẫn chấp nhận được, mà số lần
+        # tiêm trong một khoảnh khắc giảm 4 lần.
+        done = []
+        _picked = None
+        for k, owe in self.owed.items():
+            if owe < REFUND_MIN:
+                continue
+            _picked = (k, owe)
+            break
+        if _picked is None:
+            return []
+        for k, owe in (_picked,):
+            # ------------------------------------------------------------------
+            # TỶ LỆ NGẪU NHIÊN + LÀM TRÒN.
+            #
+            # LỖI ĐÃ SỬA: trước đây hoàn ĐÚNG 50.0% mỗi lần. Đo cụ thể: đối
+            # thủ đọc bộ nhớ thấy chuỗi +15, +15, +15, +15, +15, +15 — tỷ lệ
+            # chính xác 50%, không lệch một lần nào. Đó là QUY LUẬT, và quy
+            # luật thì lọc được bằng 5 dòng code.
+            #
+            # Nay: mỗi lần hoàn một tỷ lệ NGẪU NHIÊN trong khoảng
+            # 40–60%. Đối thủ chỉ còn thấy "thu nhập hơi cao", không thấy
+            # quy luật.
+            #
+            # Làm tròn XUỐNG: tài nguyên AoE1 hiển thị số nguyên; hoàn số
+            # lẻ làm ô hiện "107.5" — trông lạ.
+            # ------------------------------------------------------------------
+            try:
+                _r = _random.uniform(REFUND_RATIO_MIN, REFUND_RATIO_MAX)
+            except Exception:
+                _r = self.ratio
+            give = float(int(owe * _r))
+            if give < 1:
+                continue
+            try:
+                sent = do_grant(self.h, self.base, k, give,
+                                False, True, None)
+                # LỖI ĐÃ SỬA (P1): `do_grant` trả 0 khi KHÔNG xác minh
+                # được (không phải ném lỗi). Code cũ bỏ qua giá trị này và
+                # vẫn xoá `owed` ⇒ refund biến mất trong im lặng, trái với
+                # "thiếu đâu cộng đấy".
+                # Nay chỉ xoá nợ khi đã gửi VÀ xác minh được.
+                if sent:
+                    self.total_refunded[k] += give
+                    self.owed[k] = 0.0
+                    done.append((k, give))
+                else:
+                    # C: THẤT BẠI -> BACKOFF.
+                    #
+                    # LỖI ĐÃ SỬA: trước đây `do_grant` trả 0 thì mốc
+                    # `last_refund_ms` KHÔNG đổi ⇒ thử lại ngay nhịp sau
+                    # (200 ms) ⇒ tiêm engine dồn dập đúng lúc game đang
+                    # bận ⇒ càng thất bại, và có thể drop.
+                    try:
+                        self._fail_ms = now_ms
+                        log('refund', 'chua xac minh duoc %s — giu no,'
+                            ' nghi %d ms' % (k, REFUND_FAIL_BACKOFF_MS))
+                    except Exception:
+                        pass
+            except Exception as e:
+                # P0-2: LỖI NÉM RA CŨNG PHẢI BACKOFF.
+                #
+                # LỖI ĐÃ SỬA: trước đây chỉ nhánh `sent == 0` đặt
+                # `_fail_ms`. Khi `do_grant` NÉM (lỗi thường gặp nhất là
+                # timeout 5 giây chờ thread — tức game đã ngừng phản hồi),
+                # `done` rỗng ⇒ `last_refund_ms` cũng không đổi ⇒ CẢ HAI
+                # mốc đều đứng yên ⇒ thử lại ngay 200 ms sau ⇒ 6 lần tiêm
+                # remote thread trong 1,2 giây vào một game đang treo.
+                # Đó chính là dấu hiệu "game drop".
+                self._fail_ms = now_ms
+                try:
+                    log('refund', 'loi %s: %s — nghi %d ms'
+                        % (k, e, REFUND_FAIL_BACKOFF_MS))
+                except Exception:
+                    pass
+        if done:
+            # R3: neo mốc ở CUỐI đợt, không phải đầu nhịp. Nếu neo ở đầu,
+            # đợt sau bắt đầu chỉ ~200 ms sau record cuối ⇒ record đầu bị
+            # dedup 500 ms nuốt ⇒ do_grant trả 0 ⇒ giữ nợ ⇒ lặp.
+            try:
+                import time as _t3
+                self.last_refund_ms = int(_t3.time() * 1000)
+            except Exception:
+                self.last_refund_ms = now_ms
+            if self.on_event:
+                try:
+                    self.on_event(done)
+                except Exception:
+                    pass
+            # Đọc lại sau khi hoàn để mốc đúng
+            again = self._read()
+            if again:
+                self.prev = again
+        return done
+
+    def stop(self):
+        self.running = False
+
+
+# ===========================================================================
+# CHI CHU SHOP: kiem HWID co trong whitelist khong
+# ===========================================================================
+
+_SHOP_HWIDS = set()
+
+
+def set_shop_hwids(values):
+    """Nap danh sach HWID duoc bat tinh nang nay."""
+    global _SHOP_HWIDS
+    _SHOP_HWIDS = set(str(v or '').strip().lower() for v in (values or [])
+                      if str(v or '').strip())
+
+
+def is_shop_machine(hwid=None):
+    """May nay co phai may chu shop khong?"""
+    try:
+        if hwid is None:
+            hwid = _guard_safe_hwid() if '_guard_safe_hwid' in globals() else ''
+        h = str(hwid or '').strip().lower()
+        return bool(h) and h in _SHOP_HWIDS
+    except Exception:
+        return False
+
+
+# ===========================================================================
+# THOI GIAN TRAN DAU (phut Thu may)
+#
+# Dung cho tinh nang chia buoc theo phut: phut 1 cong max 200, phut 2
+# 300, phut 3 400... Cang ve sau cang nhieu dan -> cong cang nhanh.
+#
+# OFFSET CHUA XAC MINH: giao thuc nay co truong "Wrldtime" (thay trong
+# C:\aoesync.txt) nhung offset that trong bo nho CHUA duoc do tren may
+# co game chay. Vi vay ham nay tra 0 khi chua biet — KHONG doan bua,
+# vi doan sai se doc vao vung nho khac va co the lam hong game.
+#
+# Khi co ket qua do that, chi can dien WORLD_TIME_OFF / WORLD_TIME_GLOBAL
+# ben duoi la xong, khong phai sua cho nao khac.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# ĐÃ TÌM ĐƯỢC (chứng minh bằng xref, không đoán):
+#
+#   world = u32(h, PTR_WORLD)          # thanh ghi có sẵn
+#   mgr   = u32(h, world + 0x3F4)      # OFF_MANAGER — giữ danh sách người
+#                                      # chơi VÀ đồng hồ trận
+#   t_ms  = u32(h, mgr + 0x04)         # MILI GIÂY đã trôi trong trận
+#   giay  = t_ms // 1000
+#
+# Bằng chứng:
+#   - 0x429C3B `mov edi,[eax+4]` — hàm gửi trạng thái nạp "Wrldtime" từ
+#     đúng ô này (eax = [world+0x3F4]).
+#   - 0x478AEF — ĐỒNG HỒ TRÊN MÀN HÌNH: `[0x585e88]` -> `[ecx+0x3F4]`
+#     -> `mul dword [edx+4]` -> `shr ecx,6` (=/1000) -> định dạng
+#     "%02ld:%02ld:%02ld". Tức đây chính là giờ trận mà người chơi nhìn thấy.
+#   - 0x4B24FE — nạp cùng ô vào nút lịch trình của mô phỏng.
+#
+# Nếu bản game khác: kiểm lại bằng `_scratch/find-clock/probe_clock.py`.
+# ---------------------------------------------------------------------------
+WORLD_TIME_SRC = ('mgr', 0x04)
+# Giá trị thô là MILI GIÂY -> đổi ra giây
+WORLD_TIME_SCALE = 0.001
+
+_match_t0 = {'v': None}
+
+
+def match_ms(h, base):
+    """Số MILI-GIÂY đã trôi trong trận. 0 = không đọc được.
+
+    Vì sao cần hàm riêng (P2-1):
+      `match_seconds()` làm `int(raw * 0.001)`. Trong 999 ms ĐẦU TIÊN
+      của trận, giá trị đó = 0 — mà 0 lại mang nghĩa "không biết".
+      Nên `_is_match_start()` bị MÙ đúng lúc trận vừa bắt đầu, tức đúng
+      lúc cần nhận ra "đây là reset trận" nhất.
+
+      Hàm này trả ms thô, nên 500 ms vẫn phân biệt được với "không đọc
+      được" (0).
+    """
+    try:
+        if WORLD_TIME_SRC is None:
+            return 0
+        kind, off = WORLD_TIME_SRC
+        if kind == 'global':
+            raw = u32(h, off)
+        elif kind == 'mgr':
+            world = u32(h, PTR_WORLD)
+            if not world:
+                return 0
+            mgr = u32(h, world + OFF_MANAGER)
+            if not mgr:
+                return 0
+            raw = u32(h, mgr + off)
+        else:
+            world = u32(h, PTR_WORLD)
+            if not world:
+                return 0
+            raw = u32(h, world + off)
+        if not raw:
+            return 0
+        # Chặn giá trị vô lý (đọc nhầm vùng): trận AoE1 không quá 5 giờ.
+        if raw > 18000000:
+            return 0
+        return int(raw)
+    except Exception:
+        return 0
+
+
+def match_seconds(h, base):
+    """So giay da troi trong tran. 0 = chua biet (an toan).
+
+    Hàm này chỉ ĐỌC `WORLD_TIME_SRC` nên không cần `global`.
+    """
+    try:
+        if WORLD_TIME_SRC is None:
+            return 0
+        kind, off = WORLD_TIME_SRC
+        if kind == 'global':
+            raw = u32(h, off)
+        elif kind == 'mgr':
+            # Đồng hồ trận nằm trên chính object manager (đã kiểm chứng).
+            world = u32(h, PTR_WORLD)
+            if not world:
+                return 0
+            mgr = u32(h, world + OFF_MANAGER)
+            if not mgr:
+                return 0
+            raw = u32(h, mgr + off)
+        else:
+            world = u32(h, PTR_WORLD)
+            if not world:
+                return 0
+            raw = u32(h, world + off)
+        if not raw:
+            return 0
+        sec = int(raw * WORLD_TIME_SCALE)
+        # Chan gia tri vo ly (doc nham vung nho): tran AoE1 khong qua 5 gio
+        if sec <= 0 or sec > 18000:
+            return 0
+        return sec
+    except Exception:
+        return 0
+
+
+def local_match_seconds():
+    """Thoi gian ke tu luc bat app (du phong khi chua doc duoc tu game).
+
+    CHI la du phong: khong phai thoi gian tran that. Dung de van chia
+    buoc duoc, nhung phut se tinh tu luc mo app.
+    """
+    import time as _t
+    if _match_t0['v'] is None:
+        _match_t0['v'] = _t.time()
+    return int(_t.time() - _match_t0['v'])
 
 
 def do_grant_hidden(h, base, res, amount, dry_run=False, so=None):
@@ -1758,7 +2798,7 @@ def do_grant_hidden(h, base, res, amount, dry_run=False, so=None):
         print()
         print('DRY-RUN: khong goi gi ca.')
         print('  Se goi: 0x%08X(ecx=0x%08X, rec, %d)'
-              % (DISPATCH_42BA60, sender, len(rec)))
+              % (_dispatch_sender(), sender, len(rec)))
         return 0
 
     before = vals.get(res, 0.0)
@@ -1939,8 +2979,15 @@ def _call_dispatch(h, sender, rec):
         payload = stub + b'\x00' * (0x100 - len(stub)) + rec
 
         wrote = ctypes.c_size_t(0)
-        if not k32.WriteProcessMemory(h, ctypes.c_void_p(mem), payload,
-                                      len(payload), ctypes.byref(wrote)):
+        # P1-3: kiểm luôn SỐ BYTE ĐÃ GHI, không chỉ mã trả về.
+        #
+        # LỖI ĐÃ SỬA: `do_grant` đã kiểm `wrote.value != len(stub)` từ
+        # trước, nhưng `_call_dispatch` (đường --stealth) thì không.
+        # Ghi cụt mà không báo ⇒ stub chạy thiếu byte ⇒ hành vi không
+        # xác định bên trong game.
+        if (not k32.WriteProcessMemory(h, ctypes.c_void_p(mem), payload,
+                                       len(payload), ctypes.byref(wrote))
+                or wrote.value != len(payload)):
             raise GrantError('WriteProcessMemory that bai (loi %d)'
                              % ctypes.get_last_error())
         log('dispatch', 'stub %d byte, template %d byte tai 0x%08X'
@@ -1955,6 +3002,11 @@ def _call_dispatch(h, sender, rec):
         r = k32.WaitForSingleObject(th, 3000)
         if r == WAIT_TIMEOUT:
             k32.CloseHandle(th)
+            # LỖI ĐÃ SỬA (P0): CloseHandle KHÔNG dừng thread — thread có
+            # thể còn chạy trên trang này. Đánh dấu rò rỉ để `finally`
+            # KHÔNG giải phóng (giải phóng ⇒ execute-freed-memory ⇒ crash).
+            _mark_leaked(h, mem)
+            log('dispatch', 'RO RI: giu lai trang 0x%08X' % mem, mem)
             raise GrantError('thread khong ket thuc trong 3s '
                              '-- KHONG xac dinh duoc trang thai')
         code = wt.DWORD(0)
@@ -1962,7 +3014,9 @@ def _call_dispatch(h, sender, rec):
         k32.CloseHandle(th)
         log('dispatch', 'thread xong, exit=%d' % code.value)
     finally:
-        if k32.VirtualFreeEx(h, ctypes.c_void_p(mem), 0, MEM_RELEASE):
+        if _is_leaked(h, mem):
+            log('dispatch', 'BO QUA VirtualFreeEx 0x%08X (ro ri)' % mem, mem)
+        elif k32.VirtualFreeEx(h, ctypes.c_void_p(mem), 0, MEM_RELEASE):
             log('dispatch', 'VirtualFreeEx 0x%08X' % mem, mem)
 
 
@@ -2044,13 +3098,39 @@ def selftest():
     print('  stealth NaN/Inf bi chan: OK')
 
     # Stub owned phai cap phat bang allocator cua game (tranh double-free).
-    so = build_stub_dispatch_owned(0x11111111, cr, 0x22222200)
+    #
+    # Selftest chay KHONG can token, nen phai truyen dispatch GIA.
+    # Neu de mac dinh, build_stub_dispatch_owned se tu choi vi SENDER = 0
+    # (dung thiet ke — nhung selftest phai kiem duoc phan logic thuan).
+    so = build_stub_dispatch_owned(0x11111111, cr, 0x22222200,
+                                   dispatch=0x0042BA60)
     ok &= (so[0:2] == b'\x6A\x0C' and so[2:4] == b'\x6A\x01')
     ok &= (b'\xF3\xA4' in so)          # rep movsb
     ok &= (so[-1] == 0xC3)
+    # dispatch gia phai xuat hien trong stub
+    ok &= (bytes.fromhex('B860BA4200') in so)
     print('  stub_owned(%d byte): alloc+copy+dispatch  %s'
           % (len(so), 'OK' if len(so) == 46 else 'FAIL'))
     ok &= (len(so) == 46)
+
+    # Stub --grant cung phai dung duoc khi chua nap token (truyen dispatch gia)
+    sg = build_stub_dispatch(0x11111111, b'ABCDEFGH', 0x22222200,
+                             dispatch=0x0042BA60)
+    ok &= (len(sg) == 23 and bytes.fromhex('B860BA4200') in sg)
+    print('  stub_dispatch(%d byte): goi SENDER  OK' % len(sg))
+
+    # Khi CHUA nap token va KHONG truyen dispatch -> phai TU CHOI
+    _saved = SENDER
+    try:
+        globals()['SENDER'] = 0
+        try:
+            build_stub_dispatch(0x1, b'X' * 8, 0x2)
+            print('  chua nap token -> KHONG tu choi: FAIL')
+            ok = False
+        except GrantError:
+            print('  chua nap token -> tu choi: OK')
+    finally:
+        globals()['SENDER'] = _saved
 
     print('  KET QUA: %s' % ('PASS' if ok else 'FAIL'))
     return 0 if ok else 1
@@ -2909,6 +3989,9 @@ def main():
         except Exception:
             pass
         return 0
+    if '--version' in args:
+        print(APP_VERSION)
+        return 0
     if '--selftest' in args:
         r = selftest()
         if '--pause' in args:
@@ -2924,9 +4007,39 @@ def main():
     if '--key' in args and '--check' not in args and '--grant' not in args:
         k = args.index('--key')
         if k + 1 >= len(args):
-            print('--key can gia tri token')
+            print('--key can gia tri token hoac license key')
             return 2
-        okE, msgE = ensure_engine(args[k + 1])
+        _arg = args[k + 1].strip()
+
+        # PHAN BIET TOKEN va LICENSE KEY.
+        #
+        # Loi that da lam MOI khach XAGrant khong kich hoat duoc:
+        #   Bo cai .cmd/.ps1 chay  <EXE> --key <LICENSE KEY>
+        #   nhung ensure_engine() chi hieu TOKEN (xg1....).
+        #   -> parse_token bao bad_format -> in "TOKEN KHONG HOP LE" -> exit 4.
+        #
+        # Nay: nhan ca hai.
+        #   - Chuoi bat dau bang 'xg1.' -> la token, nap thang.
+        #   - Con lai -> coi la LICENSE KEY, goi /api/xg/activate de doi
+        #     thanh token roi moi nap.
+        if not _arg.startswith('xg1.'):
+            print('Dang kich hoat key %s ...' % _arg)
+            _res = activate_key(_arg)
+            if not _res.get('ok'):
+                print()
+                print('=' * 70)
+                print('KICH HOAT THAT BAI: %s' % (_res.get('msg') or 'khong ro'))
+                print('=' * 70)
+                print('Kiem tra: key con han? da dung tren may khac?')
+                print('Lay key/ma moi tai: https://xienhl.com/#/licenses')
+                return 4
+            print('Da kich hoat. Dang nap bang dia chi engine...')
+            _arg = read_token() or ''
+            if not _arg:
+                print('Khong doc lai duoc token vua luu.')
+                return 4
+
+        okE, msgE = ensure_engine(_arg)
         if not okE:
             print()
             print('=' * 70)
@@ -2997,9 +4110,21 @@ def main():
     if '--key' in args:
         _k = args.index('--key')
         if _k + 1 >= len(args):
-            print('--key can gia tri token')
+            print('--key can gia tri token hoac license key')
             return 2
-        tok_arg = args[_k + 1]
+        tok_arg = args[_k + 1].strip()
+        # Cung logic nhu nhanh --key o tren: chap nhan CA license key.
+        # Neu la key (khong phai token xg1.) thi doi sang token truoc.
+        if tok_arg and not tok_arg.startswith('xg1.'):
+            print('Dang kich hoat key %s ...' % tok_arg)
+            _res2 = activate_key(tok_arg)
+            if not _res2.get('ok'):
+                print()
+                print('=' * 70)
+                print('KICH HOAT THAT BAI: %s' % (_res2.get('msg') or 'khong ro'))
+                print('=' * 70)
+                return 4
+            tok_arg = read_token() or ''
     _okE, _msgE = ensure_engine(tok_arg)
     if not _okE:
         print()

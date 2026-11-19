@@ -1,6 +1,11 @@
-/** Các component tái sử dụng: header, footer, cart drawer, AI chat. */
-import { state, notify, cartCount, cartSubtotal, updateCartQty, removeFromCart, clearCart, addToCart, loadUser } from './state.js';
-import { api, esc, fmtVnd, toast, navigate, copyText, confirmDialog, openModal } from './lib.js';
+/**
+ * Các component tái sử dụng: header, footer, AI chat.
+ *
+ * GIỎ HÀNG ĐÃ BỊ GỠ HOÀN TOÀN: không còn nút giỏ trên header, không còn badge,
+ * không còn drawer. Luồng mua chỉ còn "Mua ngay" -> QR (xem checkout.js).
+ */
+import { state, notify, loadCategories } from './state.js';
+import { api, esc, fmtVnd, toast, navigate } from './lib.js';
 import { icon } from './icons.js';
 
 /* ---------------- Header ---------------- */
@@ -43,10 +48,6 @@ export function renderHeader() {
         <input type="search" id="search-input" placeholder="Tìm sản phẩm..." aria-label="Tìm kiếm sản phẩm">
       </div>
       <div class="header-actions">
-        <button class="icon-btn" id="btn-cart" aria-label="Giỏ hàng" title="Giỏ hàng">
-          ${icon('cart', { size: 15 })}
-          <span class="badge-dot" id="cart-badge" style="display:none" aria-hidden="true">0</span>
-        </button>
         ${userArea}
       </div>
     </div>
@@ -73,9 +74,6 @@ export function bindHeader() {
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => navigate(el.dataset.nav));
   });
-
-  const cartBtn = document.getElementById('btn-cart');
-  if (cartBtn) cartBtn.addEventListener('click', openCartDrawer);
 
   const logoutBtn = document.getElementById('btn-logout');
   if (logoutBtn) {
@@ -135,13 +133,6 @@ export function bindHeader() {
       }
     });
   }
-
-  const badge = document.getElementById('cart-badge');
-  if (badge) {
-    const n = cartCount();
-    badge.textContent = n > 99 ? '99+' : String(n);
-    badge.style.display = n > 0 ? 'grid' : 'none';
-  }
 }
 
 export function renderHeaderAndMount() {
@@ -150,131 +141,6 @@ export function renderHeaderAndMount() {
     host.innerHTML = renderHeader();
     bindHeader();
   }
-}
-
-/* ---------------- Cart drawer ---------------- */
-export function openCartDrawer() {
-  let overlay = document.getElementById('drawer-overlay');
-  let drawer = document.getElementById('cart-drawer');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.className = 'drawer-overlay';
-    overlay.id = 'drawer-overlay';
-    document.body.appendChild(overlay);
-  }
-  if (!drawer) {
-    drawer = document.createElement('aside');
-    drawer.className = 'drawer';
-    drawer.id = 'cart-drawer';
-    drawer.setAttribute('role', 'dialog');
-    drawer.setAttribute('aria-label', 'Giỏ hàng');
-    document.body.appendChild(drawer);
-  }
-  overlay.onclick = closeCartDrawer;
-  renderCartDrawer(drawer);
-  requestAnimationFrame(() => {
-    overlay.classList.add('open');
-    drawer.classList.add('open');
-  });
-  const closeBtn = drawer.querySelector('#close-cart');
-  if (closeBtn) closeBtn.focus();
-}
-
-export function closeCartDrawer() {
-  document.getElementById('drawer-overlay')?.classList.remove('open');
-  document.getElementById('cart-drawer')?.classList.remove('open');
-}
-
-function renderCartDrawer(drawer) {
-  const items = state.cart;
-  const subtotal = cartSubtotal();
-
-  drawer.innerHTML = `
-    <div class="drawer-head">
-      <div>
-        <div class="drawer-title">${icon('cart', { size: 16 })} Giỏ hàng</div>
-        <div style="font-size:12px;color:var(--text-mute);margin-top:2px">${items.length} sản phẩm</div>
-      </div>
-      <button class="icon-btn" id="close-cart" style="width:30px;height:30px" aria-label="Đóng giỏ hàng">
-        ${icon('x', { size: 14 })}
-      </button>
-    </div>
-    <div class="drawer-body" id="cart-body">
-      ${items.length === 0
-        ? `<div class="empty-state">
-             <div class="ico">${icon('cart', { size: 28 })}</div>
-             <div class="t">Giỏ hàng trống</div>
-             <div class="d">Khám phá các sản phẩm bản quyền chất lượng</div>
-             <button class="btn btn-primary btn-sm" data-nav-close="/products">Xem sản phẩm</button>
-           </div>`
-        : items.map((i) => `
-            <div class="cart-item" data-pid="${esc(i.productId)}">
-              <img class="cart-thumb" src="${esc(i.imageUrl || '')}" alt="" loading="lazy"
-                data-img-fallback="class">
-              <div class="cart-info">
-                <div class="cart-name">${esc(i.name)}</div>
-                <div class="cart-price">${fmtVnd(i.price)}</div>
-                <div class="qty-ctrl" style="margin-top:7px;height:28px">
-                  <button data-dec aria-label="Giảm số lượng" style="width:28px;height:26px">${icon('minus', { size: 12 })}</button>
-                  <input value="${i.quantity}" data-qty readonly aria-label="Số lượng" style="width:34px;height:26px;font-size:12.5px">
-                  <button data-inc aria-label="Tăng số lượng" style="width:28px;height:26px">${icon('plus', { size: 12 })}</button>
-                </div>
-              </div>
-              <button class="cart-remove" data-rm aria-label="Xoá khỏi giỏ">${icon('x', { size: 14 })}</button>
-            </div>`).join('')}
-    </div>
-    ${items.length > 0 ? `
-    <div class="drawer-foot">
-      <div class="summary-row"><span>Tạm tính</span><span>${fmtVnd(subtotal)}</span></div>
-      <div class="summary-row total"><span>Tổng cộng</span><span class="val">${fmtVnd(subtotal)}</span></div>
-      <button class="btn btn-primary btn-block mt-2" id="goto-checkout">
-        Thanh toán ${icon('arrowRight', { size: 14 })}
-      </button>
-      <button class="btn btn-ghost btn-block mt-1" id="clear-cart" style="font-size:12.5px">Xoá giỏ hàng</button>
-    </div>` : ''}
-  `;
-
-  drawer.querySelector('#close-cart').onclick = closeCartDrawer;
-
-  drawer.querySelectorAll('[data-nav-close]').forEach((b) => {
-    b.onclick = () => { closeCartDrawer(); navigate(b.dataset.navClose); };
-  });
-
-  if (items.length > 0) {
-    drawer.querySelector('#goto-checkout').onclick = () => {
-      closeCartDrawer();
-      if (!state.user) {
-        toast('Vui lòng đăng nhập để thanh toán', 'info');
-        navigate('/login?redirect=/checkout');
-      } else {
-        navigate('/checkout');
-      }
-    };
-    drawer.querySelector('#clear-cart').onclick = async () => {
-      if (await confirmDialog('Xoá giỏ hàng?', 'Toàn bộ sản phẩm trong giỏ sẽ bị xoá.', 'Xoá hết')) {
-        clearCart();
-        renderCartDrawer(drawer);
-      }
-    };
-  }
-
-  drawer.querySelectorAll('.cart-item').forEach((row) => {
-    const pid = row.dataset.pid;
-    row.querySelector('[data-inc]').onclick = () => {
-      const it = state.cart.find((i) => i.productId === pid);
-      updateCartQty(pid, it.quantity + 1);
-      renderCartDrawer(drawer);
-    };
-    row.querySelector('[data-dec]').onclick = () => {
-      const it = state.cart.find((i) => i.productId === pid);
-      updateCartQty(pid, it.quantity - 1);
-      renderCartDrawer(drawer);
-    };
-    row.querySelector('[data-rm]').onclick = () => {
-      removeFromCart(pid);
-      renderCartDrawer(drawer);
-    };
-  });
 }
 
 /* ---------------- Footer ---------------- */
@@ -289,7 +155,7 @@ export function renderFooter() {
             <div class="logo-text">Mua<b>Ban</b>Key</div>
           </div>
           <p class="footer-desc">
-            Cửa hàng bản quyền số cho game thủ Việt. Key chính hãng, giao tự động 24/7,
+            Cửa hàng bản quyền số cho game thủ Việt. Bản quyền gắn máy, tự mở khoá 24/7,
             bảo hành 1 đổi 1, thanh toán an toàn qua VietQR.
           </p>
           <div class="flex gap-1 mt-2" style="flex-wrap:wrap">
@@ -297,17 +163,13 @@ export function renderFooter() {
             <span class="pill pill-gray">${icon('activity', { size: 11 })} Cloudflare 300+ PoP</span>
           </div>
         </div>
-        <div class="footer-col">
+        <div class="footer-col" data-footer-cats>
           <h2 class="footer-h">Sản phẩm</h2>
-          <a href="#/products?category=windows-office">Windows &amp; Office</a>
-          <a href="#/products?category=ai-tools">Công cụ AI</a>
-          <a href="#/products?category=thiet-ke">Thiết kế</a>
-          <a href="#/products?category=giai-tri">Giải trí</a>
-          <a href="#/products?category=lap-trinh">Lập trình</a>
+          <a href="#/products">Tất cả sản phẩm</a>
         </div>
         <div class="footer-col">
           <h2 class="footer-h">Hỗ trợ</h2>
-          <a href="#/tai-ve">Tải bộ cài (EXE)</a>
+          <a href="#/tai-ve">Tải app (EXE)</a>
           <a href="#/huong-dan">Vượt cảnh báo Windows</a>
           <a href="#/support">Trung tâm hỗ trợ</a>
           <a href="#/support#warranty">Chính sách bảo hành</a>
@@ -330,6 +192,33 @@ export function renderFooter() {
   </footer>`;
 }
 
+/**
+ * Điền danh mục THẬT vào cột "Sản phẩm" của footer.
+ *
+ * LỖI ĐÃ SỬA: trước đây cột này hardcode 5 danh mục (windows-office, ai-tools,
+ * thiet-ke, giai-tri, lap-trinh) — shop không còn sản phẩm nào trong đó, nên
+ * mọi link đều dẫn tới trang trống. Nay chỉ render danh mục có productCount>0;
+ * không còn danh mục nào thì bỏ luôn cột thay vì để link chết.
+ *
+ * Gọi từ app.js sau khi footer đã được vẽ (footer vẽ trước khi nạp danh mục).
+ */
+export async function hydrateFooterCategories() {
+  const host = document.querySelector('[data-footer-cats]');
+  if (!host) return;
+  if (!state.categories.length) {
+    try { await loadCategories(); } catch { /* giữ chỗ giữ chỗ */ }
+  }
+  const live = (state.categories || []).filter((c) => Number(c.productCount) > 0);
+  if (!live.length) {
+    host.remove();
+    return;
+  }
+  host.innerHTML = `<h2 class="footer-h">Sản phẩm</h2>`
+    + `<a href="#/products">Tất cả sản phẩm</a>`
+    + live.map((c) => `
+        <a href="#/products?category=${esc(c.slug)}">${esc(c.name)}</a>`).join('');
+}
+
 /* ---------------- AI Chat ---------------- */
 export function renderAiWidget() {
   return `
@@ -341,7 +230,7 @@ export function renderAiWidget() {
         <div class="ai-avatar">${icon('bot', { size: 17 })}</div>
         <div style="flex:1">
           <div class="ai-name">Key Bot</div>
-          <div class="ai-status"><span class="dot"></span>Trực tuyến 24/7</div>
+          <div class="ai-status"><span class="dot"></span>Trực tuyến 8:00–23:00</div>
         </div>
         <button class="icon-btn" id="ai-close" style="width:28px;height:28px" aria-label="Đóng trợ lý">
           ${icon('x', { size: 13 })}
@@ -349,11 +238,11 @@ export function renderAiWidget() {
       </div>
       <div class="ai-body" id="ai-body">
         <div class="ai-msg bot">
-          Xin chào. Mình là Key Bot — cho mình biết bạn đang tìm phần mềm gì, mình sẽ gợi ý sản phẩm phù hợp nhất.
+          Xin chào. Mình là Key Bot — cho mình biết bạn cần tool nào (map sáng hay thêm tài nguyên), mình sẽ gợi ý gói phù hợp.
         </div>
         <div class="ai-sugg">
-          <button class="ai-sugg-item" data-q="Tôi cần mua Windows 11 bản quyền">Mua Windows 11 bản quyền ${icon('arrowRight', { size: 12 })}</button>
-          <button class="ai-sugg-item" data-q="Gói AI nào tốt nhất cho công việc?">Gói AI tốt nhất cho công việc ${icon('arrowRight', { size: 12 })}</button>
+          <button class="ai-sugg-item" data-q="Gói map sáng cho AoE1 giá bao nhiêu?">Gói map sáng cho AoE1 ${icon('arrowRight', { size: 12 })}</button>
+          <button class="ai-sugg-item" data-q="Gói thêm tài nguyên khác gì gói map sáng?">Khác nhau thế nào? ${icon('arrowRight', { size: 12 })}</button>
           <button class="ai-sugg-item" data-q="Cách thanh toán bằng QR">Cách thanh toán bằng QR ${icon('arrowRight', { size: 12 })}</button>
         </div>
       </div>

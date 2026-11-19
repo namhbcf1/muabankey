@@ -1,8 +1,10 @@
 /** Nghiệp vụ danh mục & sản phẩm. */
 import { ok, json, ApiError, readJson } from '../lib/http.js';
 import { int, str, bool, slugify, enum_ok, pageNum } from '../lib/validate.js';
-import { uuid } from '../lib/crypto.js';
-import { requireAdmin, requireAdminStrict } from '../lib/auth.js';
+import { uuid, sha256 } from '../lib/crypto.js';
+import { requireAdmin, requireAdminStrict, parseCookies, SESSION_COOKIE } from '../lib/auth.js';
+import { publicUse, KIND_1H, KIND_3D } from '../lib/trial-quota.js';
+import { statsStatements, shapeStatsFromBatch, STATS_CACHE_KEY } from './stats.js';
 
 function shapeProduct(r) {
   let features = [];
@@ -34,7 +36,11 @@ function shapeProduct(r) {
     warrantyDays: r.warranty_days,
     durationLabel: r.duration_label,
     licensePrefix: r.license_prefix || null,
-    licenseDays: r.license_days || 0,
+    // NULL hoac khong phai so -> null (KHONG phai 0). Truoc day
+    // `|| 0` bien NULL thanh 0, ma 0 nghia la VINH VIEN -> sai.
+    licenseDays: (r.license_days === null || r.license_days === undefined)
+      ? null : (Number.isFinite(Number(r.license_days))
+        ? Number(r.license_days) : null),
     features,
     featured: !!r.featured,
     active: !!r.active,
@@ -46,21 +52,28 @@ const PRODUCT_SELECT = `
   FROM products p LEFT JOIN categories c ON c.id = p.category_id
 `;
 
+/* Dùng chung cho /api/categories & /api/home -> hai đường không lệch nhau. */
+const CATEGORIES_SQL = `
+  SELECT c.*, (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.active = 1) AS product_count
+  FROM categories c WHERE c.active = 1 ORDER BY c.sort_order, c.name
+`;
+
+const FEATURED_SQL = `${PRODUCT_SELECT} WHERE p.active = 1 ORDER BY p.featured DESC, p.sold_count DESC LIMIT 8`;
+
+function shapeCategory(c) {
+  return {
+    id: c.id,
+    slug: c.slug,
+    name: c.name,
+    description: c.description,
+    icon: c.icon,
+    productCount: c.product_count,
+  };
+}
+
 export async function listCategories(env) {
-  const { results } = await env.DB.prepare(
-    `SELECT c.*, (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.active = 1) AS product_count
-     FROM categories c WHERE c.active = 1 ORDER BY c.sort_order, c.name`
-  ).all();
-  return ok({
-    categories: (results || []).map((c) => ({
-      id: c.id,
-      slug: c.slug,
-      name: c.name,
-      description: c.description,
-      icon: c.icon,
-      productCount: c.product_count,
-    })),
-  });
+  const { results } = await env.DB.prepare(CATEGORIES_SQL).all();
+  return ok({ categories: (results || []).map(shapeCategory) });
 }
 
 export async function listProducts(env, request) {
@@ -94,14 +107,28 @@ export async function listProducts(env, request) {
     binds.push(Number(maxPrice));
   }
 
+  /*
+   * THỨ TỰ SẢN PHẨM — quan trọng, đã gây lỗi thật.
+   *
+   * Trước đây: 'p.featured DESC, p.sort_order ASC, ...'
+   *   `featured DESC` đứng ĐẦU nên nó thắng mọi sort_order. Hễ 2 sản phẩm
+   *   cùng featured=1 mà sort_order khác nhau thì chúng chen lên đầu, và vì
+   *   mỗi sản phẩm có gói "tháng" featured=1, 2 gói tháng nhảy lên trước còn
+   *   các gói khác nằm dưới -> danh sách trộn lẫn hai sản phẩm.
+   *
+   * Nay: `sort_order` quyết định thứ tự, `featured` chỉ là tiebreaker.
+   *   sort_order được đánh theo NHÓM: AOE1 = 100.., XAGR = 200..
+   *   nên mỗi sản phẩm đứng thành một khối liền, trong khối xếp theo thời
+   *   hạn tăng dần (7 -> 30 -> 90 -> 180 -> 365 -> vĩnh viễn).
+   */
   const orderBy = {
-    featured: 'p.featured DESC, p.sort_order ASC, p.sold_count DESC',
+    featured: 'p.sort_order ASC, p.featured DESC, p.sold_count DESC',
     price_asc: 'p.price ASC',
     price_desc: 'p.price DESC',
     newest: 'p.created_at DESC',
     popular: 'p.sold_count DESC',
     rating: 'p.rating DESC',
-  }[sort] || 'p.featured DESC, p.sort_order ASC';
+  }[sort] || 'p.sort_order ASC, p.featured DESC';
 
   const whereSql = where.join(' AND ');
   const countRow = await env.DB.prepare(
@@ -166,10 +193,177 @@ function maskName(name) {
 }
 
 export async function getFeatured(env) {
-  const { results } = await env.DB.prepare(
-    `${PRODUCT_SELECT} WHERE p.active = 1 ORDER BY p.featured DESC, p.sold_count DESC LIMIT 8`
-  ).all();
+  const { results } = await env.DB.prepare(FEATURED_SQL).all();
   return ok({ products: (results || []).map(shapeProduct) });
+}
+
+/* ---------------- Trang chủ: MỘT request, MỘT batch ---------------- */
+
+/**
+ * MIRROR của `trialCfg()` trong src/lib/trial-quota.js.
+ *
+ * Vì sao chép thay vì gọi: trialCfg() tự chạy một câu SQL riêng, gọi nó ở đây
+ * là thêm một round-trip D1 nữa và phá mục tiêu "một batch". Hàm này chỉ đọc
+ * các dòng `settings` ĐÃ nằm trong batch.
+ *
+ * RỦI RO: nếu ai đó sửa bảng key/mặc định trong lib/trial-quota.js mà quên
+ * sửa ở đây thì /api/home có thể hiện hạn mức lệch với /api/trial/status.
+ * Đây CHỈ ảnh hưởng hiển thị; việc TRỪ lượt vẫn do trial-quota.js quyết định.
+ * => Giữ đúng thứ tự/cùng mặc định; sửa bên kia thì sửa cả đây.
+ */
+function trialCfgFromRows(rows) {
+  const m = {};
+  for (const r of rows || []) m[r.key] = r.value;
+  const num = (k, d) => {
+    const n = Number(m[k]);
+    return Number.isFinite(n) ? n : d;
+  };
+  const bool = (k, d) => (m[k] === undefined ? d : m[k] !== '0');
+  return {
+    enabled: bool('trial_enabled', true),
+    requireLogin: bool('trial_require_account', true),
+    t1h: {
+      enabled: bool('trial1h_enabled', true),
+      sec: num('trial1h_minutes', 60) * 60,
+      quota: num('trial1h_limit', 10),
+    },
+    t3d: {
+      enabled: bool('trial3d_enabled', true),
+      sec: num('trial3d_days', 3) * 86400,
+      quota: num('trial3d_limit', 10),
+    },
+    maxPerIp: num('trial_max_per_ip', 10),
+    maxPerNet: num('trial_max_per_net', 60),
+    maxPerDay: num('trial_max_per_day', 300),
+    deviceAccounts1h: num('trial_device_acc_1h', 3),
+    deviceAccounts3d: num('trial_device_acc_3d', 2),
+    holdSec: num('trial_hold_sec', 7 * 86400),
+    recheck1h: num('trial_recheck_1h', 120),
+    recheck3d: num('trial_recheck_3d', 900),
+  };
+}
+
+/** Một kind trial, đúng shape của /api/trial/status. */
+function trialKindPayload(kind, kc, quotaRow, useRow, cfg) {
+  const defQuota = kc ? kc.quota : 10;
+  const quota = (quotaRow && quotaRow.quota) || defQuota;
+  const used = quotaRow ? (quotaRow.used || 0) : 0;
+  return {
+    enabled: kc ? kc.enabled : false,
+    used,
+    quota,
+    left: Math.max(0, quota - used),
+    active: useRow ? { ...publicUse(useRow, cfg, kind), hwid: useRow.hwid } : null,
+    recheck_sec: kind === KIND_1H ? cfg.recheck1h : cfg.recheck3d,
+  };
+}
+
+/**
+ * GET /api/home — gộp 4 tầng thác nước của trang chủ vào MỘT lượt D1.
+ *
+ * Trước đây trang chủ gọi tuần tự: /api/auth/me (657ms) -> /api/categories
+ * (542ms) -> /api/trial/status (491ms) -> /api/products/featured (448ms)
+ * -> /api/stats (397ms) ≈ 1,6s (số đo của người báo lỗi).
+ *
+ * Ở đây tất cả statements được prepare TRƯỚC rồi chạy trong đúng một
+ * env.DB.batch([...]) -> 1 round-trip D1. Phiên đăng nhập không cần tra
+ * riêng: các câu trial tự JOIN sessions bằng token_hash, nên KHÔNG có
+ * round-trip nào cho /api/auth/me.
+ *
+ * Trả: { ok, categories[], products[], stats{}, trial|null, now }
+ *  - trial = null            -> khách chưa đăng nhập (frontend hiện
+ *                               "Không cần đăng ký" như hiện nay)
+ *  - trial.ok === false      -> dùng thử đang đóng (code 'trial_disabled')
+ */
+export async function homeBundle(env, request) {
+  const nowMs = Date.now();
+  const nowS = Math.floor(nowMs / 1000);
+
+  // Băm token phiên tại chỗ (cùng cách lib/auth.js băm) — rẻ, không I/O.
+  const cookies = parseCookies(request);
+  const token = cookies[SESSION_COOKIE];
+  const tokenHash = token && token.length === 64 ? await sha256(token) : '';
+
+  const stmts = [];
+  const idx = {};
+  const add = (name, stmt) => { idx[name] = stmts.length; stmts.push(stmt); return stmt; };
+
+  add('categories', env.DB.prepare(CATEGORIES_SQL));
+  add('featured', env.DB.prepare(FEATURED_SQL));
+  idx.stats = stmts.length;
+  stmts.push(...statsStatements(env));            // 5 câu liền nhau
+  add('settings', env.DB.prepare("SELECT key, value FROM settings WHERE key LIKE 'trial%'"));
+
+  /*
+   * Trial lọc theo PHIÊN ngay trong SQL. tokenHash rỗng (khách chưa đăng
+   * nhập) thì JOIN không khớp -> 0 dòng, không tốn thêm gì.
+   *
+   * Điều kiện phiên CHÉP ĐÚNG lib/auth.js getSessionUser(): phiên còn hạn VÀ
+   * users.status = 'active'. Thiếu vế sau thì tài khoản đã bị khoá vẫn xem
+   * được hạn mức dùng thử của mình -> lệch với /api/trial/status.
+   */
+  const QUOTA_SQL = `
+    SELECT q.used, q.quota, q.reset_count
+    FROM trial_quota q
+    JOIN sessions s ON s.user_id = q.user_id
+    JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > ? AND u.status = 'active' AND q.kind = ?
+  `;
+  const USE_SQL = `
+    SELECT t.*
+    FROM trial_uses t
+    JOIN sessions s ON s.user_id = t.user_id
+    JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > ? AND u.status = 'active' AND t.kind = ?
+      AND t.ended_at IS NULL AND t.expires_at > ?
+    ORDER BY t.created_at DESC LIMIT 1
+  `;
+  add('q1h', env.DB.prepare(QUOTA_SQL).bind(tokenHash, nowMs, KIND_1H));
+  add('q3d', env.DB.prepare(QUOTA_SQL).bind(tokenHash, nowMs, KIND_3D));
+  add('u1h', env.DB.prepare(USE_SQL).bind(tokenHash, nowMs, KIND_1H, nowS));
+  add('u3d', env.DB.prepare(USE_SQL).bind(tokenHash, nowMs, KIND_3D, nowS));
+
+  /*
+   * Cache thống kê 5 phút nằm ở KV: đọc SONG SONG với batch nên không cộng
+   * thêm độ trễ. KV lỗi -> vẫn có số vừa đếm trong batch.
+   */
+  const cachedStats = (async () => {
+    try { return await env.CACHE.get(STATS_CACHE_KEY); } catch { return null; }
+  })();
+
+  const [cached, batch] = await Promise.all([cachedStats, env.DB.batch(stmts)]);
+
+  const rows = (i) => (batch[i] && batch[i].results) || [];
+  const first = (i) => rows(i)[0] || null;
+
+  let stats = null;
+  if (cached) {
+    try { stats = JSON.parse(cached); } catch { stats = null; }
+  }
+  if (!stats) stats = shapeStatsFromBatch(batch.slice(idx.stats, idx.stats + 5));
+
+  const cfg = trialCfgFromRows(rows(idx.settings));
+  let trial = null;
+  if (tokenHash) {
+    trial = cfg.enabled
+      ? {
+        ok: true,
+        now: nowS,
+        kinds: {
+          [KIND_1H]: trialKindPayload(KIND_1H, cfg.t1h, first(idx.q1h), first(idx.u1h), cfg),
+          [KIND_3D]: trialKindPayload(KIND_3D, cfg.t3d, first(idx.q3d), first(idx.u3d), cfg),
+        },
+      }
+      : { ok: false, code: 'trial_disabled', msg: 'Dùng thử đang tạm đóng' };
+  }
+
+  return ok({
+    categories: rows(idx.categories).map(shapeCategory),
+    products: rows(idx.featured).map(shapeProduct),
+    stats,
+    trial,
+    now: nowS,
+  });
 }
 
 /* ---------------- Admin: quản trị sản phẩm ---------------- */

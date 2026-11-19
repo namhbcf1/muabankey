@@ -19,9 +19,49 @@ import { json } from '../lib/http.js';
 import {
   trialCfg, kindCfg, normKind, nowSec, trialKey, sha256hex,
   looksVirtual, deriveIds, getQuota, consumeUse, refundUse, checkWhitelist,
+  getQuotaHw,
   activeUse, deviceAccountCount, countRecent, publicUse,
   KIND_1H, KIND_3D,
 } from '../lib/trial-quota.js';
+
+/*
+ * ===== AUDIT #4: `MESSAGES` PHẢI ĐƯỢC ĐỊNH NGHĨA TRONG CHÍNH MODULE NÀY =====
+ *
+ * LỖI GỐC: nhánh "hết hạn giữ chỗ" bên dưới dùng
+ *     msg: MESSAGES.trial_expired || 'Đã hết hạn dùng thử'
+ * nhưng module này KHÔNG có `MESSAGES`, cũng không import từ đâu. JS không có
+ * biến toàn cục nào tên đó -> ReferenceError -> Worker trả 500
+ * "Đã có lỗi xảy ra" thay vì 403 trial_expired. Khách thấy lỗi hệ thống,
+ * client không biết mã đã chết.
+ *
+ * Nay định nghĩa ngay tại đây (giữ nguyên hành vi/câu chữ của
+ * license-server.js để hai đường trial nói cùng một giọng), và thêm
+ * `msgOf()` để KHÔNG bao giờ đọc một key chưa định nghĩa.
+ */
+const MESSAGES = {
+  not_found: 'Mã không tồn tại',
+  revoked: 'Mã đã bị thu hồi',
+  expired: 'Mã đã hết hạn',
+  hwid_mismatch: 'Mã đã dùng trên máy khác',
+  rate_limit: 'Quá nhiều lần thử, thử lại sau',
+  trial_expired: 'Đã hết hạn dùng thử',
+  trial_only: 'Đây là mã dùng thử',
+  rebind_token_required: 'Cần mã đổi máy — lấy trên web tại mục License của tôi',
+  rebind_limit: 'Đã hết số lần đổi máy',
+  invalid_token: 'Mã đổi máy không đúng',
+  token_used: 'Mã đổi máy đã được dùng',
+  token_expired: 'Mã đổi máy đã hết hạn',
+};
+
+/** Tra câu thông báo theo mã lỗi; thiếu thì trả chính mã lỗi (không bao giờ undefined). */
+function msgOf(code, fallback = '') {
+  return MESSAGES[code] || fallback || code;
+}
+
+/** So sánh mã license không phân biệt hoa/thường (DB lưu HOA). */
+function sameKey(a, b) {
+  return String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase();
+}
 
 async function readBody(request) {
   const text = await request.text();
@@ -226,8 +266,51 @@ export async function apiTrialClaim(env, request) {
     }, 403);
   }
 
-  // Đã gắn máy khác (cùng grant) -> chặn
-  if (use.hwid && use.hwid !== ids.hwid) {
+  /*
+   * ------------------------------------------------------------------
+   * ĐÃ GẮN MÁY KHÁC -> CHẶN. KIỂM CẢ HAI NGUỒN HWID.
+   *
+   * LỖ HỔNG ĐÃ SỬA: trước đây chỉ kiểm `trial_uses.hwid`. Nhưng đường
+   * tài nguyên (`/api/xg/activate`) bind `licenses.hwid` và KHÔNG ghi
+   * `trial_uses.hwid` — nên `use.hwid` là NULL, phép kiểm bị bỏ qua, và
+   * một mã dùng thử ĐÃ GẮN MÁY vẫn claim được sang máy khác.
+   *
+   * Đã chứng minh bằng HTTP thật: TR-23JZ-4QP5-YWSQ gắn 0123… rồi claim
+   * sang 5005368d… thành công.
+   *
+   * Nay kiểm cả `use.hwid` và `lic.hwid`.
+   * ------------------------------------------------------------------
+   */
+  /*
+   * CHỦ SỞ HỮU: mã dùng thử cấp cho TÀI KHOẢN chỉ được claim bởi chính
+   * tài khoản đó.
+   *
+   * LỖ HỔNG ĐÃ SỬA: /api/trial/claim không cần đăng nhập và không kiểm
+   * chủ. Ai biết mã (lộ, chụp màn hình, đoán) là chiếm được lượt dùng thử
+   * và khoá máy thật ra ngoài.
+   *
+   * Khách KHÔNG đăng nhập dùng `user_id = 'dev:...'` -> vẫn cho claim,
+   * giữ đúng luồng "không cần đăng ký" của chủ shop.
+   */
+  const ownerId = String(use.user_id || '');
+  if (ownerId && !ownerId.startsWith('dev:')) {
+    let cu = null;
+    try {
+      const { getSessionUser } = await import('../lib/auth.js');
+      cu = await getSessionUser(env, request);
+    } catch {
+      cu = null;
+    }
+    if (!cu || String(cu.id) !== ownerId) {
+      return json({
+        ok: false, code: 'forbidden',
+        msg: 'Mã dùng thử này thuộc tài khoản khác. Đăng nhập đúng tài khoản đã lấy mã.',
+      }, 403);
+    }
+  }
+
+  const boundHwid = String(use.hwid || lic.hwid || '').trim();
+  if (boundHwid && boundHwid !== ids.hwid) {
     return json({
       ok: false, code: 'hwid_mismatch',
       msg: 'Mã dùng thử đã gắn với máy khác. Mỗi mã chỉ dùng cho 1 máy.',
@@ -254,7 +337,8 @@ export async function apiTrialClaim(env, request) {
       ).bind(now, use.id).run().catch(() => {});
       return json({
         ok: false, code: 'trial_expired',
-        msg: MESSAGES.trial_expired || 'Đã hết hạn dùng thử',
+        // msgOf() thay vì MESSAGES[...] trực tiếp (audit #4: ReferenceError -> 500)
+        msg: msgOf('trial_expired'),
       }, 403);
     }
 
@@ -317,6 +401,88 @@ export async function apiTrialClaim(env, request) {
  * GET /api/trial/status — xem còn bao nhiêu lượt.
  * Cần đăng nhập.
  */
+/**
+ * GET /api/trial/left?hwid=<32 hex>&kind=1h
+ *
+ * Trả số lượt dùng thử CÒN LẠI theo PHẦN CỨNG, để tool hiện trong app.
+ *
+ * VÌ SAO CẦN: chủ shop muốn khách thấy ngay trong EXE còn bao nhiêu lượt,
+ * và đếm theo phần cứng chứ không theo tài khoản web. HWID do chính tool
+ * tính từ phần cứng rồi gửi lên.
+ *
+ * An toàn: endpoint chỉ ĐỌC, không cấp key. Biết HWID cũng không lấy thêm
+ * được lượt — muốn có key vẫn phải qua /api/trial/command (có kiểm IP,
+ * tài khoản, thiết bị, và trừ lượt nguyên tử).
+ */
+export async function apiTrialLeft(env, request) {
+  const url = new URL(request.url);
+  const hwid = String(url.searchParams.get('hwid') || '').trim();
+  const kindRaw = String(url.searchParams.get('kind') || '').trim();
+  const kind = normKind(kindRaw) || '1h';
+
+  if (!/^[0-9a-f]{8,64}$/i.test(hwid)) {
+    return json({ ok: false, code: 'bad_hwid', msg: 'Thiếu mã máy' }, 400);
+  }
+
+  const cfg = await trialCfg(env);
+  if (!cfg.enabled) {
+    return json({ ok: false, code: 'trial_disabled', msg: 'Dùng thử đang đóng' }, 403);
+  }
+
+  const kc = kindCfg(cfg, kind);
+  if (!kc || !kc.enabled) {
+    return json({ ok: false, code: 'kind_disabled', msg: 'Gói này đang đóng' }, 403);
+  }
+
+  // ------------------------------------------------------------------
+  // KHÓA QUOTA PHẢI KHỚP VỚI /api/trial/command.
+  //
+  // LỖI ĐÃ SỬA: quota nay tách riêng theo sản phẩm (khoá '1h:nofog' /
+  // '1h:xagrant'). Endpoint này đọc khoá cũ '1h' nên KHÔNG BAO GIỜ thấy
+  // số đã dùng → luôn trả 10/10 dù khách đã hết lượt.
+  // ------------------------------------------------------------------
+  const rawProd = String(url.searchParams.get('product') || '')
+    .trim().toLowerCase();
+  const isXg = (rawProd === 'xagrant' || rawProd === 'xg'
+                || rawProd === 'grant');
+  const quotaKind = isXg ? kind + ':xagrant' : kind + ':nofog';
+  const q = await getQuotaHw(env, hwid, quotaKind, kc.quota);
+  if (!q) {
+    return json({ ok: false, code: 'no_hwid', msg: 'Không đọc được mã máy' }, 400);
+  }
+
+  // ------------------------------------------------------------------
+  // `sec` = THỜI LƯỢNG MỖI LƯỢT (giây).
+  //
+  // UX: khách cần biết "1 lượt dùng thử được bao lâu" TRƯỚC khi bấm.
+  // Trước đây endpoint chỉ trả số lượt, nên app không thể nói gì ngoài
+  // "còn 10/10 lượt". Server đã có sẵn trong cấu hình nhưng chưa trả ra.
+  // ------------------------------------------------------------------
+  const sec = Math.max(0, Number(kc.sec) || 0);
+  return json({
+    ok: true,
+    kind,
+    product: isXg ? 'xagrant' : 'nofog',
+    quota_by: 'hwid',
+    used: q.used,
+    quota: q.quota,
+    left: q.left,
+    sec,
+    sec_label: fmtSecLabel(sec),
+    now: nowSec(),
+  });
+}
+
+/** "1 giờ" / "3 ngày" — nhãn ngắn cho khách. */
+function fmtSecLabel(sec) {
+  const n = Number(sec) || 0;
+  if (n <= 0) return '';
+  if (n >= 86400 && n % 86400 === 0) return `${n / 86400} ngày`;
+  if (n >= 3600 && n % 3600 === 0) return `${n / 3600} giờ`;
+  if (n >= 60 && n % 60 === 0) return `${n / 60} phút`;
+  return `${Math.round(n)} giây`;
+}
+
 export async function apiTrialStatus(env, request) {
   const { getSessionUser } = await import('../lib/auth.js');
   const user = await getSessionUser(env, request);
@@ -489,17 +655,117 @@ export async function apiTrialStart(env, request) {
   // ---- 8. Đang có trial cùng loại còn hạn -> RESUME, không trừ lượt ----
   const active = await activeUse(env, user.id, kind);
   if (active) {
-    // Nếu gửi HWID và khác -> cập nhật (đổi máy/đổi volume serial), không trừ lượt
+    /*
+     * ===== AUDIT #5: ĐỔI MÁY TRÊN ĐƯỜNG RESUME PHẢI CÓ NGÂN SÁCH =====
+     *
+     * LỖI GỐC: nhánh này ghi đè `trial_uses.hwid` + `licenses.hwid` bằng HWID
+     * của BẤT KỲ ai gọi resume, KHÔNG cần mã đổi máy, KHÔNG trừ `rebinds`.
+     * Nghĩa là `max_rebind` (0 với mã cũ) chưa bao giờ được xét trên đường
+     * này: chỉ cần đăng nhập rồi gọi /api/trial/start với parts của máy khác
+     * là mã dùng thử "di trú" sang máy mới vô hạn lần. Share mã cho cả lớp
+     * cũng chạy được: mỗi máy gọi resume là ghi đè HWID của máy trước.
+     *
+     * NAY:
+     *   - Chưa bind máy (hwid NULL)  -> gắn bình thường, MIỄN PHÍ (đúng luồng:
+     *     web cấp mã trước, tool gắn máy sau).
+     *   - Đã bind máy KHÁC           -> chỉ đổi khi có chứng từ do chủ mã mở:
+     *       (a) mã đổi máy còn hạn, chưa dùng trong `rebind_tokens`, HOẶC
+     *       (b) cửa sổ `licenses.rebind_until` đang mở (chủ tài khoản bấm
+     *           "Đổi máy" trên web — xem rebindMyLicense trong license.js).
+     *     Đây là "luồng đổi máy bình thường" của hệ thống: hiện KHÔNG còn chỗ
+     *     nào phát hành rebind_tokens, nên nếu chỉ chấp nhận (a) thì khách cài
+     *     lại Windows sẽ không có đường cứu nào. Cả hai đều đòi ĐĂNG NHẬP và
+     *     sở hữu key, nên không mở lại lỗ share mã.
+     *   - Mọi lần đổi máy đều TRỪ 1 lượt: `rebinds + 1` với điều kiện
+     *     `rebinds < max_rebind` (nguyên tử). Mã dùng thử nay sinh ra với
+     *     max_rebind = 1 (xem bước 12 / trial-command.js), nên một lần cài lại
+     *     máy vẫn cứu được, còn chia sẻ tiếp thì bị chặn.
+     */
+    const boundHwid = String(active.hwid || '').trim();
     let hwidChanged = false;
-    if (ids.hwid && active.hwid !== ids.hwid) {
-      await env.DB.prepare(
-        'UPDATE trial_uses SET hwid = ? WHERE id = ?'
-      ).bind(ids.hwid, active.id).run();
-      await env.DB.prepare(
-        'UPDATE licenses SET hwid = ? WHERE key = ?'
-      ).bind(ids.hwid, active.lic_key).run();
-      hwidChanged = true;
+
+    if (ids.hwid && ids.hwid !== boundHwid) {
+      if (!boundHwid) {
+        // Lần đầu gắn máy: miễn phí, và chỉ ghi khi còn trống (không đè).
+        await env.DB.prepare(
+          "UPDATE trial_uses SET hwid = ? WHERE id = ? AND (hwid IS NULL OR hwid = '')"
+        ).bind(ids.hwid, active.id).run();
+        await env.DB.prepare(
+          "UPDATE licenses SET hwid = ? WHERE key = ? AND (hwid IS NULL OR hwid = '')"
+        ).bind(ids.hwid, active.lic_key).run();
+        hwidChanged = true;
+      } else {
+        const lic = await env.DB.prepare('SELECT * FROM licenses WHERE key = ?')
+          .bind(active.lic_key).first();
+        if (!lic) {
+          return json({
+            ok: false, code: 'not_found',
+            msg: msgOf('not_found'),
+          }, 404);
+        }
+
+        const token = String(body.rebind_token
+          || request.headers.get('x-rebind-token') || '').trim();
+        let allowed = false;
+        let reason = 'rebind_token_required';
+
+        // (a) Mã đổi máy dùng 1 lần
+        if (token) {
+          const row = await env.DB.prepare(
+            'SELECT * FROM rebind_tokens WHERE token_hash = ? LIMIT 1'
+          ).bind(await sha256hex(token)).first();
+          if (!row || !sameKey(row.key, active.lic_key)) {
+            reason = 'invalid_token';
+          } else if (row.used) {
+            reason = 'token_used';
+          } else if (Number(row.expires_at || 0) < nowSec()) {
+            reason = 'token_expired';
+          } else {
+            // Tiêu token NGUYÊN TỬ (2 request song song chỉ 1 thắng)
+            const t = await env.DB.prepare(
+              'UPDATE rebind_tokens SET used = 1 WHERE token_hash = ? AND used = 0'
+            ).bind(await sha256hex(token)).run();
+            if (t.meta && t.meta.changes === 1) allowed = true;
+            else reason = 'token_used';
+          }
+        } else if (Number(lic.rebind_until || 0) > nowSec()) {
+          // (b) Cửa sổ đổi máy do chủ tài khoản mở trên web
+          allowed = true;
+        }
+
+        if (!allowed) {
+          await logEvent(env, active.lic_key, ids.hwid, 'trial_rebind_deny', reason, ip);
+          return json({
+            ok: false, code: 'hwid_mismatch',
+            msg: reason === 'rebind_token_required'
+              ? 'Mã dùng thử đã gắn với máy khác. Bấm "Đổi máy" trên web (mục License) rồi thử lại.'
+              : msgOf(reason, 'Không đổi được máy cho mã này'),
+            detail: reason,
+          }, 403);
+        }
+
+        // Trừ ngân sách đổi máy (nguyên tử, có điều kiện còn lượt)
+        const up = await env.DB.prepare(
+          `UPDATE licenses SET hwid = ?, rebinds = COALESCE(rebinds, 0) + 1,
+                  rebind_until = NULL
+            WHERE key = ? AND COALESCE(revoked, 0) = 0
+              AND COALESCE(rebinds, 0) < COALESCE(max_rebind, 0)`
+        ).bind(ids.hwid, active.lic_key).run();
+        if (!up.meta || up.meta.changes !== 1) {
+          await logEvent(env, active.lic_key, ids.hwid, 'trial_rebind_deny', 'rebind_limit', ip);
+          return json({
+            ok: false, code: 'rebind_limit',
+            msg: msgOf('rebind_limit'),
+          }, 403);
+        }
+        await env.DB.prepare('UPDATE trial_uses SET hwid = ? WHERE id = ?')
+          .bind(ids.hwid, active.id).run();
+        await logEvent(env, active.lic_key, ids.hwid, 'trial_rebind',
+          `cong cu: ${boundHwid.slice(0, 8)}… -> ${String(ids.hwid).slice(0, 8)}…`, ip);
+        hwidChanged = true;
+      }
     }
+
     const q = await getQuota(env, user.id, kind, kc.quota);
     return json({
       ...publicUse(active, cfg, kind),
@@ -583,11 +849,17 @@ export async function apiTrialStart(env, request) {
 
   try {
     await env.DB.batch([
+      /*
+       * max_rebind = 1 (audit #5): mã dùng thử phải có ĐÚNG 1 lượt đổi máy để
+       * khách cài lại Windows (MachineGuid đổi) còn đường cứu; trước đây 0 nên
+       * nút "Đổi máy" luôn báo hết lượt và mã chết vĩnh viễn. Vẫn chỉ 1 lượt
+       * nên không dùng được để chia sẻ mã.
+       */
       env.DB.prepare(
         `INSERT INTO licenses
            (key, hwid, plan, note, created_at, activated_at, expires_at,
             last_seen, last_ip, revoked, max_rebind, rebinds)
-         VALUES (?,?, 'trial', ?,?, NULL, ?, NULL, ?, 0, 0, 0)`
+         VALUES (?,?, 'trial', ?,?, NULL, ?, NULL, ?, 0, 1, 0)`
       ).bind(key, ids.hwid, `Trial ${kind} - ${user.username || user.id}`,
         now, holdUntil, ip),
       env.DB.prepare(

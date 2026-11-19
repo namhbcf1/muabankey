@@ -63,6 +63,8 @@ export async function issueLicenses(env, {
   maxRebind = 1,
   pid = null,
   graceH = null,
+  // 1 = khoá theo MÁY (key không có chủ tài khoản), 0/NULL = theo tài khoản.
+  bindHwid = null,
 } = {}) {
   const requested = Number(count) || 1;
   // Không âm thầm cắt số lượng — khách trả tiền cho N thì phải nhận đủ N.
@@ -71,7 +73,26 @@ export async function issueLicenses(env, {
       `Tối đa ${MAX_LICENSE_BATCH} license mỗi lần (yêu cầu ${requested})`, 'TOO_MANY');
   }
   const n = Math.max(1, Math.trunc(requested));
-  const term = Math.max(0, Math.min(MAX_TERM_DAYS, Number(days) || 0));
+  /*
+   * LỖI ĐÃ SỬA: `Number(days) || 0` — nếu `days` không phải số thì
+   * `Number(days)` = NaN, và `NaN || 0` = 0. Mà `term === 0` nghĩa là
+   * VĨNH VIỄN. Nên chỉ cần truyền days='30 ngày' là mọi license sinh ra
+   * thành vĩnh viễn miễn phí.
+   *
+   * Nay: không phải số -> BÁO LỖI, không đoán bừa thành vĩnh viễn.
+   * Chỉ khi `days` đúng bằng 0 (hoặc bỏ trống) mới là vĩnh viễn.
+   */
+  let term;
+  if (days === null || days === undefined || days === '') {
+    term = 0;                                   // bỏ trống = vĩnh viễn
+  } else {
+    const nd = Number(days);
+    if (!Number.isFinite(nd)) {
+      throw new ApiError(400,
+        'Số ngày không hợp lệ: ' + String(days).slice(0, 40), 'BAD_TERM');
+    }
+    term = Math.max(0, Math.min(MAX_TERM_DAYS, Math.trunc(nd)));
+  }
   const forever = term === 0;
   const now = nowSec();
   // Cộng 1 ngày bonus để hạn không bị hụt so với nhãn gói
@@ -89,10 +110,11 @@ export async function issueLicenses(env, {
       key = newLicenseKey(prefix);
     }
     await env.DB.prepare(
-      `INSERT INTO licenses (key, plan, note, created_at, expires_at, max_rebind, pid, grace_h, app)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO licenses (key, plan, note, created_at, expires_at, max_rebind, pid, grace_h, app, bind_hwid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(key, String(plan).slice(0, 32), String(note).slice(0, 200),
-      now, exp, Number(maxRebind) || 1, owner, grace, owner || '').run();
+      now, exp, Number(maxRebind) || 1, owner, grace, owner || '',
+      bindHwid === 1 ? 1 : (bindHwid === 0 ? 0 : null)).run();
     made.push(key);
   }
   return made;
@@ -135,7 +157,12 @@ export async function extendLicense(env, key, days) {
   const lic = await readLicense(env, key);
   if (!lic) throw new ApiError(404, 'License không tồn tại', 'NOT_FOUND');
   if (!lic.expires_at) return { note: 'vinh vien' };
-  const d = Math.max(1, Math.min(MAX_TERM_DAYS, Number(days) || 30));
+  // Khong phai so -> BAO LOI thay vi am tham cong 30 ngay.
+  const _nd = Number(days);
+  if (!Number.isFinite(_nd)) {
+    throw new ApiError(400, 'So ngay khong hop le', 'BAD_TERM');
+  }
+  const d = Math.max(1, Math.min(MAX_TERM_DAYS, Math.trunc(_nd)));
   const base = Math.max(nowSec(), lic.expires_at || 0);
   await env.DB.prepare('UPDATE licenses SET expires_at = ? WHERE key = ?')
     .bind(base + d * 86400, normKey(key)).run();
@@ -163,8 +190,24 @@ export async function deliverLicenseLine(env, { order, orderId, userId, product,
   // QUAN TRỌNG: license_days = 0 nghĩa là VĨNH VIỄN.
   // Trước đây dùng `|| 30` nên 0 bị đổi thành 30 -> khách mua gói Vĩnh Viễn
   // (1.290.000đ) chỉ nhận license 31 ngày.
+  //
+  // LỖI THỨ HAI (đã sửa): `Math.max(0, Number(rawDays) || 0)`.
+  // `Number('30 ngày')` = NaN -> `NaN || 0` = 0 -> CẤP LICENSE VĨNH VIỄN.
+  // Chỉ cần cột license_days bị nhập thành chữ là mọi đơn của sản phẩm đó
+  // thành vĩnh viễn miễn phí. Nay: không phải số -> BÁO LỖI, không đoán bừa.
   const rawDays = product.license_days;
-  const days = (rawDays === null || rawDays === undefined) ? 30 : Math.max(0, Number(rawDays) || 0);
+  let days;
+  if (rawDays === null || rawDays === undefined) {
+    days = 30;
+  } else {
+    const nd = Number(rawDays);
+    if (!Number.isFinite(nd)) {
+      throw new ApiError(500,
+        'Cấu hình sản phẩm sai: license_days không phải số',
+        'BAD_PRODUCT_CONFIG');
+    }
+    days = Math.max(0, Math.floor(nd));     // 0 = vĩnh viễn
+  }
 
   const keys = await issueLicenses(env, {
     count: quantity,
@@ -242,6 +285,8 @@ export function shapeLicense(lic) {
 
 /** Danh sách license khách đã mua kèm trạng thái sống. */
 export async function myLicenses(env, request) {
+  const { entitlementFieldsFor } = await import('./entitlement.js');
+  const nowSec = Math.floor(Date.now() / 1000);
   const { requireUser } = await import('../lib/auth.js');
   const { ok } = await import('../lib/http.js');
   const user = await requireUser(env, request);
@@ -261,6 +306,25 @@ export async function myLicenses(env, request) {
      WHERE li.user_id = ? ORDER BY li.created_at DESC LIMIT 200`
   ).bind(user.id).all();
 
+  /*
+   * ===== AUDIT #8: HẠN HIỂN THỊ CỦA MÃ DÙNG THỬ PHẢI LÀ ĐỒNG HỒ THẬT =====
+   *
+   * Với `plan='trial'`, `licenses.expires_at` là HẠN GIỮ MÃ (hold, mặc định
+   * 7 ngày) chứ không phải thời lượng dùng thử. Đồng hồ thật nằm ở
+   * `trial_uses.expires_at` và chỉ có sau khi khách chạy tool lần đầu.
+   *
+   * Trước đây trang "License của tôi" đọc thẳng `licenses.expires_at` nên gói
+   * dùng thử 1 GIỜ hiện "còn ~7 ngày" — khách tưởng còn 7 ngày, hết 1 giờ thì
+   * khiếu nại. entitlement.js đã sửa đúng; nay áp cùng cách ở đây.
+   *
+   * MỘT câu SQL cho tất cả key trial (không N+1), xem trialClockMap().
+   */
+  const { trialClockMap } = await import('../lib/trial-quota.js');
+  const trialKeys = (results || [])
+    .filter((r) => String(r.l_plan || '').toLowerCase() === 'trial' && r.l_key)
+    .map((r) => r.l_key);
+  const trialClocks = trialKeys.length ? await trialClockMap(env, trialKeys) : new Map();
+
   const list = (results || []).map((row) => {
     // JOIN sẵn bảng licenses -> 1 query duy nhất, không N+1
     const lic = row.l_key ? {
@@ -276,11 +340,73 @@ export async function myLicenses(env, request) {
       max_rebind: row.l_max_rebind,
       pid: row.l_pid,
     } : null;
+    /*
+     * QUYỀN DÙNG CHỨC NĂNG — web và app dùng CHUNG một logic.
+     *
+     * Thêm từ khi gộp 2 tool thành 1 app: app cần biết license này cho
+     * phép "bật map sáng" hay "cộng tài nguyên" để hiện/ẩn phần chức năng.
+     * Nguồn sự thật duy nhất là src/routes/entitlement.js.
+     */
+    /*
+     * Hạn dùng THẬT để hiển thị/tính quyền (audit #8). Với trial:
+     *   - đã bắt đầu  -> dùng `trial_uses.expires_at`
+     *   - chưa bắt đầu-> 0 + cờ trialPending (UI hiện "chờ kích hoạt"),
+     *                    KHÔNG hiện hạn giữ 7 ngày như thời lượng dùng thử
+     *   - dữ liệu v1 không có trial_uses -> giữ hạn cũ (không đoán bừa)
+     */
+    const isTrialRow = String(row.l_plan || '').toLowerCase() === 'trial';
+    const clock = isTrialRow ? trialClocks.get(String(row.l_key || '')) : null;
+    let effExpires = row.l_expires_at;
+    let trialPending = false;
+    let trialStarted = false;
+    if (isTrialRow) {
+      if (clock && clock.started) {
+        effExpires = clock.expires_at || 0;
+        trialStarted = true;
+      } else if (clock) {
+        effExpires = 0;
+        trialPending = true;
+      }
+      // clock == null: dữ liệu cũ, giữ effExpires = licenses.expires_at
+    }
+
+    const ent = entitlementFieldsFor({
+      key: row.l_key,
+      pid: row.l_pid,
+      plan: row.l_plan,
+      expires_at: effExpires,
+      revoked: row.l_revoked,
+      hwid: row.l_hwid,
+    }, nowSec);
+
+    /*
+     * shapeLicense() đọc hạn từ object `lic` -> truyền hạn ĐÃ HIỆU CHỈNH để
+     * `status`/`forever`/`expiresAt` không nói sai về trial.
+     */
+    const shaped = shapeLicense(lic && { ...lic, expires_at: effExpires })
+      || { key: row.license_key, status: 'unknown' };
+    if (trialPending) {
+      // Chưa kích hoạt: KHÔNG phải "vĩnh viễn", cũng chưa phải "còn hạn".
+      shaped.status = 'trial_pending';
+      shaped.forever = false;
+      shaped.expiresAt = 0;
+    }
+
     return {
-      ...(shapeLicense(lic) || { key: row.license_key, status: 'unknown' }),
+      ...shaped,
       productName: row.product_name,
       orderCode: row.order_code,
       purchasedAt: row.created_at,
+      features: ent.features,
+      hasNofog: ent.hasNofog,
+      hasGrant: ent.hasGrant,
+      active: ent.active,
+      forever: trialPending ? false : ent.forever,
+      hwidBound: ent.hwidBound,
+      // Trial: nói rõ đồng hồ đã chạy hay chưa (UI dùng để hiện "chờ kích hoạt")
+      isTrial: isTrialRow,
+      trialStarted,
+      trialPending,
     };
   });
   return ok({ licenses: list, available: true });
@@ -291,7 +417,6 @@ export async function rebindMyLicense(env, request, key) {
   const { requireUser } = await import('../lib/auth.js');
   const { ok } = await import('../lib/http.js');
   const { rateLimit, clientIp } = await import('../lib/ratelimit.js');
-  const { randomHex } = await import('../lib/crypto.js');
   const user = await requireUser(env, request);
 
   const k = normKey(key);
@@ -322,29 +447,43 @@ export async function rebindMyLicense(env, request, key) {
   // Rate limit đặt SAU khi đã chắc chắn được phép -> nới lên 20/giờ
   await rateLimit(env, `rebind:${user.id}:${clientIp(request)}`, 100, 3600);
 
-  // Sinh token dùng 1 lần — client EXE gửi kèm khi gọi /api/rebind
-  const token = randomHex(24);
-  const tokenHash = await sha256hex(token);
+  /*
+   * MỞ CỬA SỔ ĐỔI MÁY — KHÔNG SINH MÃ HEX.
+   *
+   * LỖI ĐÃ SỬA: trước đây route này sinh một mã 48 ký tự hex (hạn 30 phút,
+   * dùng 1 lần) rồi trả kèm dòng lệnh CMD:
+   *     "C:\...\xa_nofog_pro.exe" --rebind "KEY" "<48 hex>"
+   * Khách phải chép mã hex đó và mở CMD trên máy mới — trái với yêu cầu
+   * "chỉ dùng key, không dùng CMD".
+   *
+   * Nay: chỉ đặt `rebind_until = now + 30 phút` trên license. Máy mới mở
+   * tool, dán KEY, bấm Cài đặt là xong. Cửa sổ tự đóng sau 30 phút hoặc
+   * ngay khi máy mới kích hoạt (xem bindFirstTime trong license-server.js
+   * và xa-grant-server.js).
+   *
+   * Chỉ chủ tài khoản đã đăng nhập mới gọi được route này, nên bảo mật
+   * tương đương mã dùng-1-lần cũ. Lượt đổi máy vẫn bị giới hạn bởi max_rebind.
+   */
   const now = Math.floor(Date.now() / 1000);
+  const until = now + 1800;
   await env.DB.prepare(
-    `INSERT INTO rebind_tokens (token_hash, key, user_id, created_at, expires_at, used)
-     VALUES (?,?,?,?,?,0)`
-  ).bind(tokenHash, k, user.id, now, now + 1800).run();
+    'UPDATE licenses SET rebind_until = ? WHERE key = ?'
+  ).bind(until, k).run();
 
   const tool = lic.pid === 'xagrant' || String(k).startsWith('XAGR-')
     ? 'xagrant' : 'nofog';
-  const exePath = tool === 'xagrant'
-    ? '"%ProgramFiles%\\XArena\\_re\\xagrant\\xa_grant.exe"'
-    : '"%ProgramFiles%\\XArena\\_re\\chayduoc\\xa_nofog_pro.exe"';
 
   return ok({
     key: k,
-    token,
     tool,
+    // Không còn `token` và `command`: khách chỉ cần KEY.
     expiresIn: 1800,
+    expiresAt: until,
     rebindsLeft: (lic.max_rebind || 0) - (lic.rebinds || 0),
-    // Lệnh chạy trên máy mới: client EXE tự gửi token
-    command: `${exePath} --rebind "${k}" "${token}"`,
+    setupUrl: '/download/xa_arena.exe',
+    /* MỘT app duy nhất: dù license là map sáng hay tài nguyên, khách
+     * cũng tải cùng một EXE. Quyền bật gì do license quyết định. */
+    downloadUrl: '/download/xa_arena.exe',
   });
 }
 
@@ -358,7 +497,8 @@ async function sha256hex(text) {
 export async function adminLicenses(env, request) {
   const { requireAdmin } = await import('../lib/auth.js');
   const { ok } = await import('../lib/http.js');
-  await requireAdmin(env, request);
+  const { isStaffViewer, maskKey, maskHwid } = await import('../lib/pii.js');
+  const admin = await requireAdmin(env, request);
 
   const url = new URL(request.url);
   const q = (url.searchParams.get('q') || '').trim();
@@ -372,9 +512,30 @@ export async function adminLicenses(env, request) {
         'SELECT * FROM licenses ORDER BY created_at DESC LIMIT 300'
       ).all();
 
+  /*
+   * AUDIT #12: `staff` KHÔNG được đọc toàn bộ key + HWID của shop.
+   *
+   * Trước đây route này dùng requireAdmin (staff cũng qua) và trả nguyên bảng
+   * `licenses`: một tài khoản hỗ trợ là có TRỌN KHO KEY — đủ để bán lại, hoặc
+   * chiếm license của khách (mọi key đều kèm HWID để biết key nào đang sống).
+   *
+   * Nay: staff vẫn thấy đủ trường VẬN HÀNH (plan, status, hạn, số lượt đổi
+   * máy, đã bind máy hay chưa, note, ngày tạo) nhưng key và HWID bị che. Việc
+   * tra cứu `?q=` vẫn chạy trên dữ liệu thật nên staff vẫn tìm được khi khách
+   * đọc key/hwid cho họ. Muốn xem đầy đủ phải là admin.
+   */
+  const staffView = isStaffViewer(admin);
+
   return ok({
     available: true,
-    licenses: (results || []).map(shapeLicense),
+    licenses: (results || []).map((r) => {
+      const s = shapeLicense(r);
+      if (!s) return s;
+      if (staffView) {
+        return { ...s, key: maskKey(s.key), hwidMasked: maskHwid(r.hwid), masked: true };
+      }
+      return s;
+    }),
     stats: await licenseStats(env),
   });
 }
@@ -393,6 +554,23 @@ export async function adminLicenseAction(env, request, key, action) {
   const k = normKey(key);
   const lic = await readLicense(env, k);
   if (!lic) throw new AE(404, 'License không tồn tại', 'NOT_FOUND');
+
+  /*
+   * AUDIT #9: KHÔNG gia hạn mã dùng thử.
+   *
+   * `extend` cộng 30 ngày vào `licenses.expires_at`. Với plan='trial' thì
+   * trường đó là HẠN GIỮ MÃ (7 ngày), không phải thời lượng dùng thử — đồng hồ
+   * thật nằm ở `trial_uses.expires_at`. Nên bấm "Gia hạn" trên mã trial:
+   *   • KHÔNG kéo dài được lượt dùng thử (đồng hồ trial_uses không đổi), và
+   *   • lại THỔI PHỒNG `entitlement`: license còn hạn 30 ngày -> khách thấy
+   *     như vừa được gia hạn thật, vài giờ sau lại báo hết hạn -> khiếu nại.
+   * Đây là thao tác vô nghĩa gây hiểu sai, nên chặn hẳn và nói rõ lý do.
+   */
+  if (action === 'extend' && String(lic.plan || '').toLowerCase() === 'trial') {
+    throw new AE(400,
+      'Đây là license dùng thử — không gia hạn được. Khách cần dùng tiếp thì mua key chính thức.',
+      'TRIAL_NOT_EXTENDABLE');
+  }
 
   if (action === 'revoke') await setRevoked(env, k, true);
   else if (action === 'unrevoke') await setRevoked(env, k, false);
@@ -454,9 +632,20 @@ export async function adminIssueLicenses(env, request) {
     if (!p) productId = PREFIX_PRODUCT[prefix.toUpperCase()] || 'p-lic-month';
   }
 
+  // ------------------------------------------------------------------
+  // KEY KHÔNG CÓ CHỦ -> PHẢI KHOÁ MÁY.
+  //
+  // LỖ HỔNG ĐÃ SỬA: sau khi "đã mua thì theo tài khoản", key không có
+  // license_issues (admin tạo tay / bán lẻ) không bị khoá bởi gì cả —
+  // ai có key cũng dùng được và chia sẻ vô hạn.
+  //
+  // Nay: thiếu userId thì ghi bind_hwid=1 để khoá theo MÁY.
+  // Có userId thì bind_hwid=0 (theo tài khoản, đổi máy được).
+  // ------------------------------------------------------------------
+  const bindHwid = userId ? 0 : 1;
   const keys = await issueLicenses(env, {
     count, prefix, days, plan: prefix.toLowerCase(), note, maxRebind,
-    pid: pidForPrefix(prefix),
+    pid: pidForPrefix(prefix), bindHwid,
   });
 
   // Ghi license_issues để khách thấy trong trang cá nhân

@@ -1,6 +1,9 @@
 /** Trang chủ. */
-import { api, esc, fmtVnd, fmtNum, skeletonCards, navigate, toast, openModal, copyText, emptyBlock } from '../lib.js';
-import { state, addToCart } from '../state.js';
+import {
+  api, esc, fmtVnd, fmtNum, skeletonCards, navigate, toast, openModal,
+  emptyBlock, closeAllModals,
+} from '../lib.js';
+import { state } from '../state.js';
 import { icon, iconBox } from '../icons.js';
 
 export function productCard(p) {
@@ -12,10 +15,10 @@ export function productCard(p) {
     : p.deliveryType === 'manual'
       ? 'Giao thủ công'
       : p.stock <= 0 ? 'Hết hàng' : `Còn ${p.stock}`;
-  const badgeMap = { HOT: 'badge-hot', NEW: 'badge-new', SALE: 'badge-sale' };
+  const badgeMap = { HOT: 'badge-hot', NEW: 'badge-new', SALE: 'badge-sale' , 'RẺ': 'badge-hot'};
 
   return `
-  <article class="product-card" data-slug="${esc(p.slug)}">
+  <article class="product-card">
     <a href="#/product/${esc(p.slug)}" class="product-thumb" aria-label="${esc(p.name)}">
       <img src="${esc(p.imageUrl || '')}" alt="" loading="lazy"
         data-img-fallback="hide">
@@ -38,7 +41,8 @@ export function productCard(p) {
           <span class="price-now">${fmtVnd(p.price)}</span>
           ${p.comparePrice ? `<span class="price-old">${fmtVnd(p.comparePrice)}</span>` : ''}
         </div>
-        <button class="btn-buy" data-add="${esc(p.id)}" ${soldOut ? 'disabled' : ''}>
+        <button class="btn-buy" data-add="${esc(p.id)}" ${soldOut ? 'disabled' : ''}
+          aria-label="${soldOut ? `Hết hàng: ${esc(p.name)}` : `Mua ${esc(p.name)}`}">
           ${soldOut ? 'Hết' : 'Mua'}
         </button>
       </div>
@@ -46,13 +50,14 @@ export function productCard(p) {
   </article>`;
 }
 
+/* Giỏ hàng đã bỏ: app.js bắt [data-add] -> Mua ngay. */
 export function bindProductCards(root, products) {
   root.querySelectorAll('[data-add]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const p = products.find((x) => x.id === btn.dataset.add);
-      if (p) addToCart(p, 1);
+      if (p) void (p, 1);
     });
   });
 }
@@ -65,11 +70,13 @@ export function renderHome() {
     <div class="container hero-inner">
       <div class="hero-pill">
         <span class="pulse"></span>
-        Dùng thử miễn phí · 1 giờ hoặc 3 ngày · Không cần đăng ký
+        Dùng thử miễn phí 1 giờ · Không cần đăng ký
       </div>
-      <h1>Bản quyền số chính hãng,<br>giao key trong 30 giây</h1>
+      <h1>Bỏ sương mù &amp; thêm tài nguyên<br>cho AoE XArena</h1>
       <p class="hero-sub">
-        Key bản quyền chính hãng, giao tự động 24/7. Thanh toán VietQR, bảo hành 1 đổi 1.
+        Một file duy nhất cho XArena: <strong>XA ARENA</strong> — xoá sương mù toàn map
+        + minimap, kèm cộng vàng/gỗ/thịt ngay trong trận.
+        Tải về, bấm đúp là chạy. <strong>Không cần key.</strong>
       </p>
       <div class="hero-cta">
         <button class="btn btn-primary btn-lg" data-goto="/products">
@@ -89,57 +96,42 @@ export function renderHome() {
     </div>
   </section>
 
-  <!-- ===== KHỐI DÙNG THỬ: 1 GIỜ + 3 NGÀY ===== -->
+  <!-- ===== KHỐI DÙNG THỬ: GÓI 1 GIỜ ===== -->
   <section class="section-sm" id="trial-section">
     <div class="container">
       <div class="sec-head">
         <div>
           <h2 class="sec-title">Dùng thử miễn phí</h2>
-          <p class="sec-desc">Hai lựa chọn, mỗi loại <strong>10 lượt</strong> cho mỗi thiết bị của bạn</p>
+          <p class="sec-desc">Dùng thử <strong>1 giờ</strong> cùng tool bán trong shop.
+            Hạn mức do shop đặt: <strong data-trial-quota>nhiều lượt</strong> cho mỗi thiết bị.</p>
         </div>
       </div>
 
-      <div class="trial-grid">
-        <!-- ===== GÓI 1 GIỜ ===== -->
-        <div class="card trial-card">
+      <div class="trial-grid trial-grid-one">
+        <!-- ===== GÓI 1 GIỜ — MỘT NÚT, KHÔNG CHỌN GÌ ===== -->
+        <div class="card trial-card trial-card-accent">
           <div class="trial-head">
             <span class="pill pill-yellow">${icon('bolt', { size: 11 })} Dùng thử nhanh</span>
           </div>
           <h3 class="trial-name">Dùng thử <span class="trial-hl warn">1 giờ</span></h3>
           <div class="trial-price">0đ</div>
           <ul class="feature-list trial-feats">
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Bỏ sương mù toàn map + minimap (10 điểm vá)</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đủ chơi 1–2 trận để thử</span></li>
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / thiết bị</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong data-trial-quota>nhiều lượt</strong> / thiết bị</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Tự bật khi mở app — không nhập gì</span></li>
           </ul>
           <div id="trial-1h-status" class="trial-status"></div>
-          <button class="btn btn-gold btn-block" data-trial-kind="1h">
-            ${icon('bolt', { size: 14 })} Bắt đầu 1 giờ
-          </button>
-        </div>
-
-        <!-- ===== GÓI 3 NGÀY ===== -->
-        <div class="card trial-card trial-card-accent">
-          <div class="trial-head">
-            <span class="pill pill-green">${icon('trend', { size: 11 })} Phổ biến nhất</span>
+          <div class="trial-pick">
+            <button class="btn btn-gold btn-block" data-trial-kind="1h" data-trial-product="nofog">
+              ${icon('bolt', { size: 14 })} Bật dùng thử 1 giờ
+            </button>
           </div>
-          <h3 class="trial-name">Dùng thử <span class="trial-hl accent">3 ngày</span></h3>
-          <div class="trial-price">0đ</div>
-          <ul class="feature-list trial-feats">
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Bỏ sương mù toàn map + minimap (10 điểm vá)</span></li>
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Chơi thoải mái nhiều ngày</span></li>
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong>10 lượt</strong> / thiết bị</span></li>
-          </ul>
-          <div id="trial-3d-status" class="trial-status"></div>
-          <button class="btn btn-primary btn-block" data-trial-kind="3d">
-            ${icon('gift', { size: 14 })} Bắt đầu 3 ngày
-          </button>
         </div>
       </div>
 
       <div class="alert alert-info" style="margin-top:16px">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Không cần đăng ký, không nhập gì. Bấm nút → tải bộ cài → dán mã cài đặt → bấm Cài đặt.</span>
+        <span>Không cần đăng ký, không nhập gì. Tải app rồi bấm đúp — dùng thử tự bật.</span>
       </div>
 
       <div class="alert alert-warn" style="margin-top:10px">
@@ -152,7 +144,7 @@ export function renderHome() {
 
   <section class="section-sm" style="padding-top:0">
     <div class="container">
-      <div class="cat-scroll" id="home-cats"></div>
+      <div class="cat-scroll" id="home-cats" role="group" aria-label="Lọc theo danh mục"></div>
     </div>
   </section>
 
@@ -173,10 +165,10 @@ export function renderHome() {
     <div class="container">
       <div class="value-grid">
         ${[
-          ['bolt', 'Giao key tự động', 'Nhận key ngay sau khi thanh toán, không cần chờ đợi'],
-          ['shieldCheck', 'Bảo hành 1 đổi 1', 'Key lỗi đổi mới ngay, hoàn tiền 100% nếu không khắc phục được'],
-          ['bank', 'Thanh toán VietQR', 'Quét QR theo đơn, tự giao key 24/7'],
-          ['lock', 'Bảo mật tuyệt đối', 'Mã hoá SSL 256-bit, key giao riêng tư từng khách hàng'],
+          ['bolt', 'Mở khoá tự động', 'Mua xong, đăng nhập trong app là có ngay'],
+          ['shieldCheck', 'Bảo hành 1 đổi 1', 'Lỗi là đổi mới, hoàn tiền 100% nếu không khắc phục được'],
+          ['bank', 'Thanh toán VietQR', 'Quét QR theo đơn, tự mở khoá 24/7'],
+          ['lock', 'Bảo mật tuyệt đối', 'Mã hoá SSL 256-bit, bản quyền gắn riêng từng máy'],
         ].map(([ico, t, d]) => `
           <div class="card value-card">
             ${iconBox(ico, { size: 17 })}
@@ -222,18 +214,17 @@ export function renderHome() {
 }
 
 /**
- * Bắt đầu dùng thử — KHÔNG đăng nhập, KHÔNG nhập gì.
- * Web gọi /api/trial/command, trả 1 dòng lệnh CMD cho khách copy.
- */
-/**
- * ID thiết bị do browser sinh, lưu localStorage.
- * Dùng để tách quota giữa các máy cùng IP (quán net, NAT chung).
- * KHÔNG phải định danh bảo mật — chỉ để không chia chung lượt.
+ * ID thiết bị (trình duyệt) để tính hạn mức dùng thử.
+ *
+ * Server đếm lượt theo (kind, product, device_id + IP) nên chuỗi này phải ổn
+ * định giữa các lần tải trang. localStorage là chỗ duy nhất giữ được điều đó
+ * mà không bắt khách đăng ký. Không tạo được ID thì gửi null — khi đó server
+ * tự xử theo IP.
  */
 function trialDeviceId() {
   try {
     let id = localStorage.getItem('xa_device_id');
-    if (!id || !/^[a-zA-Z0-9_-]{8,64}$/.test(id)) {
+    if (!id) {
       const a = new Uint8Array(16);
       crypto.getRandomValues(a);
       id = Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -245,11 +236,26 @@ function trialDeviceId() {
   }
 }
 
-async function startTrialFlow(kind, onDone) {
-  const label = kind === '1h' ? '1 giờ' : '3 ngày';
+/**
+ * Bắt đầu dùng thử — KHÔNG đăng nhập, KHÔNG nhập gì.
+ * Web gọi /api/trial/command (server vẫn sinh mã nội bộ), nhưng khách KHÔNG
+ * bao giờ thấy mã đó: app XA ARENA tự nhận quyền theo máy (HWID) khi mở lần
+ * đầu. Vì vậy bước cuối chỉ còn MỘT nút: tải app.
+ *
+ * Gói dài ngày (kind '3d') KHÔNG còn: server đặt trial3d_enabled=0, nên trang
+ * chủ chỉ còn lựa chọn 1 giờ. Quảng cáo một gói không tồn tại là lỗi đã sửa.
+ */
+async function startTrialFlow(kind, onDone, product = 'nofog') {
+  const label = '1 giờ';
 
-  // Xoá mọi modal đang mở trước khi hiện modal mới.
-  document.querySelectorAll('.modal-overlay').forEach((el) => el.remove());
+  /*
+   * Đóng modal cũ bằng CHÍNH hàm close() của nó.
+   *
+   * Trước đây chỗ này xoá thẳng các node .modal-overlay: xoá node thì listener
+   * Escape trên document không được gỡ (rò rỉ) và focus không được trả về
+   * phần tử đã mở modal (hỏng cho người dùng bàn phím).
+   */
+  closeAllModals();
 
   let closeLoading = null;
   openModal(`
@@ -260,108 +266,61 @@ async function startTrialFlow(kind, onDone) {
   try {
     const data = await api('/api/trial/command', {
       method: 'POST',
-      body: { kind, device_id: trialDeviceId() },
+      body: { kind, product, device_id: trialDeviceId() },
     });
     // Đóng modal loading TRƯỚC khi hiện kết quả
     if (closeLoading) closeLoading();
     await new Promise((r) => setTimeout(r, 320));
-    showTrialCommand(data, label);
+    showTrialReady(data, label);
     if (onDone) await onDone();
   } catch (e) {
     if (closeLoading) closeLoading();
     await new Promise((r) => setTimeout(r, 320));
-    showTrialError(e.message || 'Không tạo được lệnh dùng thử');
+    showTrialError(e.message || 'Không bật được dùng thử');
   }
 }
 
-function showTrialCommand(data, label) {
+function showTrialReady(data, label) {
   /*
-   * ĐÃ BỎ HOÀN TOÀN LỆNH PowerShell/CMD.
+   * KHÔNG hiện mã, KHÔNG nút copy.
    *
-   * Trước đây modal này đưa khách một dòng:
-   *   powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm ...)"
-   * Khách phải Win+R -> dán -> Enter -> Yes. Rất nhiều người bỏ cuộc, và
-   * chuỗi đó còn dạy họ bypass execution policy + pipe script từ Internet.
-   *
-   * Nay: tải bộ cài (.exe) -> bấm đúp -> dán mã cài đặt -> Cài đặt.
-   * `data.token` do /api/trial/command trả về; nếu server cũ chưa trả token
-   * thì vẫn rút được từ cmdUrl để không chặn khách.
+   * Khách không phải dán gì: app XA ARENA tự nhận quyền theo máy (HWID) khi
+   * mở lần đầu. Còn đúng một việc — tải app.
    */
-  const key = data.key || '';
-  let token = data.token || '';
-  if (!token && data.cmdUrl) {
-    const m = String(data.cmdUrl).match(/[?&]t=([0-9a-fA-F]{48})/);
-    if (m) token = m[1];
-  }
-  // Nếu chỉ có token (server không trả key) thì vẫn dán được.
-  const paste = token || key;
-  const setupUrl = data.setupUrl || '/download/xa_setup.exe';
+  const d = data || {};
+  const leftN = Number(d.left);
+  const quotaN = Number(d.quota);
+  const quotaText = Number.isFinite(quotaN) && quotaN > 0
+    ? `Còn <strong>${esc(String(Number.isFinite(leftN) ? leftN : 0))}/${esc(String(quotaN))}</strong> lượt cho máy này.`
+    : '<strong>Không giới hạn lượt</strong> cho máy này.';
 
   openModal(`
-    <div class="modal-title">Mã dùng thử ${label} đã sẵn sàng</div>
-    <div class="modal-sub">
-      Tải bộ cài, dán mã cài đặt, bấm Cài đặt. Không cần CMD hay PowerShell.
-    </div>
+    <div class="modal-title">Dùng thử ${esc(label)} đã bật</div>
+    <div class="modal-sub">Tải app, bấm đúp. Thời gian dùng thử tự chạy.</div>
 
-    <div class="field">
-      <label class="label">Bước 1 — Tải bộ cài</label>
-      <a class="btn btn-primary btn-block btn-lg" href="${esc(setupUrl)}"
-         download="xa_setup.exe" rel="noopener" style="margin-bottom:4px">
-        ${icon('download', { size: 15 })} Tải bộ cài (.exe)
-      </a>
-    </div>
-
-    <div class="field">
-      <label class="label">Bước 2 — Mã cài đặt (dán vào bộ cài)</label>
-      <div class="mono" style="font-size:11px;line-height:1.7;word-break:break-all;
-        background:rgba(0,0,0,.5);padding:14px;border-radius:9px;
-        border:1px solid rgba(74,222,128,.35);color:#4ade80;user-select:all">
-        ${esc(paste)}
-      </div>
-    </div>
-
-    <button class="btn btn-primary btn-block btn-lg" data-copycmd style="margin-bottom:14px">
-      ${icon('copy', { size: 15 })} Copy mã cài đặt
-    </button>
-
-    <div class="alert alert-info" style="margin-bottom:14px">
-      <span class="ico">${icon('info', { size: 15 })}</span>
-      <span>
-        <strong>Cách cài (2 bước):</strong><br>
-        1. Mở file <code class="mono">xa_setup.exe</code> vừa tải<br>
-        2. Dán mã cài đặt vào ô, bấm <strong>Cài đặt</strong>,
-           chọn <strong>Yes</strong> khi Windows hỏi quyền
-      </span>
-    </div>
+    <a class="btn btn-primary btn-block btn-lg" href="#/tai-ve" data-godl style="margin-bottom:14px">
+      ${icon('download', { size: 15 })} Tải XA ARENA
+    </a>
 
     <div class="alert alert-warn" style="margin-bottom:16px">
       <span class="ico">${icon('clock', { size: 15 })}</span>
       <span>
-        Mã: <strong class="mono">${esc(key)}</strong><br>
-        ${data.left == null
-          ? '<strong>Không giới hạn lượt</strong> cho thiết bị này.'
-          : `Còn <strong>${data.left}/${data.quota}</strong> lượt.`}
-        <strong>Giờ dùng thử bắt đầu tính từ lúc bạn tải bộ cài</strong> —
-        không bị trừ khi bạn đang đọc hướng dẫn.
+        ${quotaText}
+        Đồng hồ bắt đầu từ lúc bạn mở app lần đầu. Hết giờ thì bấm
+        <strong>Mua</strong> ngay trong app.
       </span>
     </div>
 
-    <div class="flex gap-1" style="justify-content:space-between;flex-wrap:wrap">
-      <button class="btn btn-ghost" data-golink>Mua key</button>
+    <div class="flex gap-1" style="justify-content:flex-end;flex-wrap:wrap">
       <button class="btn btn-ghost" data-close>Đóng</button>
     </div>
   `, {
     onMount(overlay, close) {
       overlay.querySelector('[data-close]').onclick = close;
-      overlay.querySelector('[data-golink]').onclick = () => {
+      overlay.querySelector('[data-godl]').onclick = (e) => {
+        e.preventDefault();
         close();
-        navigate('/products?category=license-xarena');
-      };
-      overlay.querySelector('[data-copycmd]').onclick = async () => {
-        const okc = await copyText(paste);
-        toast(okc ? 'Đã copy mã — dán vào bộ cài rồi bấm Cài đặt'
-          : 'Không copy được, chọn tay mã trên',
-          okc ? 'success' : 'error', 6000);
+        navigate('/tai-ve');
       };
     },
   });
@@ -378,7 +337,7 @@ function showTrialError(msg) {
     ${isQuota || isIp ? `
       <div class="alert alert-info" style="margin-bottom:16px">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Mua key để dùng không giới hạn — giao tự động 24/7.</span>
+        <span>Mua bản quyền để dùng không giới hạn — mua xong đăng nhập trong app là có.</span>
       </div>` : ''}
     ${isDevice ? `
       <div class="alert alert-warn" style="margin-bottom:16px">
@@ -417,51 +376,58 @@ export async function mountHome(root) {
     };
   }
 
-  // ===== NÚT DÙNG THỬ: 1 giờ / 3 ngày =====
+  // ===== NÚT DÙNG THỬ: chỉ còn gói 1 giờ =====
   const loadTrialQuota = async () => {
-    const setText = (kind, txt) => {
-      const el = root.querySelector(`#trial-${kind}-status`);
+    const setText = (txt) => {
+      const el = root.querySelector('#trial-1h-status');
       if (el) el.innerHTML = txt;
+    };
+    /*
+     * Hạn mức do server cấu hình (kindCfg().quota), KHÔNG hardcode.
+     * Trang chỉ hiện "nhiều lượt" cho tới khi /api/trial/status trả số thật.
+     */
+    const setQuota = (n) => {
+      const q = Number(n);
+      if (!Number.isFinite(q) || q <= 0) return;
+      root.querySelectorAll('[data-trial-quota]').forEach((el) => {
+        el.textContent = `${q} lượt`;
+      });
     };
 
     if (!state.user) {
-      setText('1h', '<span class="trial-state dim">Không cần đăng ký</span>');
-      setText('3d', '<span class="trial-state dim">Không cần đăng ký</span>');
+      setText('<span class="trial-state dim">Không cần đăng ký</span>');
       return;
     }
 
     try {
       const s = await api('/api/trial/status');
-      for (const kind of ['1h', '3d']) {
-        const k = s.kinds?.[kind];
-        if (!k) { setText(kind, ''); continue; }
-        if (k.active) {
-          // expires_at lúc CHƯA kích hoạt là "hold" (7 ngày), không phải hạn thật.
-          // Chỉ hiện thời gian khi tool đã chạy lần đầu (activated_at > 0).
-          const activated = (k.active.activated_at || 0) > 0;
-          if (!activated) {
-            setText(kind, `<span class="trial-state warn">${icon('clock', { size: 12 })} Đã tạo — chạy tool để bắt đầu tính giờ</span>`);
-          } else {
-            const left = Math.max(0, (k.active.time_left_sec || 0));
-            const txt = kind === '1h'
-              ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`
-              : `${Math.max(0, Math.ceil(left / 86400))} ngày`;
-            setText(kind, `<span class="trial-state ok">${icon('timer', { size: 12 })} Đang dùng — còn ${txt}</span>`);
-          }
-        } else if (k.left > 0) {
-          setText(kind, `Còn <strong>${k.left}/${k.quota}</strong> lượt`);
+      const k = s.kinds?.['1h'];
+      if (!k) { setText(''); return; }
+      setQuota(k.quota);
+      if (k.active) {
+        // expires_at lúc CHƯA kích hoạt là "hold" (7 ngày), không phải hạn thật.
+        // Chỉ hiện thời gian khi tool đã chạy lần đầu (activated_at > 0).
+        const activated = (k.active.activated_at || 0) > 0;
+        if (!activated) {
+          setText(`<span class="trial-state warn">${icon('clock', { size: 12 })} Đã tạo — chạy tool để bắt đầu tính giờ</span>`);
         } else {
-          setText(kind, `<span class="trial-state bad">Đã hết ${k.quota} lượt</span>`);
+          const left = Math.max(0, (k.active.time_left_sec || 0));
+          const txt = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+          setText(`<span class="trial-state ok">${icon('timer', { size: 12 })} Đang dùng — còn ${txt}</span>`);
         }
+      } else if (k.left > 0) {
+        setText(`Còn <strong>${k.left}/${k.quota}</strong> lượt`);
+      } else {
+        setText(`<span class="trial-state bad">Đã hết ${k.quota} lượt</span>`);
       }
-    } catch (e) {
-      setText('1h', '');
-      setText('3d', '');
+    } catch {
+      setText('');
     }
   };
 
   root.querySelectorAll('[data-trial-kind]').forEach((b) => {
-    b.onclick = () => startTrialFlow(b.dataset.trialKind, loadTrialQuota);
+    b.onclick = () => startTrialFlow(b.dataset.trialKind, loadTrialQuota,
+      b.dataset.trialProduct || 'nofog');
   });
 
   await loadTrialQuota();
@@ -497,31 +463,38 @@ export async function mountHome(root) {
     root.querySelectorAll('[data-stat]').forEach((el) => { el.textContent = '—'; });
   });
 
-  // Categories
+  // Categories — chỉ chip của danh mục CÓ sản phẩm (không dẫn khách vào trang rỗng)
   const catHost = root.querySelector('#home-cats');
-  if (catHost && state.categories.length) {
-    catHost.innerHTML =
-      `<a href="#/products" class="cat-chip active">Tất cả</a>` +
-      state.categories.map((c) => `
+  if (catHost) {
+    const live = (state.categories || []).filter((c) => Number(c.productCount) > 0);
+    catHost.innerHTML = live.length
+      ? `<a href="#/products" class="cat-chip active">Tất cả</a>` +
+        live.map((c) => `
         <a href="#/products?category=${esc(c.slug)}" class="cat-chip">
           ${esc(c.name)}
-          <span class="cnt">${c.productCount}</span>
-        </a>`).join('');
+          <span class="cnt">${fmtNum(c.productCount)}</span>
+        </a>`).join('')
+      : '';
+    catHost.closest('section')?.style.setProperty('display', live.length ? '' : 'none');
   }
 
-  // Featured
-  try {
+  // ===== SẢN PHẨM NỔI BẬT =====
+  /*
+   * LỖI ĐÃ SỬA: trước đây lỗi mạng chỉ hiện toast, còn 8 thẻ skeleton nằm lại
+   * vĩnh viễn trên trang. Nay lỗi thì thay hẳn bằng thông báo + nút Thử lại.
+   */
+  const featuredHost = root.querySelector('#home-featured');
+  const loadFeatured = async () => {
     const data = await api('/api/products/featured');
-    const host = root.querySelector('#home-featured');
     if (data.products.length === 0) {
-      host.innerHTML = emptyBlock({
+      featuredHost.innerHTML = emptyBlock({
         ico: 'package',
         title: 'Chưa có sản phẩm',
         desc: 'Danh mục đang được cập nhật. Vui lòng quay lại sau.',
       });
     } else {
-      host.innerHTML = `<div class="grid-products">${data.products.map(productCard).join('')}</div>`;
-      bindProductCards(host, data.products);
+      featuredHost.innerHTML = `<div class="grid-products">${data.products.map(productCard).join('')}</div>`;
+      bindProductCards(featuredHost, data.products);
     }
 
     const popular = data.products.filter((p) => p.sold > 0).slice(0, 4);
@@ -531,9 +504,32 @@ export async function mountHome(root) {
       bindProductCards(popHost, popular);
     } else {
       // Không có dữ liệu bán -> ẩn cả khối thay vì hiện lưới rỗng
-      popHost.closest('section').style.display = 'none';
+      const sec = popHost.closest('section');
+      if (sec) sec.style.display = 'none';
     }
+  };
+
+  const showFeaturedError = (msg, title = 'Không tải được sản phẩm nổi bật') => {
+    if (!featuredHost) return;
+    featuredHost.innerHTML = emptyBlock({
+      ico: 'alert',
+      title,
+      desc: msg || 'Kiểm tra kết nối mạng rồi thử lại.',
+      action: '<button class="btn btn-primary btn-sm" data-retry-featured>Thử lại</button>',
+    });
+    featuredHost.querySelector('[data-retry-featured]')?.addEventListener('click', () => {
+      featuredHost.innerHTML = skeletonCards(8);
+      loadFeatured().catch((err) => {
+        toast(err.message, 'error');
+        showFeaturedError(err.message, 'Vẫn không tải được sản phẩm');
+      });
+    });
+  };
+
+  try {
+    await loadFeatured();
   } catch (e) {
+    showFeaturedError(e.message);
     toast(e.message, 'error');
   }
 }

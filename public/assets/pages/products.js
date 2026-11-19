@@ -1,8 +1,14 @@
 /** Trang danh sách sản phẩm: bộ lọc, lưới sản phẩm, phân trang. */
 import { api, esc, fmtNum, skeletonCards, toast, navigate, debounce, emptyBlock } from '../lib.js';
 import { icon } from '../icons.js';
-import { state } from '../state.js';
-import { productCard, bindProductCards } from './home.js';
+import { state, loadCategories } from '../state.js';
+import { productCard } from './home.js';
+import { bindBuyNowCards } from './checkout.js';
+
+/*
+ * MUA NGAY TỪ DANH SÁCH: nút mua trên mỗi thẻ đi thẳng tới mã QR, không qua
+ * trang chi tiết và không qua giỏ hàng. Trang chi tiết vẫn còn (bấm ảnh/tên).
+ */
 
 /**
  * Danh mục trong DB lưu icon dạng emoji; giao diện dùng bộ SVG dùng chung.
@@ -30,11 +36,16 @@ const SORTS = [
   ['rating', 'Đánh giá cao'],
 ];
 
+/*
+ * Chỉ những khoảng giá THẬT SỰ có sản phẩm.
+ *
+ * LỖI ĐÃ SỬA: bản cũ có thêm mốc "500.000₫ – 1.000.000₫" nhưng shop không bán
+ * món nào trong khoảng đó — chọn vào là ra trang trống.
+ */
 const PRICE_RANGES = [
   ['', 'Mọi mức giá'],
   ['0-200000', 'Dưới 200.000₫'],
   ['200000-500000', '200.000₫ – 500.000₫'],
-  ['500000-1000000', '500.000₫ – 1.000.000₫'],
   ['1000000-', 'Trên 1.000.000₫'],
 ];
 
@@ -110,24 +121,66 @@ function buildQuery(query) {
   return '/products' + (s ? '?' + s : '');
 }
 
+/**
+ * Vá lại <h1> + breadcrumb theo danh mục THẬT.
+ *
+ * renderProducts() chạy ngay khi router vẽ shell — trước khi /api/categories
+ * trả lời. Vào thẳng một link sâu (#/products?category=…) lúc nguội thì
+ * state.categories còn rỗng, nên tiêu đề hiện sai ("Tất cả sản phẩm") và
+ * breadcrumb mất tên danh mục. Hàm này gọi lại sau khi đã có danh mục.
+ */
+function applyCategoryHeading(root, slug) {
+  const cat = slug ? state.categories.find((c) => c.slug === slug) : null;
+  const titleEl = root.querySelector('.sec-head .sec-title');
+  if (titleEl) titleEl.textContent = cat ? cat.name : 'Tất cả sản phẩm';
+  const crumbHost = root.querySelector('.pd-breadcrumb');
+  if (crumbHost) {
+    crumbHost.innerHTML = `<a href="#/">Trang chủ</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}`
+      + `<a href="#/products">Sản phẩm</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}`
+      + (cat
+        ? `<span class="text-dim">${esc(cat.name)}</span>`
+        : '<span class="text-dim">Tất cả</span>');
+  }
+  // Mô tả danh mục (chỉ khi còn là chỗ giữ chỗ "Đang tải...")
+  const descEl = root.querySelector('#products-count');
+  if (descEl && cat && cat.description) descEl.textContent = cat.description;
+  void slug;
+}
+
 export async function mountProducts(root, query) {
   let current = { ...query };
 
-  // Category chips
-  const catHost = root.querySelector('#cat-filter');
-  catHost.innerHTML =
-    `<button type="button" class="cat-chip ${!current.category ? 'active' : ''}" data-cat=""
-       aria-pressed="${!current.category}">
-       <span class="ico">${icon('package', { size: 14 })}</span>Tất cả
-     </button>` +
-    state.categories.map((c) => `
-      <button type="button" class="cat-chip ${current.category === c.slug ? 'active' : ''}"
-        data-cat="${esc(c.slug)}" aria-pressed="${current.category === c.slug}">
-        <span class="ico">${icon(catIcon(c.slug), { size: 14 })}</span>${esc(c.name)}
-        <span class="cnt">${fmtNum(c.productCount)}</span>
-      </button>`).join('');
+  // Danh mục: nếu lần nạp đầu thất bại thì thử lại một lần trước khi vẽ chip.
+  if (!state.categories.length) {
+    try { await loadCategories(); } catch { /* giữ tiêu đề mặc định */ }
+  }
+  applyCategoryHeading(root, current.category);
 
-  catHost.querySelectorAll('[data-cat]').forEach((b) => {
+  // Category chips — CHỈ danh mục có sản phẩm (không dẫn khách vào trang rỗng)
+  const catHost = root.querySelector('#cat-filter');
+  const live = (state.categories || []).filter((c) => Number(c.productCount) > 0);
+  if (catHost) {
+    if (live.length === 0) {
+      // Không có danh mục nào có hàng -> ẩn cả dải chip thay vì hiện link chết
+      catHost.hidden = true;
+      catHost.innerHTML = '';
+    } else {
+      catHost.hidden = false;
+      catHost.innerHTML =
+        `<button type="button" class="cat-chip ${!current.category ? 'active' : ''}" data-cat=""
+           aria-pressed="${!current.category}">
+           <span class="ico">${icon('package', { size: 14 })}</span>Tất cả
+         </button>` +
+        live.map((c) => `
+          <button type="button" class="cat-chip ${current.category === c.slug ? 'active' : ''}"
+            data-cat="${esc(c.slug)}" aria-pressed="${current.category === c.slug}">
+            <span class="ico">${icon(catIcon(c.slug), { size: 14 })}</span>${esc(c.name)}
+            <span class="cnt">${fmtNum(c.productCount)}</span>
+          </button>`).join('');
+    }
+  }
+
+  catHost?.querySelectorAll('[data-cat]').forEach((b) => {
     b.onclick = () => {
       current.category = b.dataset.cat;
       current.page = '1';
@@ -149,15 +202,9 @@ export async function mountProducts(root, query) {
     navigate(buildQuery(current));
   };
   root.querySelector('#price-select').onchange = (e) => {
+    // Không lưu minPrice/maxPrice ở đây: buildQuery chỉ dựa vào current.price,
+    // còn loadPage tự tách lại chuỗi "min-max" khi gọi API.
     current.price = e.target.value;
-    if (current.price) {
-      const [min, max] = current.price.split('-');
-      current.minPrice = min || '';
-      current.maxPrice = max || '';
-    } else {
-      current.minPrice = '';
-      current.maxPrice = '';
-    }
     current.page = '1';
     navigate(buildQuery(current));
   };
@@ -204,9 +251,80 @@ async function loadPage(root, current) {
       return;
     }
 
-    host.className = 'grid-products';
-    host.innerHTML = data.products.map(productCard).join('');
-    bindProductCards(host, data.products);
+    /*
+     * NHÓM THEO SẢN PHẨM.
+     *
+     * Lưới 4 cột với 10 thẻ thì khối 6 gói AOE1 + 4 gói XAGR bị cắt ngang
+     * ranh giới hàng -> hai sản phẩm nằm chung một hàng, trông lộn xộn.
+     *
+     * Ở chế độ sắp xếp mặc định (và không lọc/tìm), gom thành 2 section có
+     * tiêu đề riêng. Các chế độ sắp xếp khác (giá, bán chạy, mới nhất) vẫn
+     * trả lưới phẳng vì lúc đó khách muốn so sánh toàn bộ.
+     */
+    const canGroup = (!current.sort || current.sort === 'featured')
+      && !current.q && !current.category && data.products.length > 0;
+
+    if (canGroup) {
+      // Giữ đúng thứ tự xuất hiện của từng nhóm trong dữ liệu server trả về.
+      const order = [];
+      const groups = new Map();
+      for (const p of data.products) {
+        const key = p.licensePrefix || 'other';
+        if (!groups.has(key)) {
+          groups.set(key, []);
+          order.push(key);
+        }
+        groups.get(key).push(p);
+      }
+
+      const TITLES = {
+        AOE1: {
+          name: 'XA ARENA',
+          desc: 'Bỏ sương mù toàn map + minimap. Một key dùng cho cả hai.',
+          ico: 'eye',
+        },
+        XAGR: {
+          name: 'XA ARENA — Thêm tài nguyên',
+          desc: 'Bơm thịt / gỗ / vàng ngay trong trận đang chơi.',
+          ico: 'zap',
+        },
+      };
+
+      if (order.length > 1) {
+        // Nhiều sản phẩm -> render từng section
+        host.className = 'prod-groups';
+        host.innerHTML = order.map((key) => {
+          const items = groups.get(key);
+          const meta = TITLES[key] || {
+            name: 'Sản phẩm khác', desc: '', ico: 'package',
+          };
+          return `
+            <section class="prod-group" data-count="${items.length}" data-key="${esc(key)}">
+              <header class="prod-group-head">
+                <h2 class="prod-group-title">
+                  <span class="prod-group-ico">${icon(meta.ico, { size: 16 })}</span>
+                  ${esc(meta.name)}
+                  <span class="prod-group-count">${items.length} gói</span>
+                </h2>
+                ${meta.desc ? `<p class="prod-group-desc">${esc(meta.desc)}</p>` : ''}
+              </header>
+              <div class="grid-products">${items.map(productCard).join('')}</div>
+            </section>`;
+        }).join('');
+        // Mỗi section có host thẻ riêng -> gắn "Mua ngay" cho từng host
+        host.querySelectorAll('.grid-products').forEach((g) => {
+          bindBuyNowCards(g, data.products);
+        });
+      } else {
+        host.className = 'grid-products';
+        host.innerHTML = data.products.map(productCard).join('');
+        bindBuyNowCards(host, data.products);
+      }
+    } else {
+      host.className = 'grid-products';
+      host.innerHTML = data.products.map(productCard).join('');
+      bindBuyNowCards(host, data.products);
+    }
 
     // Pagination
     if (data.totalPages > 1) {

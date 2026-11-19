@@ -1,5 +1,4 @@
 /** Trang hướng dẫn vượt SmartScreen / Windows Defender khi cài tool. */
-import { esc } from '../lib.js';
 import { icon } from '../icons.js';
 
 export function renderGuide() {
@@ -34,9 +33,9 @@ export function renderGuide() {
         Hộp thoại xanh hiện khi bạn chạy file tải về lần đầu:
       </p>
 
-      <div class="card" style="padding:16px 18px;background:rgba(59,130,246,.08);border-color:rgba(59,130,246,.3);margin-bottom:16px">
+      <div class="card" style="padding:16px 18px;background:var(--info-dim);border-color:var(--info-line);margin-bottom:16px">
         <div style="font-size:12.5px;line-height:2;color:var(--text-dim)">
-          <div style="font-weight:800;color:#60a5fa;margin-bottom:8px">
+          <div style="font-weight:800;color:var(--info);margin-bottom:8px">
             Windows protected your PC
           </div>
           <div>Microsoft Defender SmartScreen prevented an unrecognized app from starting.</div>
@@ -48,8 +47,8 @@ export function renderGuide() {
       </div>
 
       <div style="font-size:13.5px;line-height:2;color:var(--text-dim)">
-        <strong style="color:#4ade80">Cách xử lý:</strong><br>
-        1. Bấm chữ <strong>"More info"</strong> (Chạy vẫn)<br>
+        <strong style="color:var(--accent)">Cách xử lý:</strong><br>
+        1. Bấm chữ <strong>"More info"</strong><br>
         2. Hiện thêm dòng tên file — bấm nút <strong>"Run anyway"</strong><br>
         3. Windows hỏi quyền Admin → bấm <strong>Yes</strong>
       </div>
@@ -60,11 +59,11 @@ export function renderGuide() {
       <div class="panel-title">2. Windows Defender xoá file</div>
 
       <p style="font-size:13.5px;line-height:1.8;color:var(--text-dim);margin-bottom:14px">
-        Nếu Defender tự xoá hoặc cách ly file <code class="mono">xa_nofog_pro.exe</code>:
+        Nếu Defender tự xoá hoặc cách ly file <code class="mono">xa_arena.exe</code>:
       </p>
 
       <div style="font-size:13.5px;line-height:2;color:var(--text-dim)">
-        <strong style="color:#4ade80">Cách 1 — Khôi phục file:</strong><br>
+        <strong style="color:var(--accent)">Cách 1 — Khôi phục file:</strong><br>
         1. Mở <strong>Windows Security</strong> (tìm ở Start)<br>
         2. <strong>Virus &amp; threat protection</strong><br>
         3. <strong>Protection history</strong><br>
@@ -72,12 +71,21 @@ export function renderGuide() {
       </div>
 
       <div style="font-size:13.5px;line-height:2;color:var(--text-dim);margin-top:16px">
-        <strong style="color:#4ade80">Cách 2 — Thêm vào loại trừ (nếu bị xoá lại):</strong><br>
+        <strong style="color:var(--accent)">Cách 2 — Thêm vào loại trừ (nếu bị xoá lại):</strong><br>
         1. Windows Security → <strong>Virus &amp; threat protection</strong><br>
         2. <strong>Manage settings</strong><br>
         3. Kéo xuống <strong>Exclusions</strong> → <strong>Add or remove exclusions</strong><br>
         4. Bấm <strong>Add an exclusion</strong> → <strong>Folder</strong><br>
-        5. Chọn thư mục <code class="mono">C:\\Program Files\\XArena</code>
+        5. Chọn đúng thư mục cài của tool:<br>
+        &nbsp;&nbsp;• <strong>XA ARENA</strong>:
+          <code class="mono">C:\\Program Files\\XArena\\_re\\arena</code>
+      </div>
+
+      <div class="alert alert-warn" style="margin-top:14px">
+        <span class="ico">${icon('info', { size: 15 })}</span>
+        <span>Chỉ loại trừ <strong>đúng thư mục trên</strong>. Đừng loại trừ cả ổ đĩa hay
+        cả thư mục <code class="mono">C:\\Program Files\\XArena</code> — đó là thư mục
+        game Arena.vn, không phải tool.</span>
       </div>
     </div>
 
@@ -88,7 +96,7 @@ export function renderGuide() {
         <li><span class="tick">✓</span><span>File <strong>chưa ký số</strong> — mọi tool miễn phí đều bị vậy</span></li>
         <li><span class="tick">✓</span><span>Tool cần quyền <strong>Admin</strong> để vá bộ nhớ game (đúng thiết kế)</span></li>
         <li><span class="tick">✓</span><span>File được kiểm tra <strong>mã SHA-256</strong> khớp server trước khi cài</span></li>
-        <li><span class="tick">✓</span><span>Có thể quét tại <a href="https://www.virustotal.com" target="_blank" rel="noopener" style="color:#60a5fa">virustotal.com</a> — vài cảnh báo generic là bình thường với tool can thiệp bộ nhớ</span></li>
+        <li><span class="tick">✓</span><span>Có thể quét tại <a href="https://www.virustotal.com" target="_blank" rel="noopener" style="color:var(--info)">virustotal.com</a> — vài cảnh báo generic là bình thường với tool can thiệp bộ nhớ</span></li>
       </ul>
     </div>
 
@@ -110,7 +118,8 @@ export function renderGuide() {
     <div style="margin-top:26px;text-align:center">
       <a class="btn btn-ghost" href="#/">${icon('arrowLeft', { size: 14 })} Về trang chủ</a>
     </div>
-  </div>`;
+  <div id="site-footer"></div>
+</div>`;
 }
 
 export function mountGuide() {

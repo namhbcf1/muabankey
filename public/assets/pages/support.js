@@ -2,38 +2,67 @@
 import { esc } from '../lib.js';
 import { icon } from '../icons.js';
 
+/*
+ * Toàn bộ nội dung trang này nói về SẢN PHẨM THẬT của shop: tool Windows cho
+ * AoE1 / XArena (map sáng + thêm tài nguyên). Bản cũ nói về một ngành hàng
+ * khác hoàn toàn (key hệ điều hành và văn phòng, tài khoản dịch vụ, bán lại
+ * key), nên khách đọc xong hiểu sai hẳn về sản phẩm.
+ */
+
 const FAQS = [
-  ['Key tôi mua có phải hàng chính hãng không?',
-   'Có. Tất cả key đều là key Retail/OEM chính hãng mua trực tiếp từ nhà phân phối ủy quyền. Bạn có thể kiểm tra tính hợp lệ bằng công cụ chính thức của Microsoft hoặc nhà cung cấp.'],
-  ['Bao lâu thì tôi nhận được key sau khi thanh toán?',
-   'Với sản phẩm giao tự động, key hiển thị ngay lập tức trong mục "Đơn hàng" (thường dưới 5 giây). Mọi sản phẩm còn hàng đều giao tự động ngay khi tiền vào tài khoản shop (dưới 5 giây) hoặc Telegram.'],
-  ['Key không kích hoạt được thì sao?',
-   'Trong thời hạn bảo hành (365 ngày với Windows/Office, 30 ngày với AI tools, đổi mới với streaming), chúng tôi đổi key mới hoàn toàn miễn phí. Nếu không còn hàng thay thế, bạn được hoàn 100% qua chuyển khoản.'],
-  ['Có được dùng key trên nhiều máy không?',
-   'Key Windows/Office Retail bind vào tài khoản Microsoft của bạn nên có thể cài trên nhiều thiết bị cá nhân (thường giới hạn phụ thuộc license). Key tài khoản AI/Streaming chỉ dùng 1 thiết bị tại một thời điểm.'],
-  ['Tôi có thể bán lại key cho người khác không?',
-   'Về mặt kỹ thuật key đã bind vào tài khoản của bạn nên không chuyển nhượng được. Chúng tôi không hỗ trợ việc mua bán lại.'],
+  ['Tool này làm gì?',
+   'Hai tool cho AoE1 / XArena: (1) MAP SÁNG — xoá sương mù toàn bản đồ và cả minimap; '
+   + '(2) THÊM TÀI NGUYÊN — cộng vàng, gỗ, thịt trong trận đang chơi. Mua theo gói, '
+   + 'licence gắn với máy.'],
+  ['Mua xong dùng thế nào?',
+   'Mua trên web (cần đăng nhập), rồi mở XA ARENA và bấm Đăng nhập — licence tự gắn vào tài khoản. '
+   + 'Không có mã nào phải nhập hay copy.'],
+  ['Tải và chạy ra sao?',
+   'Một file duy nhất, không cần cài đặt: bấm "Tải XA ARENA" ở trang Tải về, mở xa_arena.exe, '
+   + 'chọn Yes khi Windows hỏi quyền. Chưa mua thì bản dùng thử tự bật.'],
+  ['Máy tôi cần cấu hình gì?',
+   'Windows 10 hoặc Windows 11 bản 64-bit, chạy bằng quyền Administrator, '
+   + 'và PHẢI có internet mỗi lần chạy — tool không có chế độ offline.'],
+  ['Licence dùng được mấy máy?',
+   'Một máy. Đổi máy thì mở app bấm "Gắn máy khác" (hoặc vào "Licence của tôi" trên web). '
+   + 'Số lượt đổi máy có hạn, xem ngay trong thẻ licence.'],
+  ['Dùng thử thế nào?',
+   'Mở XA ARENA là dùng thử miễn phí, không cần tài khoản — đồng hồ gắn theo máy (HWID). '
+   + 'Hết giờ, app hiện nút "Mua" để mở shop.'],
+  ['Đã dùng được rồi có được hoàn tiền?',
+   'Không. Licence đã kích hoạt (tool chạy được trên máy bạn) thì không hoàn tiền — '
+   + 'kể cả khi bạn đổi ý hoặc không còn chơi. Xem mục "Chính sách hoàn tiền" bên dưới để biết '
+   + 'trường hợp nào được hoàn.'],
 ];
 
 /** Bốn bước mua hàng — tách ra ngoài để template dễ đọc. */
 const STEPS = [
   ['1', 'Tạo tài khoản', 'Đăng ký bằng tài khoản và mật khẩu. Xác nhận trong vài giây, không cần chờ duyệt.'],
-  ['2', 'Thanh toán đơn bằng QR', 'Bấm Mua ngay, quét mã QR bằng app ngân hàng. Số tiền và nội dung đã điền sẵn.'],
-  ['3', 'Chọn sản phẩm', 'Thêm sản phẩm vào giỏ hàng hoặc bấm "Mua ngay". Kiểm tra tồn kho trước khi đặt.'],
-  ['4', 'Thanh toán và nhận key', 'Bấm "Xác nhận thanh toán". Key hiển thị ngay và được lưu vĩnh viễn trong mục Đơn hàng.'],
+  ['2', 'Chọn gói', 'Chọn tool (MAP SÁNG hoặc THÊM TÀI NGUYÊN) và thời hạn 7/30/90/180 ngày tuỳ gói. Bấm "Mua ngay".'],
+  ['3', 'Thanh toán bằng QR', 'Bấm "Tạo mã QR thanh toán", quét mã VietQR bằng app ngân hàng. Số tiền và nội dung đã điền sẵn.'],
+  ['4', 'Tải app và đăng nhập', 'Bấm "Tải XA ARENA", mở file, bấm Đăng nhập — licence tự gắn vào tài khoản, không cần nhập mã.'],
 ];
 
+/** Thời hạn của từng gói — số ngày do server cấp lúc gắn licence. */
 const WARRANTY_ROWS = [
-  ['Windows & Office', '365 ngày, 1 đổi 1'],
-  ['Công cụ AI (ChatGPT, Claude, Gemini)', '30 ngày'],
-  ['Streaming (Netflix, Spotify, YouTube)', 'Đổi mới ngay khi có lỗi'],
-  ['Bảo mật & VPN', '365 ngày'],
+  ['Gói tuần / tháng / quý / năm', 'Đúng số ngày ghi trên đơn (7 / 30 / 90 / 180 / 365 ngày)'],
+  ['Gói vĩnh viễn (MAP SÁNG)', 'Không giới hạn thời gian trên máy đã kích hoạt'],
+  ['Licence không kích hoạt được (lỗi từ shop)', 'Gắn lại hoặc đổi licence mới, không mất phí'],
+  ['Tool lỗi sau khi đã kích hoạt', 'Shop kiểm tra và cấp lại licence nếu lỗi thuộc về tool'],
 ];
 
 const REFUND_ROWS = [
-  'Đơn hàng không được giao trong 24 giờ',
-  'Key không hoạt động và không có hàng thay thế',
-  'Sản phẩm không đúng mô tả',
+  'Đã thanh toán nhưng shop không gắn được licence',
+  'Licence không kích hoạt được và shop không còn licence thay thế',
+  'Sản phẩm giao không đúng tool / đúng thời hạn bạn đã đặt',
+];
+
+/** Trường hợp KHÔNG hoàn tiền — nói thẳng để khách biết trước khi mua. */
+const NO_REFUND_ROWS = [
+  'Licence đã kích hoạt thành công trên máy bạn',
+  'Đổi ý sau khi đã nhận và dùng licence',
+  'Tự ý đổi phần cứng / cài lại Windows làm mất lượt đổi máy có sẵn',
+  'Dùng chung tài khoản cho nhiều máy rồi bị khoá',
 ];
 
 /** Danh sách có dấu tích. Mỗi dòng là HTML đã an toàn (tự dựng, không từ người dùng). */
@@ -41,6 +70,15 @@ function checkList(rows) {
   return `<ul class="sp-list">
     ${rows.map((r) => `
       <li><span class="sp-check">${icon('check', { size: 13, stroke: 2.2 })}</span>
+        <span>${r}</span></li>`).join('')}
+  </ul>`;
+}
+
+/** Danh sách dấu X — dùng cho phần "không hoàn tiền". */
+function crossList(rows) {
+  return `<ul class="sp-list">
+    ${rows.map((r) => `
+      <li><span class="sp-check sp-cross">${icon('x', { size: 13, stroke: 2.2 })}</span>
         <span>${r}</span></li>`).join('')}
   </ul>`;
 }
@@ -54,7 +92,7 @@ export function renderSupport() {
       <div class="sec-head">
         <div>
           <h1 class="sec-title">Trung tâm hỗ trợ</h1>
-          <p class="sec-desc">Mua hàng, bảo hành, hoàn tiền và các câu hỏi thường gặp.</p>
+          <p class="sec-desc">Tải và dùng, bảo hành, hoàn tiền và các câu hỏi thường gặp về tool XArena.</p>
         </div>
       </div>
 
@@ -93,10 +131,15 @@ export function renderSupport() {
               <div class="sp-label">Thời hạn bảo hành</div>
               ${checkList(WARRANTY_ROWS.map(([k, v]) => `${esc(k)}: <strong>${esc(v)}</strong>`))}
               <p>
-                <strong class="sp-strong">Điều kiện áp dụng:</strong>
-                key không kích hoạt được, bị vô hiệu hoá bởi nhà sản xuất, hoặc tài khoản bị lỗi
-                không do người dùng. Không áp dụng cho trường hợp cài đặt sai, dùng phần mềm crack
-                hoặc chia sẻ key cho nhiều người.
+                <strong class="sp-strong">Yêu cầu bắt buộc để tool chạy:</strong>
+                Windows 10 / 11 bản 64-bit, quyền Administrator, và <strong>internet mỗi lần chạy</strong>
+                (tool xác minh bản quyền với máy chủ, không có chế độ offline).
+                Không hỗ trợ Windows 7 / 8, máy ảo và môi trường không có mạng.
+              </p>
+              <p>
+                <strong class="sp-strong">Không áp dụng bảo hành:</strong>
+                dùng sai hướng dẫn, dùng chung tài khoản cho nhiều máy, hoặc dùng phần mềm can thiệp
+                vào tool.
               </p>
             </div>
           </section>
@@ -107,10 +150,18 @@ export function renderSupport() {
               Chính sách hoàn tiền
             </h2>
             <div class="sp-body">
-              <p>Bạn được <strong class="text-green">hoàn 100% qua chuyển khoản</strong> trong các trường hợp:</p>
-              ${checkList(REFUND_ROWS.map(esc))}
               <p>
-                Tiền hoàn về trong vòng 1-2 giờ làm việc. Gửi yêu cầu qua Telegram kèm mã đơn hàng.
+                <strong class="sp-strong">Licence đã kích hoạt thì KHÔNG hoàn tiền.</strong>
+                Một khi licence đã gắn và tool chạy được trên máy bạn, đơn hàng
+                được coi là đã hoàn tất — kể cả khi bạn đổi ý.
+              </p>
+              <div class="sp-label">Được hoàn 100% qua chuyển khoản</div>
+              ${checkList(REFUND_ROWS.map(esc))}
+              <div class="sp-label">Không được hoàn</div>
+              ${crossList(NO_REFUND_ROWS.map(esc))}
+              <p>
+                Yêu cầu hoàn tiền trong các trường hợp trên: gửi tên đăng nhập và mã đơn hàng qua Telegram.
+                Tiền hoàn về trong vòng 1–2 giờ trong khung hỗ trợ.
               </p>
             </div>
           </section>
@@ -142,7 +193,11 @@ export function renderSupport() {
             <a class="btn btn-primary btn-block" href="https://t.me/muabankey" target="_blank" rel="noopener">
               ${icon('send', { size: 15 })} Telegram — phản hồi nhanh nhất
             </a>
-        <a class="btn btn-ghost btn-sm" href="#/huong-dan">Hướng dẫn cài đặt (SmartScreen)</a>
+            <a class="btn btn-ghost btn-sm" href="#/huong-dan">Hướng dẫn chạy app (SmartScreen)</a>
+            <p class="sp-muted">
+              Cần hỗ trợ? Chỉ cần gửi <strong>tên đăng nhập</strong> và <strong>app đang báo gì</strong>
+              (vd "Hết giờ dùng thử", "Gắn máy khác"). Không cần gửi mã gì khác.
+            </p>
             <div class="sp-contact">
               <a class="sp-contact-item" href="https://t.me/muabankey" target="_blank" rel="noopener">
                 <span class="ic-box">${icon('send', { size: 15 })}</span>
@@ -156,7 +211,7 @@ export function renderSupport() {
                 <span class="ic-box">${icon('book', { size: 15 })}</span>
                 <span class="sp-contact-body">
                   <span class="sp-contact-t">Hướng dẫn</span>
-                  <span class="sp-contact-d">Cài đặt, SmartScreen, lỗi thường gặp</span>
+                  <span class="sp-contact-d">Chạy app, SmartScreen, lỗi thường gặp</span>
                 </span>
                 ${icon('arrowUpRight', { size: 13, cls: 'sp-contact-go' })}
               </a>
@@ -173,7 +228,7 @@ export function renderSupport() {
                 Trợ lý AI
               </h3>
               <p class="sp-muted">
-                Key Bot tư vấn sản phẩm và trả lời câu hỏi 24/7.
+                Key Bot tư vấn sản phẩm và trả lời câu hỏi trong khung hỗ trợ 8:00 - 23:00.
               </p>
               <button class="btn btn-ghost btn-block" id="open-ai-support">
                 ${icon('sparkles', { size: 15 })} Hỏi Key Bot

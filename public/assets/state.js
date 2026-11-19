@@ -3,6 +3,14 @@ import { store, api, toast } from './lib.js';
 
 export const state = {
   user: null,
+  /**
+   * false cho tới khi /api/auth/me trả lời lần đầu.
+   *
+   * app.js dùng cờ này để vẽ header ở trạng thái CHỜ (skeleton) thay vì nút
+   * "Đăng nhập": khách đã đăng nhập không phải thấy "Đăng nhập" rồi nó biến
+   * mất sau ~650ms (nhấp nháy trạng thái sai).
+   */
+  authReady: false,
   cart: store.get('mbk_cart', []),
   categories: [],
   aiOpen: false,
@@ -120,18 +128,12 @@ export async function loadUser() {
     state.user = null;
     if (e.status !== 401) console.warn('loadUser:', e.message);
   }
+  // Đã có câu trả lời (kể cả 401) -> header thoát trạng thái skeleton.
+  state.authReady = true;
   notify();
   return state.user;
 }
 
-
-export function updateBalanceChip() {
-  // #balance-chip nằm trong nút ví ở header; chỉ cập nhật phần số, giữ nguyên icon.
-  const el = document.getElementById('balance-chip');
-  if (el && state.user) {
-    el.textContent = `${new Intl.NumberFormat('vi-VN').format(state.user.balance)}₫`;
-  }
-}
 
 export async function loadCategories() {
   try {

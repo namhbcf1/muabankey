@@ -15,8 +15,7 @@
  * la khach thay ngay, khong phai xoa cache trinh duyet.
  */
 import { ok } from '../lib/http.js';
-import { APP_NAME, EXE_NAME, EXE_VERSION, EXE_SHA256, EXE_SIZE } from './installer.js';
-import { EXE_SHA256 as GRANT_SHA, EXE_SIZE as GRANT_SIZE } from './xa-grant-installer.js';
+import { arenaVersionData } from './arena-installer.js';
 
 /** Dinh dang byte -> chuoi de doc. Co dinh, khong phu thuoc Intl cua may khach. */
 function humanSize(bytes) {
@@ -26,43 +25,21 @@ function humanSize(bytes) {
   return `${n} B`;
 }
 
-/** Du lieu phien ban — tach rieng de dung lai o cho khac neu can. */
-export function appVersionData(request) {
-  const u = new URL(request.url);
-  const base = `${u.protocol}//${u.host}`;
-  return {
-    name: APP_NAME,
-    filename: EXE_NAME,
-    version: EXE_VERSION,
-    sha256: EXE_SHA256,
-    // So nguyen byte: client tu dinh dang, tranh truyen chuoi roi phai parse lai.
-    size: EXE_SIZE,
-    sizeText: humanSize(EXE_SIZE),
-    // Duong dan TUONG DOI de doi ten mien khong phai sua gi.
-    url: `/download/${EXE_NAME}`,
-    urlAbsolute: `${base}/download/${EXE_NAME}`,
-    platform: 'Windows 10 / 11 (64-bit)',
-  };
-}
-
-/** Du lieu phien ban XA_grant (them tai nguyen). */
-export function grantVersionData(request) {
-  const u = new URL(request.url);
-  const base = `${u.protocol}//${u.host}`;
-  return {
-    name: 'XA THÊM TÀI NGUYÊN',
-    filename: 'xa_grant.exe',
-    version: '',
-    sha256: GRANT_SHA,
-    size: GRANT_SIZE,
-    sizeText: humanSize(GRANT_SIZE),
-    url: '/download/xa_grant.exe',
-    urlAbsolute: `${base}/download/xa_grant.exe`,
-    platform: 'Windows 10 / 11 (64-bit)',
-  };
-}
-
 /** GET /api/app/version — public, khong doc DB. */
 export async function appVersion(env, request) {
-  return ok({ ...appVersionData(request), grant: grantVersionData(request) });
+  // arena = EXE GOP (ca map sang + tai nguyen). Client doc field nay
+    // de biet co ban moi hay khong.
+    // CHI MOT app duy nhat: 'arena' la EXE gop chua ca map sang lan
+    // tai nguyen. Khong tra them 'grant'/'nofog' nua — chu shop yeu
+    // cau mot app, mot bo cai, de khoi roi.
+    /*
+     * MỘT APP DUY NHẤT.
+     *
+     * Cấp gốc chính là app gộp (XA ARENA). Client đời cũ đọc
+     * `version`/`url` ở cấp gốc sẽ nhận đúng bản gộp, không còn
+     * bị trỏ về xa_nofog_pro.exe như trước.
+     * Field `arena` giữ lại để client mới đọc rõ ràng.
+     */
+    const arena = arenaVersionData(request);
+    return ok({ ...arena, arena });
 }

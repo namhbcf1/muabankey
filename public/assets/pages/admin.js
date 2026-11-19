@@ -1,8 +1,9 @@
 /**
  * Trang quản trị (admin).
  *
- * Toàn bộ giao diện dùng icon SVG (`icon()`) và class trong style.css; chỉ còn
- * đúng một inline style là `width` của `.bar-fill` vì đó là giá trị động.
+ * Toàn bộ giao diện dùng icon SVG (`icon()`) và class trong style.css. Chỉ
+ * còn vài inline style cho giá trị động / độ lớn chữ của SỐ TIỀN (xem
+ * AMT_BIG bên dưới) vì `style.css` không thuộc phạm vi sửa của việc này.
  * Logic nghiệp vụ (endpoint, method, body, điều kiện trạng thái, phân quyền,
  * luồng xác nhận) giữ nguyên so với bản trước khi đại tu giao diện.
  */
@@ -243,6 +244,18 @@ async function renderOrders(host) {
   await load();
 }
 
+/*
+ * SỐ TIỀN trong hai bảng "Đơn chờ thanh toán" và "Sổ tiền vào" là phần tử
+ * TO NHẤT của dòng — chủ shop liếc là thấy tiền, không phải đọc chữ.
+ *
+ * Dùng inline style (không thêm class vào style.css) vì tệp CSS nằm ngoài
+ * phạm vi sửa của việc này; hai hằng dưới đây gom một chỗ để dễ đổi.
+ */
+const AMT_BASE = 'font-size:19px;font-weight:700;letter-spacing:-.03em;line-height:1.2;'
+  + 'font-variant-numeric:tabular-nums';
+const AMT_BIG = `${AMT_BASE};color:var(--text)`;
+const AMT_BIG_HOT = `${AMT_BASE};color:var(--danger)`;
+
 /* ---------------- Đơn chờ thanh toán ---------------- */
 const TOPUP_STATUS = {
   pending: ['pill-yellow', 'Chờ duyệt', 'clock'],
@@ -295,17 +308,15 @@ async function renderTopups(host) {
       ${unmatched > 0 ? `
       <div class="alert alert-error">
         <span class="ico">${icon('alert', { size: 15 })}</span>
-        <span><strong>${unmatched} giao dịch tiền vào KHÔNG khớp đơn</strong>
-        (tổng ${fmtVnd(st.unmatched?.total || 0)}). Khách có thể ghi sai nội dung.
-        Kiểm tra sao kê rồi xác nhận tay cho đơn tương ứng.</span>
+        <span><strong>${unmatched} giao dịch KHÔNG KHỚP ĐƠN</strong>
+        · ${fmtVnd(st.unmatched?.total || 0)} — kiểm tra sao kê, khớp tay.</span>
       </div>` : ''}
 
       ${wrongAmt > 0 ? `
       <div class="alert alert-warn">
         <span class="ico">${icon('clock', { size: 15 })}</span>
-        <span><strong>${wrongAmt} đơn chuyển thiếu tiền</strong>
-        (tổng thiếu ${fmtVnd(st.wrong_amount?.total || 0)}).
-        Khách chuyển bù sẽ tự giao; hoặc bấm Duyệt để giao luôn.</span>
+        <span><strong>${wrongAmt} đơn chuyển thiếu</strong>
+        · ${fmtVnd(st.wrong_amount?.total || 0)} — khách chuyển bù sẽ tự giao.</span>
       </div>` : ''}
 
       <div class="panel">
@@ -315,30 +326,24 @@ async function renderTopups(host) {
         <div class="table-wrap adm-table-wrap">
           <table class="adm-table">
             <thead><tr>
-              <th scope="col">Mã đơn</th>
-              <th scope="col" class="adm-num">Số tiền</th>
-              <th scope="col">Khách</th>
-              <th scope="col">Tạo</th>
-              <th scope="col">Thao tác</th>
+              <th scope="col">Số tiền</th>
+              <th scope="col">Đơn · khách</th>
+              <th scope="col"><span class="sr-only">Thao tác</span></th>
             </tr></thead>
             <tbody>
               ${pendingOrders === 0
-                ? '<tr><td colspan="5" class="adm-empty">Không có đơn chờ</td></tr>'
+                ? '<tr><td colspan="3" class="adm-empty">Không có đơn chờ</td></tr>'
                 : (orderData.orders || []).map((o) => `
                   <tr>
-                    <td><span class="mono">${esc(o.code)}</span></td>
-                    <td class="adm-num"><strong>${fmtVnd(o.total)}</strong></td>
+                    <td><div style="${AMT_BIG}">${fmtVnd(o.total)}</div></td>
                     <td>
-                      <div class="adm-cell-main">${esc(o.customer || '—')}</div>
-                      <div class="adm-cell-sub">${esc(o.email || '')}</div>
+                      <div class="mono" style="font-size:13px;color:var(--text-bright)">${esc(o.code)}</div>
+                      <div class="adm-cell-sub">${esc(o.customer || '—')} · ${fmtDate(o.createdAt)}</div>
                     </td>
-                    <td class="adm-cell-sub">${fmtDate(o.createdAt)}</td>
-                    <td>
-                      <div class="adm-actions">
-                        <button type="button" class="btn btn-primary btn-sm"
-                          data-confirm-pay="${esc(o.id)}" data-code="${esc(o.code)}"
-                          data-amt="${esc(o.total)}">${icon('check', { size: 13 })} Đã nhận tiền</button>
-                      </div>
+                    <td class="adm-num">
+                      <button type="button" class="btn btn-primary btn-sm"
+                        data-confirm-pay="${esc(o.id)}" data-code="${esc(o.code)}"
+                        data-amt="${esc(o.total)}">${icon('check', { size: 13 })} Đã nhận tiền</button>
                     </td>
                   </tr>`).join('')}
             </tbody>
@@ -361,25 +366,30 @@ async function renderTopups(host) {
         <div class="table-wrap adm-table-wrap">
           <table class="adm-table">
             <thead><tr>
-              <th scope="col">Mã đơn</th>
-              <th scope="col" class="adm-num">Nhận</th>
-              <th scope="col" class="adm-num">Cần</th>
-              <th scope="col">Nội dung CK</th>
+              <th scope="col">Số tiền</th>
               <th scope="col">Trạng thái</th>
-              <th scope="col">Lúc</th>
+              <th scope="col">Đơn · nội dung CK</th>
             </tr></thead>
             <tbody>
               ${(payData.payments || []).length === 0
-                ? '<tr><td colspan="6" class="adm-empty">Chưa có giao dịch</td></tr>'
+                ? '<tr><td colspan="3" class="adm-empty">Chưa có giao dịch</td></tr>'
                 : (payData.payments || []).map((p) => {
                   const [cls, label, icoName] = STATE_LABEL[p.state] || ['pill-gray', p.state, 'help'];
-                  return `<tr>
-                    <td><span class="mono">${esc(p.orderCode || '—')}</span></td>
-                    <td class="adm-num"><strong>${fmtVnd(p.amount)}</strong></td>
-                    <td class="adm-num">${p.expected ? fmtVnd(p.expected) : '—'}</td>
-                    <td><span class="adm-cell-sub mono">${esc((p.content || '').slice(0, 24))}</span></td>
+                  const hot = p.state === 'unmatched';
+                  const short = p.expected && Number(p.expected) !== Number(p.amount);
+                  return `<tr${hot ? ' style="background:var(--danger-dim)"' : ''}>
+                    <td>
+                      <div style="${hot ? AMT_BIG_HOT : AMT_BIG}">${fmtVnd(p.amount)}</div>
+                      ${short ? `<div class="adm-cell-sub">cần ${fmtVnd(p.expected)}</div>` : ''}
+                    </td>
                     <td><span class="pill ${cls}">${icon(icoName, { size: 11 })} ${esc(label)}</span></td>
-                    <td class="adm-cell-sub">${fmtDate((p.at || 0) * 1000)}</td>
+                    <td>
+                      <div class="mono adm-cell-sub">${p.orderCode
+                        ? esc(p.orderCode)
+                        : '<span style="color:var(--danger);font-weight:600">Không gán đơn</span>'}</div>
+                      <div class="adm-cell-sub">${esc((p.content || '').slice(0, 40))}${
+                        p.at ? ' · ' + fmtDate(p.at * 1000) : ''}</div>
+                    </td>
                   </tr>`;
                 }).join('')}
             </tbody>
@@ -918,7 +928,7 @@ async function renderWhitelist(host) {
         <div class="modal-sub">Máy này sẽ dùng thử vô hạn lần</div>
 
         <div class="field">
-          <label class="label">Loại</label>
+          <label class="label" for="wl-scope">Loại</label>
           <select class="select" id="wl-scope">
             <option value="weak">Weak HWID (máy — ổn định nhất)</option>
             <option value="hwid">HWID đầy đủ</option>
@@ -929,15 +939,16 @@ async function renderWhitelist(host) {
         </div>
 
         <div class="field">
-          <label class="label">Giá trị</label>
-          <input class="input mono" id="wl-value" placeholder="Dán giá trị vào đây">
+          <label class="label" for="wl-value">Giá trị</label>
+          <input class="input mono" id="wl-value" placeholder="Dán giá trị vào đây"
+                 aria-describedby="wl-hint">
           <div class="form-hint" id="wl-hint">
-            Chạy <code>xa_nofog_pro.exe --status</code> để xem HWID máy.
+            Chạy <code>xa_arena.exe --status</code> để xem HWID máy.
           </div>
         </div>
 
         <div class="field">
-          <label class="label">Ghi chú</label>
+          <label class="label" for="wl-note">Ghi chú</label>
           <input class="input" id="wl-note" placeholder="VD: Máy test của tôi">
         </div>
 
@@ -954,7 +965,7 @@ async function renderWhitelist(host) {
               ? 'IP công cộng của bạn (xem tại whatismyip.com)'
               : v === 'user'
                 ? 'Username hoặc user ID'
-                : 'Chạy <code>xa_nofog_pro.exe --status</code> để xem HWID máy';
+                : 'Chạy <code>xa_arena.exe --status</code> để xem HWID máy';
           };
           overlay.querySelector('[data-cancel]').onclick = close;
           overlay.querySelector('[data-ok]').onclick = async () => {
@@ -1444,6 +1455,19 @@ async function renderSettings(host) {
             </div>
           </div>
 
+          <div class="field">
+            <label class="label" for="tg-groups">Group nhận thông báo (không bắt buộc)</label>
+            <input class="input" id="tg-groups"
+              placeholder="-1001234567890 hoặc -1001234567890,-1009876543210">
+            <div class="form-hint">
+              Thêm bot vào group, gửi <code class="mono">/id</code> trong group để lấy ID
+              (thường bắt đầu bằng <code class="mono">-100</code>). Nhiều group thì cách nhau dấu phẩy.
+              <br>
+              <strong>Group chỉ nhận thông báo</strong> — thành viên group
+              <strong>KHÔNG bấm duyệt được</strong>; chỉ Chat ID ở trên mới duyệt được.
+            </div>
+          </div>
+
           <div class="adm-actions">
             <button type="button" class="btn btn-primary btn-sm" id="tg-save">Lưu</button>
             <button type="button" class="btn btn-ghost btn-sm" id="tg-test">${icon('send', { size: 13 })} Gửi tin thử</button>
@@ -1589,13 +1613,24 @@ async function renderSettings(host) {
     tgSave.onclick = async () => {
       const botToken = host.querySelector('#tg-token').value.trim();
       const chatId = host.querySelector('#tg-chat').value.trim();
-      if (!botToken && !chatId) { toast('Nhập ít nhất một trường', 'error'); return; }
+      const groupsEl = host.querySelector('#tg-groups');
+      const notifyChatIds = groupsEl ? groupsEl.value.trim() : '';
+      if (!botToken && !chatId && !notifyChatIds) {
+        toast('Nhập ít nhất một trường', 'error');
+        return;
+      }
       tgSave.disabled = true;
       try {
-        await api('/api/admin/telegram/config', { method: 'POST', body: { botToken, chatId } });
-        toast('Đã lưu cấu hình Telegram', 'success');
+        await api('/api/admin/telegram/config', {
+          method: 'POST',
+          body: { botToken, chatId, notifyChatIds },
+        });
+        toast(notifyChatIds
+          ? 'Đã lưu. Thông báo sẽ gửi tới chat riêng VÀ group — chỉ bạn bấm duyệt được.'
+          : 'Đã lưu cấu hình Telegram', 'success', 6000);
         host.querySelector('#tg-token').value = '';
         host.querySelector('#tg-chat').value = '';
+        if (groupsEl) groupsEl.value = '';
         await loadTg();
       } catch (err) { toast(err.message, 'error'); }
       finally { tgSave.disabled = false; }

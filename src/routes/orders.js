@@ -607,7 +607,15 @@ function btoaSafe(s) {
 /* ---------------- Admin: quản lý đơn ---------------- */
 
 export async function adminListOrders(env, request) {
-  await requireAdmin(env, request);
+  const admin = await requireAdmin(env, request);
+  /*
+   * AUDIT #12: danh sách đơn trả email khách — PII. Staff giữ đủ các trường
+   * VẬN HÀNH (mã đơn, trạng thái, số tiền, ngày tạo, tên hiển thị) nhưng email
+   * bị che; admin thật vẫn thấy đầy đủ. Nhờ vậy một tài khoản hỗ trợ không tải
+   * được cả danh sách email khách hàng qua API này.
+   */
+  const { isStaffViewer, maskEmail } = await import('../lib/pii.js');
+  const staffView = isStaffViewer(admin);
   const url = new URL(request.url);
   const status = url.searchParams.get('status') || '';
   const q = (url.searchParams.get('q') || '').trim();
@@ -639,7 +647,7 @@ export async function adminListOrders(env, request) {
        */
       email: (typeof o.email === 'string' && o.email.endsWith('@invalid'))
         ? (o.username || null)
-        : o.email,
+        : (staffView ? maskEmail(o.email) : o.email),
       customer: o.full_name || o.username || null,
       status: o.status,
       total: o.total,

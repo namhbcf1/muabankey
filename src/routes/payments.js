@@ -49,7 +49,7 @@ export async function paymentCfg(env) {
 
                    'order_remind_minutes','payment_prefix',
 
-                   'order_qr_min','order_qr_max')`
+                   'order_qr_min','order_qr_max','sepay_allow_missing_account')`
 
   ).all();
 
@@ -71,6 +71,13 @@ export async function paymentCfg(env) {
     bankAccount: m.bank_account || '',
 
     bankOwner: m.bank_owner || '',
+
+    /*
+     * Audit #14: mặc định TẮT = payload thiếu `accountNumber` bị coi là SAI
+     * tài khoản (fail closed). Chỉ bật khi nhà cung cấp đổi cấu trúc payload
+     * và chủ shop chấp nhận rủi ro bỏ lớp kiểm tài khoản.
+     */
+    allowMissingAccount: String(m.sepay_allow_missing_account ?? '0') === '1',
 
     // Mã ngân hàng cho VietQR (MBBank -> 'MB')
 
@@ -419,7 +426,10 @@ export async function claimOrderPaid(env, request, orderId) {
 
  *   L1: payments.txn_ref UNIQUE (webhook replay)
 
- *   L2: claim orders.status 'pending'/'expired' -> 'processing' (changes === 1)
+ *   L2: claim orders.status 'pending'/'expired'/'cancelled' -> 'processing'
+ *       (WHERE ... AND status IN (...), changes === 1).
+ *       'processing' KHÔNG nằm trong tập này — xem chú thích dài ngay trên
+ *       câu UPDATE giành đơn (audit #1: giành lại 'processing' = giao 2 lần).
 
  *   L3: product_keys claim 'available' (trong deliverItems)
 
@@ -461,7 +471,7 @@ export async function confirmOrderPaid(env, opts = {}) {
 
     // Đã xác nhận tiền, đang chờ giao tay -> thử giao lại
 
-    return await deliverAndFinish(env, order, { amount, source, adminId, now });
+    return await deliverAndFinish(env, order, { amount, source, adminId, now, txnRef });
 
   }
 
@@ -604,7 +614,7 @@ export async function confirmOrderPaid(env, opts = {}) {
     try {
       const { notifyUnderpaid } = await import('../lib/telegram-pay.js');
       await notifyUnderpaid(env, order, {
-        paid: totalPaid, expected, missing: expected - totalPaid,
+        paid: totalPaid, expected, missing: expected - totalPaid, txnRef,
       });
     } catch { /* bỏ qua */ }
 
@@ -645,16 +655,57 @@ export async function confirmOrderPaid(env, opts = {}) {
    *     nên cron coi MỌI đơn 'processing' là kẹt quá 10 phút và reset về 'paid'
    *     ngay ở lần chạy kế tiếp — kể cả đơn vừa bắt đầu xử lý.
    */
+  /*
+   * ===== SỬA LỖI NGHIÊM TRỌNG (audit #1): 'processing' KHÔNG ĐƯỢC nằm
+   *       trong tập trạng thái cho phép GIÀNH đơn =====
+   *
+   * LỖI GỐC: tập cũ là ('pending','expired','processing','cancelled').
+   * 'processing' = ĐÃ GIÀNH được đơn và ĐANG giao. Vì nó vẫn nằm trong tập
+   * cho phép, hai request ĐỒNG THỜI (khác txn_ref nên L1 txn_ref UNIQUE
+   * không chặn được) đều nhận changes === 1:
+   *     • request A: pending -> processing, giao hàng
+   *     • request B: processing -> processing, changes === 1 -> GIAO HÀNG LẦN 2
+   * => khách nhận 2 license/2 key cho 1 lần trả tiền. Đây là đua THẬT, không
+   *    phải rủi ro lý thuyết: khách chuyển thiếu rồi chuyển bù (2 txn_ref
+   *    khác nhau cho cùng một đơn) hoặc admin bấm "Đã nhận tiền" đúng lúc
+   *    webhook đang xử lý đều tạo ra cặp đua này.
+   *
+   * NAY: chỉ ('pending','expired','cancelled') mới giành được đơn.
+   *   - 'processing' = đã có người giữ -> request thứ hai KHÔNG giao hàng.
+   *   - Đường hồi phục khi worker chết giữa chừng vẫn nguyên: cron
+   *     (src/index.js) đưa đơn 'processing' kẹt quá 10 phút về 'paid', rồi
+   *     admin bấm "Đã nhận tiền" -> đi nhánh order.status === 'paid' ở trên
+   *     (deliverAndFinish); nhánh đó KHÔNG dùng câu UPDATE này.
+   *   - Không caller nào khác phụ thuộc việc giành lại đơn 'processing':
+   *     orders.js (adminDeliverManual) giành bằng
+   *     `WHERE status IN ('paid','delivered')`, wallet.js tương tự — cả hai
+   *     độc lập với tập trạng thái ở đây.
+   *
+   * Đánh đổi có chủ ý: request thua cuộc vẫn GHI SỔ payment ở trên (tiền vào
+   * ngân hàng là thật, không được giấu), nhưng KHÔNG giao hàng lần hai.
+   */
   const claim = await env.DB.prepare(
     `UPDATE orders SET status = 'processing', paid_at = ?, confirmed_by = ?,
             processing_started_at = ?
-     WHERE id = ? AND status IN ('pending','expired','processing','cancelled')`
+     WHERE id = ? AND status IN ('pending','expired','cancelled')`
   ).bind(now * 1000, source === 'sepay' || source === 'payos' ? source : (adminId || 'admin'),
     now * 1000, order.id).run();
 
   if (!claim.meta || claim.meta.changes !== 1) {
-
-    return { ok: true, duplicated: true, reason: 'CLAIM_FAILED', order };
+    /*
+     * Thua cuộc giành đơn = đã có request khác đang giao (hoặc vừa giao xong).
+     * KHÔNG giao lần hai. Phân biệt rõ hai nguyên nhân để vận hành đọc log:
+     *   - 'processing' -> ORDER_IN_PROGRESS (đúng nghĩa đua, không phải lỗi)
+     *   - còn lại      -> CLAIM_FAILED (ai đó vừa chốt trạng thái khác)
+     */
+    const cur = await env.DB.prepare('SELECT status FROM orders WHERE id = ?')
+      .bind(order.id).first();
+    return {
+      ok: true, duplicated: true,
+      reason: cur?.status === 'processing' ? 'ORDER_IN_PROGRESS' : 'CLAIM_FAILED',
+      state: cur?.status || null,
+      order,
+    };
 
   }
 
@@ -665,6 +716,13 @@ export async function confirmOrderPaid(env, opts = {}) {
   return await deliverAndFinish(env, fresh, {
 
     amount: totalPaid, source, adminId, now,
+
+    /*
+     * txnRef chỉ được CHUYỂN TIẾP xuống lớp thông báo (Telegram) để chủ shop
+     * dò sao kê. Không dùng vào bất kỳ quyết định nào ở dưới → không đổi
+     * luồng giành đơn / giao hàng.
+     */
+    txnRef,
 
     excess: totalPaid > expected ? totalPaid - expected : 0,
 
@@ -678,7 +736,7 @@ export async function confirmOrderPaid(env, opts = {}) {
 
  */
 
-async function deliverAndFinish(env, order, { amount, source, adminId, now, excess }) {
+async function deliverAndFinish(env, order, { amount, source, adminId, now, excess, txnRef }) {
   const { deliverOrderItems } = await import('./orders.js');
 
   let result;
@@ -704,7 +762,7 @@ async function deliverAndFinish(env, order, { amount, source, adminId, now, exce
     try {
       const { notifyOutOfStock } = await import('../lib/telegram-pay.js');
       await notifyOutOfStock(env, order,
-        String(e?.message || e).slice(0, 150));
+        String(e?.message || e).slice(0, 150), { amount, txnRef });
     } catch { /* bỏ qua */ }
 
     return {
@@ -736,11 +794,17 @@ async function deliverAndFinish(env, order, { amount, source, adminId, now, exce
     .bind(order.id).first();
 
   // Thông báo Telegram (không chặn)
-
+  //
+  // Chỉ truyền ĐÚNG những gì tin nhắn cần: số tiền, đơn, mã GD ngân hàng và
+  // trạng thái giao. `source`/`adminId` đã bỏ khỏi tin — chúng là chi tiết
+  // máy móc, không giúp chủ shop đối soát.
   try {
     const { notifyPaymentSuccess } = await import('../lib/telegram-pay.js');
 
-    await notifyPaymentSuccess(env, fresh, { amount, source, adminId, excess });
+    await notifyPaymentSuccess(env, fresh, {
+      amount, excess, txnRef,
+      pendingManual: !!result.pendingManual,
+    });
 
   } catch { /* bỏ qua */ }
 
@@ -862,13 +926,34 @@ export async function sepayWebhook(env, request) {
   }
 
   // Đúng tài khoản nhận
+  //
+  /*
+   * ===== FAIL CLOSED KHI THIẾU accountNumber (audit #14) =====
+   *
+   * LỖI GỐC: `cfg.bankAccount && body.accountNumber && ...` — nếu payload
+   * KHÔNG có `accountNumber` thì phép kiểm bị BỎ QUA HOÀN TOÀN và giao dịch
+   * vẫn được coi là "đúng tài khoản". Nghĩa là ai gửi được một request webhook
+   * hợp lệ (hoặc SePay đổi cấu trúc payload) là bỏ qua được lớp kiểm tài khoản.
+   *
+   * NAY: thiếu `accountNumber` = KHÔNG chứng minh được tiền vào đúng tài khoản
+   * -> coi như SAI tài khoản (không giao hàng). Muốn nới, admin bật cấu hình
+   * `sepay_allow_missing_account=1` (dùng khi nhà cung cấp đổi payload).
+   *
+   * Tiền vào sai tài khoản KHÔNG bị mất dấu: webhook trả matched:false và
+   * SePay vẫn nhận 200 (không retry vô ích); admin đối soát tay bằng
+   * /api/admin/sepay/reconcile như đường cứu sẵn có.
+   */
+  if (cfg.bankAccount) {
+    const gotAcc = String(body.accountNumber ?? '').trim();
+    if (!gotAcc) {
+      if (!cfg.allowMissingAccount) {
+        return ok({ matched: false, reason: 'WRONG_ACCOUNT', detail: 'missing_accountNumber' });
+      }
+    } else if (gotAcc !== String(cfg.bankAccount)) {
 
-  if (cfg.bankAccount && body.accountNumber
+      return ok({ matched: false, reason: 'WRONG_ACCOUNT' });
 
-      && String(body.accountNumber) !== String(cfg.bankAccount)) {
-
-    return ok({ matched: false, reason: 'WRONG_ACCOUNT' });
-
+    }
   }
 
   const amount = Math.floor(Number(body.transferAmount) || 0);
@@ -928,7 +1013,12 @@ export async function sepayWebhook(env, request) {
     try {
       const { notifyUnmatchedPayment } = await import('../lib/telegram-pay.js');
 
-      await notifyUnmatchedPayment(env, { amount, content, txnRef, provider: 'sepay' });
+      /*
+       * `provider` không còn được truyền: tin nhắn không hiện tên kênh thanh
+       * toán nữa (chữ máy móc, không giúp đối soát). Chỉ giữ số tiền, nội
+       * dung CK và mã GD ngân hàng.
+       */
+      await notifyUnmatchedPayment(env, { amount, content, txnRef });
 
     } catch { /* bỏ qua */ }
 
@@ -999,9 +1089,18 @@ export async function sepayWebhook(env, request) {
     }
 
     if (!duplicated) {
+      /*
+       * Ngoài cửa sổ giờ: TIỀN ĐÃ VÀO THẬT (webhook ngân hàng báo), chỉ chờ
+       * admin duyệt. Trước đây chỗ này gọi notifyPaymentClaim với tên giả
+       * `{ username: 'SePay ngoai gio tu dong' }` → tin nhắn hiện
+       * "Khách: SePay ngoai gio tu dong" (chữ vô nghĩa, không dấu) và KHÔNG
+       * hiện số tiền thực nhận. Nay truyền số tiền + nội dung CK + mã GD thật.
+       */
       try {
         const { notifyPaymentClaim } = await import('../lib/telegram-pay.js');
-        await notifyPaymentClaim(env, order, { username: 'SePay ngoai gio tu dong' });
+        await notifyPaymentClaim(env, order, null, {
+          confirmed: true, amount, content, txnRef,
+        });
       } catch { /* bỏ qua */ }
     }
 

@@ -451,20 +451,41 @@ export async function telegramWebhook(env, request) {
      * thì TỪ CHỐI (fail-closed), không cho qua.
      */
     const cfg = await tgConfig(env).catch(() => ({ chatId: '' }));
-    const allowed = String(cfg.chatId || env.TG_CHAT_ID || '').trim();
     const fromId = String(cq.from?.id || '').trim();
 
-    if (!allowed) {
+    /*
+     * DANH SÁCH NGƯỜI ĐƯỢC BẤM NÚT.
+     *
+     * Gồm: chat riêng admin (TG_CHAT_ID / settings) + các id khai báo thêm
+     * trong TG_ADMIN_IDS (cách nhau dấu phẩy) — dùng khi có 2-3 người cùng
+     * quản trị.
+     *
+     * TUYỆT ĐỐI KHÔNG thêm group id vào đây. Group chỉ nhận thông báo;
+     * nếu thêm group id thì mọi thành viên group duyệt tiền được.
+     */
+    const adminIds = new Set();
+    const pushAdmin = (v) => {
+      for (const p of String(v || '').split(',')) {
+        const s = p.trim();
+        if (s) adminIds.add(s);
+      }
+    };
+    pushAdmin(cfg.chatId);
+    pushAdmin(env.TG_CHAT_ID);
+    pushAdmin(env.TG_ADMIN_IDS);
+
+    if (adminIds.size === 0) {
       // Chưa biết admin là ai -> không thể xác thực -> đóng cửa.
       await tgAnswerCallback(env, cq.id,
         'Bot chưa cấu hình TG_CHAT_ID nên không duyệt được. Liên hệ quản trị.', true)
         .catch(() => {});
       return ok({ denied: 'no_admin_chat_configured' });
     }
-    // CHỈ người bấm phải là admin. Trong nhóm, `from.id` là người bấm
-    // (khác chat id của nhóm) -> thành viên khác không qua được.
-    if (fromId !== allowed) {
-      await tgAnswerCallback(env, cq.id, 'Bạn không có quyền', true).catch(() => {});
+    // CHỈ so NGƯỜI BẤM. Không dùng chat chứa tin — đó là lỗi cũ.
+    if (!fromId || !adminIds.has(fromId)) {
+      await tgAnswerCallback(env, cq.id,
+        'Bạn không có quyền duyệt. Chỉ quản trị viên mới bấm được.', true)
+        .catch(() => {});
       return ok({ denied: 'not_admin' });
     }
 
@@ -708,15 +729,28 @@ export async function adminTelegramTest(env, request) {
 }
 
 export async function adminTelegramStatus(env, request) {
-  await requireAdmin(env, request);
+  const admin = await requireAdmin(env, request);
   const { tgConfig } = await import('../lib/telegram.js');
   const cfg = await tgConfig(env);
+  /*
+   * AUDIT #13: TIỀN TỐ BOT TOKEN CHỈ CHO ADMIN THẬT.
+   *
+   * Trước đây route này dùng requireAdmin (staff cũng qua) và trả 8 ký tự đầu
+   * của bot token. 8 ký tự đó là phần `bot_id` — cùng với chat_id (đã che) nó
+   * không đủ để điều khiển bot, nhưng vẫn là mảnh ghép của bí mật dùng để đọc
+   * kênh duyệt nạp tiền. Không có lý do gì để staff thấy; nay chỉ admin thấy.
+   */
+  const showTokenHint = admin.role === 'admin';
   return ok({
     configured: cfg.configured,
     source: cfg.source,
     webhookSecretSet: !!env.TG_WEBHOOK_SECRET,
-    botTokenHint: cfg.token ? cfg.token.slice(0, 8) + '…' : null,
+    botTokenHint: (showTokenHint && cfg.token) ? cfg.token.slice(0, 8) + '…' : null,
     chatId: cfg.chatId ? String(cfg.chatId).slice(0, 4) + '…' : null,
+    // Số chat nhận thông báo (chat riêng + group). Không lộ id đầy đủ.
+    notifyCount: cfg.notifyChats ? cfg.notifyChats.length : 0,
+    notifyGroups: cfg.notifyChats
+      ? cfg.notifyChats.filter((c) => c !== cfg.chatId).length : 0,
   });
 }
 
@@ -727,13 +761,15 @@ export async function adminTelegramConfig(env, request) {
   const body = await readJson(request);
   const token = String(body.botToken || '').trim();
   const chatId = String(body.chatId || '').trim();
+  const notifyExtra = String(body.notifyChatIds || '').trim();
 
   const now = Date.now();
   const stmts = [];
 
-  if (token === '' && chatId === '') {
+  if (token === '' && chatId === '' && notifyExtra === '') {
     await env.DB.prepare(
-      "DELETE FROM settings WHERE key IN ('telegram_bot_token','telegram_chat_id')"
+      `DELETE FROM settings WHERE key IN
+       ('telegram_bot_token','telegram_chat_id','telegram_notify_chat_ids')`
     ).run();
     await audit(env, admin.id, 'telegram.config_cleared', null, {});
     return ok({ cleared: true });
@@ -757,12 +793,36 @@ export async function adminTelegramConfig(env, request) {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
     ).bind(chatId, now));
   }
+  /*
+   * Group nhận thông báo. Cho phép nhiều id cách nhau dấu phẩy.
+   *
+   * CHỈ dùng để GỬI. Không bao giờ dùng để xác thực người bấm nút — nếu
+   * thêm group id vào danh sách admin thì mọi thành viên group duyệt tiền
+   * được (xem ghi chú ở tgConfig và cổng xác thực callback).
+   */
+  if (notifyExtra !== '') {
+    const parts = notifyExtra.split(',').map((s) => s.trim()).filter(Boolean);
+    for (const p of parts) {
+      if (!/^-?\d{5,20}$/.test(p)) {
+        throw new ApiError(400,
+          'Group ID không hợp lệ: ' + p + ' (phải là số, thường bắt đầu bằng -100)',
+          'VALIDATION');
+      }
+    }
+    stmts.push(env.DB.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('telegram_notify_chat_ids', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(parts.join(','), now));
+  }
 
   if (stmts.length) await env.DB.batch(stmts);
   await audit(env, admin.id, 'telegram.config_set', null, {
-    hasToken: !!token, hasChatId: !!chatId,
+    hasToken: !!token, hasChatId: !!chatId, notifyExtra: !!notifyExtra,
   });
-  return ok({ saved: true, hasToken: !!token, hasChatId: !!chatId });
+  return ok({
+    saved: true, hasToken: !!token, hasChatId: !!chatId,
+    notifyExtra: !!notifyExtra,
+  });
 }
 
 /**

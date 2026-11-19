@@ -30,6 +30,10 @@
  */
 import { json, ApiError } from '../lib/http.js';
 import { randomHex, timingSafeEqual } from '../lib/crypto.js';
+import {
+  SESSION_MOVED, MESSAGE_SESSION_MOVED,
+  guardAccountDevice, deviceScope, ownerUserId, touchPaidLicence,
+} from '../lib/account-device.js';
 
 /* ------------------------------------------------------------------ */
 /* Cấu hình                                                           */
@@ -86,8 +90,47 @@ const SPLIT_A_HEX =
 /** Số giây client nên gọi lại /api/xg/check. */
 const CHECK_AFTER = 120;
 
-/** Bắt buộc online. 0 = không có offline grace (chặt nhất). */
+/*
+ * ============ CHÍNH SÁCH GRACE: HAI SẢN PHẨM KHÁC NHAU ============
+ *
+ * XAGrant (file NÀY)          : GRACE_HOURS = 6 -> được chạy offline tối đa 6 giờ.
+ * No Fog  (license-server.js) : GRACE_HOURS = 0 -> bắt buộc online.
+ *
+ * ĐÂY LÀ QUYẾT ĐỊNH SẢN PHẨM, CHƯA ĐƯỢC CHỦ SHOP CHỐT LẦN CUỐI.
+ * Hai giá trị đang KHÁC NHAU CÓ CHỦ ĐÍCH và đã được xác nhận là khớp với
+ * client tương ứng; việc "làm cho giống nhau" phải chờ chủ shop xác nhận.
+ *
+ * Comment cũ ngay trên hằng số này ghi "0 = không có offline grace (chặt
+ * nhất)" trong khi giá trị thật là 6 — MÂU THUẪN, đã sửa lại thành đúng:
+ * 6 giờ LÀ có grace.
+ *
+ * Vì sao giữ 6 mà không hạ về 0 — client XAGrant THỰC SỰ cài cửa sổ này, đọc
+ * `g` trong token đã ký (tool/grant/xa_grant_sec.py:386-400):
+ *
+ *     grace_h = int(payload.get('g') or 0)
+ *     if issued > 0 and check_after > 0:
+ *         soft = issued + check_after
+ *         hard = soft + max(0, grace_h) * 3600
+ *         if t > hard:
+ *             expired_token = True
+ *         elif t > soft:
+ *             stale = True          # thử làm mới; thất bại vẫn cho chạy
+ *
+ * Server trả `g` = 6 nên hạn cứng của token là `c` (CHECK_AFTER = 120 giây)
+ * + 6 giờ. Hạ về 0 sẽ làm token chỉ sống 2 PHÚT — đúng lỗi đã vá ở
+ * issueSession() bên dưới. Đó là lý do KHÔNG thể đồng bộ mù sang No Fog.
+ *
+ * No Fog khác vì client No Fog hard-code bắt buộc online, không đọc `g`:
+ * tool/src/xa_nofog_pro.py:1246-1262 (`if REQUIRE_ONLINE: return 0`).
+ */
 const GRACE_HOURS = 6;
+
+/**
+ * Tiền tố sản phẩm của XAGrant trong bảng `products.license_prefix`.
+ * Dùng để tra KỲ HẠN ĐÃ CẤU HÌNH khi không chứng minh được kỳ hạn từ dữ liệu
+ * license (xem resolveTermDays trong ../lib/trial-quota.js).
+ */
+const PRODUCT_PREFIX = 'XAGR';
 
 /** Giới hạn số request sai / IP / giờ (chống dò key). */
 const RATE_LIMIT = 400;
@@ -348,6 +391,7 @@ const MESSAGES = {
   revoked: 'Mã đã bị thu hồi',
   expired: 'Mã đã hết hạn',
   hwid_mismatch: 'Mã đã dùng trên máy khác',
+  [SESSION_MOVED]: MESSAGE_SESSION_MOVED,
   reset: 'Mã đã bị reset, cần kích hoạt lại',
   rate_limit: 'Quá nhiều lần thử, thử lại sau',
   bad_request: 'Yêu cầu không hợp lệ',
@@ -368,6 +412,10 @@ function deny(code, status = 403, now = nowSec()) {
 /* Đánh giá license                                                   */
 /* ------------------------------------------------------------------ */
 
+function isTrialLicence(lic) {
+  return String((lic && lic.plan) || '').toLowerCase() === 'trial';
+}
+
 function judge(lic, hwid, now) {
   if (!lic) return { ok: false, code: 'not_found' };
   if (!isXagrant(lic)) return { ok: false, code: 'wrong_product' };
@@ -375,9 +423,89 @@ function judge(lic, hwid, now) {
   if (lic.expires_at && lic.expires_at > 0 && lic.expires_at < now) {
     return { ok: false, code: 'expired', expires_at: lic.expires_at };
   }
+
+  /*
+   * ==========================================================================
+   * ĐÃ TRẢ TIỀN -> KHÔNG KHOÁ THEO MÁY (giống license-server.js)
+   *
+   * Chủ shop: "mua rồi thì đổi máy nào cũng được... theo tài khoản". Nên bản
+   * trả phí của XAGrant cũng thôi `hwid_mismatch`. `licenses.hwid` chỉ còn là
+   * "máy dùng gần nhất".
+   *
+   * Luật "1 nick 1 máy" áp ở `paidLicencePipeline` bên dưới (bảng
+   * account_devices), áp cho MỌI đường cấp token.
+   * ==========================================================================
+   */
+  if (!isTrialLicence(lic)) {
+    if (!lic.hwid) return { ok: true, paid: true, firstBind: true };
+    return { ok: true, paid: true };
+  }
+
+  /* DƯỚI ĐÂY LÀ NGUYÊN VĂN CHÍNH SÁCH DÙNG THỬ — KHÔNG ĐỔI. */
   if (!lic.hwid) return { ok: true, firstBind: true };
-  if (lic.hwid !== hwid) return { ok: false, code: 'hwid_mismatch' };
+  if (lic.hwid !== hwid) {
+    // CUA SO DOI MAY: rebind_until dang mo -> coi nhu bind dau, de
+    // bindFirstTime kiem tra va dong cua so. Xem license-server.js.
+    const _winOpen = !!(lic.rebind_until && Number(lic.rebind_until) > now);
+    if (_winOpen) return { ok: true, firstBind: true };
+    return { ok: false, code: 'hwid_mismatch' };
+  }
   return { ok: true };
+}
+
+/**
+ * ĐƯỜNG ĐI CHUNG cho license XAGrant ĐÃ TRẢ TIỀN.
+ *
+ *   1. `guardAccountDevice()` — 1 tài khoản = 1 máy tại một thời điểm.
+ *      mode='activate' -> máy mới chiếm quyền (máy cũ bị đá ở check sau).
+ *      mode='check'    -> khác máy thì `session_moved`.
+ *   2. `touchPaidLicence()` — ghi "máy dùng gần nhất" vào `licenses.hwid`
+ *      (không chặn) + tính kỳ hạn nếu là lần kích hoạt đầu.
+ */
+async function paidLicencePipeline(env, lic, key, hwid, ip, now, mode,
+                                     request) {
+  const scope = deviceScope('xagrant');
+  const owner = await ownerUserId(env, key);
+
+  // Có phiên đăng nhập = khách chủ động -> cho chiếm máy ngay.
+  let guardMode = mode;
+  if (mode === 'check' && request) {
+    try {
+      const { getSessionUser } = await import('../lib/auth.js');
+      const u = await getSessionUser(env, request);
+      if (u && u.id === owner) guardMode = 'login';
+    } catch { /* an toàn: giữ 'check' */ }
+  }
+
+  const g = await guardAccountDevice(env, {
+    userId: owner, scope, hwid, key, ip, mode: guardMode, now,
+  });
+
+  if (!g.ok) {
+    await logEvent(env, key, hwid, null, 'deny', 'account device: ' + g.code, ip);
+    return {
+      ok: false,
+      code: g.code,
+      msg: g.msg || MESSAGES[g.code] || g.code,
+      active_since: g.active_since || 0,
+    };
+  }
+  if (g.moved) {
+    await logEvent(env, key, hwid, null, 'device_move',
+      'account moved: ' + String(g.previous_hwid || '').slice(0, 12) + '… -> này', ip);
+  }
+
+  const t = await touchPaidLicence(env, lic, {
+    key, hwid, ip, now, prefix: PRODUCT_PREFIX,
+  });
+
+  await logEvent(env, key, hwid, null, mode === 'activate' ? 'activate_paid' : 'check_paid',
+    t.first
+      ? 'paid first activation, ' + (t.forever ? 'forever' : t.days + 'd')
+        + ' [' + t.source + ']'
+      : 'paid, account-bound (no hwid lock)', ip);
+
+  return { ok: true, first: !!t.first, moved: !!g.moved, enforced: !!g.enforced };
 }
 
 /** Tạo phiên mới + token. Xoá phiên cũ của cùng key+hwid (chỉ 1 máy chạy). */
@@ -470,11 +598,67 @@ export async function xgActivate(env, request) {
     return deny(v.code, 403, now);
   }
 
+  /*
+   * ===== ĐÃ TRẢ TIỀN: KHÔNG BIND MÁY, GIỮ "1 NICK 1 MÁY" =====
+   *
+   * Bỏ hẳn nhánh mã đổi máy / rebind_until / rebind_tokens cho đường này.
+   * Máy mới `activate` là chiếm quyền; máy cũ chết ở lần /api/xg/check sau.
+   */
+  if (v.paid) {
+    const pr = await paidLicencePipeline(env, lic, key, hwid, ip, now, 'activate');
+    if (!pr.ok) {
+      await logAttempt(env, ip, false);
+      return json({
+        ok: false, code: pr.code, msg: pr.msg, now,
+        active_since: pr.active_since || 0,
+      }, 403);
+    }
+
+    const s = await issueSession(env, lic, key, hwid, ip, b.fp,
+      request.headers.get('user-agent'));
+
+    await logAttempt(env, ip, true);
+    await logEvent(env, key, hwid, s.sid, 'activate_ok', 'v=' + (b.ver || '?'), ip);
+
+    return json({
+      ok: true,
+      now,
+      code: 'ok',
+      key,
+      hwid,
+      plan: lic.plan || PID,
+      binding: 'account',
+      first_bind: !!pr.first,
+      device_moved: !!pr.moved,
+      expires_at: lic.expires_at || 0,
+      activated_at: lic.activated_at || now,
+      grace_h: s.payload.g,
+      mode: 'cmd',
+      check_after: CHECK_AFTER,
+      token: s.token,
+      sid: s.sid,
+      ssec: s.ssec,
+    });
+  }
+
   if (v.firstBind) {
     // Đã từng kích hoạt (activated_at != null) hoặc admin vừa reset
     // => đây là ĐỔI MÁY, bắt buộc có rebind token.
-    const needToken = !!lic.activated_at || !!lic.reset_pending;
-    if (needToken) {
+    // CỬA SỔ ĐỔI MÁY: xem license-server.js — cùng cơ chế, chỉ cần KEY.
+    const windowOpen = !!(lic.rebind_until && Number(lic.rebind_until) > now);
+    const needToken = (!!lic.activated_at || !!lic.reset_pending) && !windowOpen;
+
+    if (windowOpen && lic.activated_at) {
+      await env.DB.prepare(
+        `UPDATE licenses SET hwid = ?, last_seen = ?, last_ip = ?,
+                rebind_until = NULL,
+                rebinds = COALESCE(rebinds, 0) + 1
+         WHERE key = ?`
+      ).bind(hwid, now, ip, key).run();
+      lic.hwid = hwid;
+      lic.rebind_until = null;
+      await logEvent(env, key, hwid, null, 'rebind', 'hwid changed (key window)', ip);
+    } else if (needToken) {
       const tok = String(b.token || '').trim();
       if (!tok) {
         await logEvent(env, key, hwid, null, 'deny', 'rebind needs token', ip);
@@ -503,10 +687,114 @@ export async function xgActivate(env, request) {
       await logEvent(env, key, hwid, null, 'rebind', 'hwid changed (token)', ip);
     } else {
       // Kích hoạt LẦN ĐẦU: hạn tính từ bây giờ.
-      const days = lic.expires_at > 0
-        ? Math.max(1, Math.round((lic.expires_at - lic.created_at) / 86400))
-        : 0;
-      const exp = days === 0 ? 0 : now + days * 86400;
+      //
+      // LỖI ĐÃ SỬA (P1): bản cũ là
+      //   const days = lic.expires_at > 0
+      //     ? Math.max(1, Math.round((lic.expires_at - lic.created_at) / 86400))
+      //     : 0;
+      // `created_at` lưu bằng MILI-GIÂY còn `expires_at` bằng GIÂY -> hiệu
+      // ≈ -1.79e12 -> Math.max(1, …) KẸP THÀNH 1 -> key 6 tháng thành 1 NGÀY,
+      // không lỗi, không log. Nay dùng helper chuẩn hoá đơn vị và lùi về kỳ
+      // hạn đã cấu hình thay vì kẹp về 1.
+      /*
+       * ------------------------------------------------------------------
+       * KEY DÙNG THỬ: GIỮ NGUYÊN HẠN ĐÃ CẤP, KHÔNG TÍNH LẠI.
+       *
+       * LỖI ĐÃ SỬA: khối dưới đây chạy cho MỌI license, kể cả
+       * `plan === 'trial'`. Nó gọi `resolveTermDays()` — hàm này trả KỲ
+       * HẠN SẢN PHẨM (7 ngày cho XAGR) — rồi GHI ĐÈ `expires_at`.
+       *
+       * Hậu quả đo được trong DB:
+       *     TR-G2HP-AYQQ-NQPH  1 giờ  ->  còn 167 giờ
+       *     TR-62J5-ZLAL-FVUP  1 giờ  ->  còn 166 giờ
+       * Tức dùng thử 1 giờ thành 7 NGÀY miễn phí.
+       *
+       * Nay: trial giữ đúng hạn phát mã (1h/3d); chỉ license TRẢ PHÍ mới
+       * được tính lại kỳ hạn.
+       * ------------------------------------------------------------------
+       */
+      const isTrial = String(lic.plan || '').toLowerCase() === 'trial';
+      let days = 0;
+      let exp = 0;
+      let termSource = 'trial-keep';
+
+      if (isTrial) {
+        /*
+         * ------------------------------------------------------------------
+         * THỜI LƯỢNG DÙNG THỬ NẰM Ở `trial_uses.kind`, KHÔNG Ở `expires_at`.
+         *
+         * LỖI ĐÃ SỬA (lần 2): `expires_at` lúc phát mã là HẠN GIỮ MÃ
+         * (`trial_hold_sec` = 7 ngày) để khách kịp tải và kích hoạt —
+         * KHÔNG phải thời lượng dùng thử. Giữ nguyên nó nghĩa là dùng thử
+         * 1 giờ vẫn được 7 ngày.
+         *
+         * Nay đọc `trial_uses` để biết gói (1h / 3d) và tính hạn thật.
+         * ------------------------------------------------------------------
+         */
+        const DURATION = { '1h': 3600, '3d': 259200 };
+        let kind = '1h';
+        let startedAt = 0;
+        try {
+          const tu = await env.DB.prepare(
+            'SELECT kind, started_at, ended_at FROM trial_uses '
+            + 'WHERE lic_key = ? ORDER BY created_at DESC LIMIT 1'
+          ).bind(key).first();
+          if (tu) {
+            if (tu.ended_at) {
+              return deny('trial_expired', 403, now);
+            }
+            if (tu.kind && DURATION[tu.kind]) kind = tu.kind;
+            startedAt = Number(tu.started_at || 0);
+          }
+        } catch {
+          // Không đọc được -> dùng mặc định 1 giờ (an toàn cho chủ shop)
+        }
+
+        const span = DURATION[kind] || 3600;
+        // Bắt đầu tính từ lần kích hoạt ĐẦU TIÊN; nếu đã có thì giữ.
+        const start = startedAt > 0 ? startedAt : now;
+        exp = start + span;
+        if (!(exp > now)) {
+          return deny('trial_expired', 403, now);
+        }
+        termSource = 'trial-' + kind;
+
+        // Ghi mốc bắt đầu để lần sau không reset đồng hồ
+        if (!(startedAt > 0)) {
+          try {
+            /*
+             * ------------------------------------------------------------
+             * PHẢI GHI CẢ `expires_at` — KHÔNG CHỈ `started_at`.
+             *
+             * LỖI ĐÃ SỬA: trước đây chỉ ghi `started_at` + `hwid`, nên
+             * `trial_uses.expires_at` vẫn là HẠN GIỮ MÃ (7 ngày) từ lúc
+             * phát. Các nơi khác (`entitlement.js`, `install-info.js`)
+             * đọc đúng cột này để hiện hạn → khách thấy "Còn 7 ngày"
+             * nhưng bị từ chối sau 60 phút. Đo trên 6/6 key tài nguyên.
+             * ------------------------------------------------------------
+             */
+            await env.DB.prepare(
+              'UPDATE trial_uses SET started_at = ?, hwid = ?, '
+              + 'expires_at = ? '
+              + 'WHERE lic_key = ? AND started_at IS NULL'
+            ).bind(now, hwid, exp, key).run();
+          } catch {
+            // Không ghi được cũng không sao: hạn đã tính đúng
+          }
+        }
+      } else {
+        const { resolveTermDays } = await import('../lib/trial-quota.js');
+        const term = await resolveTermDays(env, {
+          createdAt: lic.created_at,
+          expiresAt: lic.expires_at,
+          prefix: PRODUCT_PREFIX,
+          key,
+          now,
+        });
+        days = term.forever ? 0 : term.days;
+        exp = term.forever ? 0 : now + days * 86400;
+        termSource = String(term.source || '');
+      }
       await env.DB.prepare(
         `UPDATE licenses SET hwid = ?, activated_at = ?, expires_at = ?,
                 last_seen = ?, last_ip = ? WHERE key = ?`
@@ -515,7 +803,10 @@ export async function xgActivate(env, request) {
       lic.activated_at = now;
       lic.hwid = hwid;
       await logEvent(env, key, hwid, null, 'activate',
-        'first bind, ' + (days === 0 ? 'forever' : days + 'd'), ip);
+        'first bind, '
+          + (isTrial ? ('trial until ' + exp)
+             : (days === 0 ? 'forever' : days + 'd'))
+          + ' [' + termSource + ']', ip);
     }
   }
 
@@ -577,6 +868,28 @@ export async function xgCheck(env, request) {
     return deny('session_invalid', 403, now);
   }
 
+  /*
+   * ===== ĐÃ TRẢ TIỀN: CHỈ CÒN LUẬT "1 NICK 1 MÁY" =====
+   *
+   * judge() đã thôi so HWID, nên đây là chốt duy nhất chặn cảnh một tài khoản
+   * chạy tài nguyên trên nhiều máy. Máy đang giữ quyền khác máy này ->
+   * `session_moved` (client hiện "Tài khoản đang dùng ở máy khác").
+   */
+  let deviceMoved = false;
+  if (v.paid) {
+    const pr = await paidLicencePipeline(env, lic, key, hwid, ip, now, 'check',
+                                   request);
+    if (!pr.ok) {
+      await logAttempt(env, ip, false);
+      await logEvent(env, key, hwid, sid, 'deny', 'check:' + pr.code, ip);
+      return json({
+        ok: false, code: pr.code, msg: pr.msg, now,
+        active_since: pr.active_since || 0,
+      }, 403);
+    }
+    deviceMoved = !!pr.moved;
+  }
+
   // Xác thực phiên nếu client có gửi (cho phép khôi phục khi mất sid).
   if (sid) {
     const row = await env.DB.prepare(
@@ -601,6 +914,9 @@ export async function xgCheck(env, request) {
     key,
     hwid,
     plan: lic.plan || PID,
+    // ĐÃ TRẢ TIỀN: `binding: 'account'` = license đi theo tài khoản, không
+    // khoá máy; máy khác vẫn dùng được nếu đây là máy đang chiếm quyền.
+    ...(v.paid ? { binding: 'account', device_moved: deviceMoved } : {}),
     expires_at: lic.expires_at || 0,
     activated_at: lic.activated_at || now,
     grace_h: s.payload.g,
@@ -635,6 +951,24 @@ export async function xgHeartbeat(env, request) {
   const lic = await getLicense(env, key);
   const v = judge(lic, hwid, now);
   if (!v.ok) return deny(v.code, 403, now);
+
+  /*
+   * Nhịp tim cũng phải theo luật "1 nick 1 máy": nếu tài khoản đã bị máy khác
+   * chiếm quyền thì máy này phải DỪNG ngay ở nhịp kế tiếp, không đợi tới lượt
+   * /api/xg/check (nhịp tim dày hơn check nên đá nhanh hơn).
+   * mode='check' -> KHÔNG chiếm quyền.
+   */
+  if (v.paid) {
+    const owner = await ownerUserId(env, key);
+    const g = await guardAccountDevice(env, {
+      userId: owner, scope: deviceScope('xagrant'), hwid, key, ip,
+      mode: 'check', now,
+    });
+    if (!g.ok) {
+      await logEvent(env, key, hwid, sid, 'deny', 'heartbeat:' + g.code, ip);
+      return deny(g.code, 403, now);
+    }
+  }
 
   const row = await env.DB.prepare(
     'SELECT secret_hash FROM xg_session WHERE sid = ? AND key = ? AND revoked = 0 AND hwid = ? LIMIT 1'
@@ -779,6 +1113,35 @@ export async function xgRebind(env, request) {
     if (!row) return json({ ok: false, code: 'unauthorized', msg: 'Mã đổi máy không hợp lệ' }, 401);
     await env.DB.prepare('UPDATE rebind_tokens SET used = 1 WHERE key = ? AND token_hash = ?')
       .bind(key, th).run();
+  }
+
+  /*
+   * ==========================================================================
+   * BẢN ĐÃ TRẢ TIỀN: /api/xg/rebind THÀNH NO-OP (vẫn 200, KHÔNG 404)
+   *
+   * Giống license-server.js: giữ endpoint để client cũ (`--rebind`) không nhận
+   * 404, nhưng không còn tác dụng. Đổi máy giờ là `activate` ở máy mới.
+   * Kiểm tra quyền sở hữu ở trên vẫn giữ, để no-op không thành đường dò key.
+   * ==========================================================================
+   */
+  const licRebind = await getLicense(env, key);
+  if (licRebind && isXagrant(licRebind) && !isTrialLicence(licRebind)) {
+    const nowR = nowSec();
+    await env.DB.prepare(
+      'UPDATE licenses SET hwid = ?, last_seen = ?, last_ip = ? WHERE key = ?'
+    ).bind(hwid, nowR, ip, key).run();
+    await logEvent(env, key, hwid, null, 'rebind_noop',
+      'paid licence: account-bound, rebind not needed', ip);
+    return json({
+      ok: true,
+      now: nowR,
+      binding: 'account',
+      rebinds_left: null,
+      rebind_needed: false,
+      expires_at: licRebind.expires_at,
+      msg: 'License của bạn đi theo tài khoản — không cần đổi máy. '
+        + 'Chỉ cần kích hoạt lại trên máy mới.',
+    });
   }
 
   const now = nowSec();

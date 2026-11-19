@@ -114,35 +114,129 @@ export function toast(message, type = 'info', ms = 3600) {
 }
 
 /* ---------- Modal ---------- */
-export function openModal(html, { onMount } = {}) {
+/** Thứ tự đặt id cho tiêu đề modal (aria-labelledby cần một id thật). */
+let modalSeq = 0;
+/** Các modal đang mở, để đóng ĐÚNG CÁCH (gỡ listener + trả focus). */
+const openModals = new Set();
+/** Ngăn xếp overlay: modal mở sau cùng nhận focus. */
+const modalStack = [];
+
+const FOCUSABLE = [
+  'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+  'select:not([disabled])', 'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+/** Phần tử có thể nhận focus và đang thật sự nhìn thấy. */
+function focusables(root) {
+  return [...root.querySelectorAll(FOCUSABLE)]
+    .filter((el) => !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true'
+      && el.offsetWidth + el.offsetHeight + el.getBoundingClientRect().height > 0);
+}
+
+/**
+ * Đóng MỌI modal đang mở bằng chính hàm close() của chúng.
+ *
+ * Dùng thay cho `document.querySelectorAll('.modal-overlay').forEach(el => el.remove())`:
+ * xoá node trực tiếp bỏ sót listener Escape trên document (rò rỉ) và không trả
+ * focus về nơi đã mở modal.
+ */
+export function closeAllModals() {
+  for (const close of [...openModals]) {
+    try { close(); } catch { /* ignore */ }
+  }
+}
+
+export function openModal(html, { onMount, labelledBy = null } = {}) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
   overlay.innerHTML = `<div class="modal">${html}</div>`;
   document.body.appendChild(overlay);
+
+  const dialog = overlay.querySelector('.modal') || overlay;
+
+  /*
+   * aria-labelledby — TRƯỚC ĐÂY THIẾU.
+   *
+   * role="dialog" mà không có tên thì trình đọc màn hình chỉ đọc "hộp thoại",
+   * khách không biết mình đang ở đâu. Lấy id của .modal-title; nếu tiêu đề
+   * chưa có id thì sinh một cái (không sửa nội dung hiển thị).
+   */
+  let labelId = typeof labelledBy === 'string' && labelledBy ? labelledBy : '';
+  if (!labelId) {
+    const titleEl = dialog.querySelector('.modal-title, h1, h2');
+    if (titleEl) {
+      if (!titleEl.id) {
+        modalSeq += 1;
+        titleEl.id = `modal-title-${modalSeq}`;
+      }
+      labelId = titleEl.id;
+    }
+  }
+  if (labelId) overlay.setAttribute('aria-labelledby', labelId);
+  else overlay.setAttribute('aria-label', 'Hộp thoại');
+
   const prevFocus = document.activeElement;
   requestAnimationFrame(() => overlay.classList.add('open'));
+  modalStack.push(overlay);
 
+  // Khoá Tab trong modal: Tab ở phần tử cuối quay về đầu, Shift+Tab ngược lại.
+  const trapTab = (e) => {
+    if (e.key !== 'Tab') return;
+    const items = focusables(dialog);
+    if (!items.length) { e.preventDefault(); return; }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey) {
+      if (active === first || !dialog.contains(active)) { e.preventDefault(); last.focus(); }
+    } else if (active === last || !dialog.contains(active)) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+  overlay.addEventListener('keydown', trapTab);
+
+  // Nếu focus thoát ra ngoài bằng đường khác (click trang nền, JS focus) thì kéo về.
+  const keepFocusInside = (e) => {
+    if (modalStack[modalStack.length - 1] !== overlay) return;
+    if (overlay.contains(e.target)) return;
+    const first = focusables(dialog)[0];
+    if (first) first.focus();
+  };
+  document.addEventListener('focusin', keepFocusInside);
+
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
+    openModals.delete(close);
+    const at = modalStack.lastIndexOf(overlay);
+    if (at >= 0) modalStack.splice(at, 1);
+    // GỠ listener TRƯỚC khi trả focus, nếu không sẽ bị kéo focus trở lại.
+    document.removeEventListener('keydown', escHandler);
+    document.removeEventListener('focusin', keepFocusInside);
+    overlay.removeEventListener('keydown', trapTab);
     overlay.classList.remove('open');
     setTimeout(() => overlay.remove(), 260);
-    document.removeEventListener('keydown', escHandler);
     // Trả focus về nơi mở modal — bắt buộc cho người dùng bàn phím.
-    if (prevFocus && typeof prevFocus.focus === 'function') prevFocus.focus();
+    if (prevFocus && typeof prevFocus.focus === 'function' && document.contains(prevFocus)) {
+      prevFocus.focus();
+    }
   };
+  openModals.add(close);
+
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   const escHandler = (e) => {
-    if (e.key === 'Escape') {
-      close();
-      document.removeEventListener('keydown', escHandler);
-    }
+    if (e.key === 'Escape' && modalStack[modalStack.length - 1] === overlay) close();
   };
   document.addEventListener('keydown', escHandler);
   if (onMount) onMount(overlay, close);
   // Đưa focus vào phần tử đầu tiên có thể tương tác
   requestAnimationFrame(() => {
-    const first = overlay.querySelector('button, [href], input, select, textarea');
+    const first = focusables(dialog)[0];
     if (first) first.focus();
   });
   return { el: overlay, close };

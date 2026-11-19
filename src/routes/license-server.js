@@ -40,24 +40,66 @@
  * thể nhúng MỘT blob tĩnh phục vụ mọi key.
  */
 import { json, ApiError } from '../lib/http.js';
+import {
+  SESSION_MOVED, MESSAGE_SESSION_MOVED,
+  guardAccountDevice, deviceScope, ownerUserId, touchPaidLicence,
+} from '../lib/account-device.js';
 
 const MESSAGES = {
   not_found: 'Mã không tồn tại',
   revoked: 'Mã đã bị thu hồi',
   expired: 'Mã đã hết hạn',
   hwid_mismatch: 'Mã đã dùng trên máy khác',
+  [SESSION_MOVED]: MESSAGE_SESSION_MOVED,
   reset: 'Mã đã bị reset, cần kích hoạt lại',
   rate_limit: 'Quá nhiều lần thử, thử lại sau',
   trial_expired: 'Đã hết hạn dùng thử',
   trial_only: 'Đây là mã dùng thử',
+  wrong_product: 'Mã này thuộc sản phẩm khác',
   rebind_token_required: 'Cần mã đổi máy — lấy trên web tại mục License của tôi',
   invalid_token: 'Mã đổi máy không đúng',
   token_used: 'Mã đổi máy đã được dùng',
   token_expired: 'Mã đổi máy đã hết hạn',
 };
 
-// Bắt buộc online: không có offline grace cho bất kỳ key nào.
+/*
+ * ============ CHÍNH SÁCH GRACE: HAI SẢN PHẨM KHÁC NHAU ============
+ *
+ * No Fog  (file NÀY)          : GRACE_HOURS = 0 -> bắt buộc online.
+ * XAGrant (xa-grant-server.js) : GRACE_HOURS = 6 -> có cửa sổ offline 6 giờ.
+ *
+ * ĐÂY LÀ QUYẾT ĐỊNH SẢN PHẨM, CHƯA ĐƯỢC CHỦ SHOP CHỐT LẦN CUỐI.
+ * Hai giá trị đang KHÁC NHAU CÓ CHỦ ĐÍCH và đã được xác nhận là khớp với
+ * client tương ứng; việc "làm cho giống nhau" phải chờ chủ shop xác nhận.
+ *
+ * Vì sao 0 ở đây là ĐÚNG với client No Fog hiện tại — client KHÔNG đọc giá
+ * trị grace server trả về, nó hard-code bắt buộc online:
+ *
+ *   tool/src/xa_config.py:127
+ *       REQUIRE_ONLINE = True
+ *   tool/src/xa_nofog_pro.py:1246-1249
+ *       # Bắt buộc online: không có offline grace cho BẤT KỲ key nào.
+ *       if REQUIRE_ONLINE:
+ *           return 0
+ *   tool/src/xa_nofog_pro.py:1262
+ *       return st.get('grace_hours', 0) * 3600 - elapsed   # 0 = bat buoc online
+ *
+ * => Nếu server trả 6 giờ cho No Fog thì cũng KHÔNG nới được gì: _grace_left()
+ *    trả 0 ngay ở nhánh REQUIRE_ONLINE, trước khi đọc grace_hours. Muốn nới
+ *    phải sửa client + phát hành bản mới, không phải sửa một dòng ở server.
+ *
+ * Ngược lại XAGrant 6 giờ là cửa sổ THẬT vì client XAGrant đọc `g` trong token
+ * đã ký và cho chạy tới n + c + g*3600 (tool/grant/xa_grant_sec.py:386-400).
+ */
 const GRACE_HOURS = 0;
+
+/**
+ * Tiền tố sản phẩm của No Fog trong bảng `products.license_prefix`.
+ * Dùng để tra KỲ HẠN ĐÃ CẤU HÌNH khi không chứng minh được kỳ hạn từ dữ liệu
+ * license (xem resolveTermDays trong ../lib/trial-quota.js).
+ */
+const PRODUCT_PREFIX = 'AOE1';
+
 // Giới hạn số lần THẤT BẠI / IP / giờ.
 // Trước đây 30 -> quán net 30 máy hoặc khách thử vài lần là bị chặn oan.
 // Nay 500: vẫn chặn được brute-force key nhưng không ảnh hưởng NAT chung.
@@ -404,14 +446,108 @@ async function getLicense(env, key) {
   return await env.DB.prepare('SELECT * FROM licenses WHERE key = ?').bind(key).first();
 }
 
-function judge(lic, hwid, now) {
+/**
+ * License này là BẢN DÙNG THỬ? (`plan = 'trial'`)
+ *
+ * ĐÂY LÀ ĐƯỜNG PHÂN CHIA DUY NHẤT giữa hai chính sách:
+ *   trial  -> khoá theo MÁY   (hwid_mismatch, cửa sổ đổi máy)
+ *   đã mua -> khoá theo TÀI KHOẢN (không xét máy; xem account-device.js)
+ */
+export function isTrialLicence(lic) {
+  /*
+   * ---------------------------------------------------------------------
+   * KEY NÀO KHOÁ THEO MÁY?
+   *
+   * 1. Dùng thử (plan='trial')  -> LUÔN khoá máy.
+   * 2. Key có cờ bind_hwid = 1  -> khoá máy. Đây là key KHÔNG có chủ tài
+   *    khoản (admin tạo tay / bán lẻ). Nếu không khoá máy thì key đó không
+   *    bị ràng buộc bởi gì cả — ai có key cũng dùng, chia sẻ vô hạn.
+   * 3. Key mua qua đơn hàng (bind_hwid = 0/NULL) -> theo TÀI KHOẢN.
+   *
+   * Dữ liệu cũ (NULL) giữ nguyên hành vi trước đây để không khoá oan
+   * khách đã mua.
+   * ---------------------------------------------------------------------
+   */
+  if (!lic) return false;
+  if (String(lic.plan || '').toLowerCase() === 'trial') return true;
+  const b = lic.bind_hwid;
+  return b === 1 || b === '1' || b === true;
+}
+
+function judge(lic, hwid, now, hwid2) {
   if (!lic) return { ok: false, code: 'not_found' };
   if (lic.revoked) return { ok: false, code: 'revoked' };
   if (lic.expires_at && lic.expires_at > 0 && lic.expires_at < now) {
     return { ok: false, code: 'expired', expires_at: lic.expires_at };
   }
+
+  /*
+   * ==========================================================================
+   * ĐÃ TRẢ TIỀN -> KHÔNG KHOÁ THEO MÁY NỮA
+   *
+   * YÊU CẦU CHỦ SHOP: "mua rồi thì đổi máy nào cũng được... không theo gì nữa
+   * mà theo tài khoản".
+   *
+   * Trước đây: `lic.hwid` là máy ĐƯỢC PHÉP dùng; khác -> `hwid_mismatch`
+   * (trừ khi `rebind_until` đang mở). Hệ quả: khách đổi máy / cài lại Windows
+   * (GUID đổi) là chết, phải chờ admin reset.
+   *
+   * Nay: mọi license KHÔNG phải trial đều đi qua đây với `paid: true`.
+   * `licenses.hwid` giữ nguyên trong CSDL nhưng chỉ còn nghĩa "máy dùng GẦN
+   * NHẤT" — ghi để hiển thị/chẩn đoán, KHÔNG so sánh để chặn.
+   *
+   * Việc "một tài khoản không được chạy nhiều máy cùng lúc" KHÔNG biến mất —
+   * nó chuyển sang `guardAccountDevice()` (bảng account_devices), áp cho MỌI
+   * đường cấp token, kể cả bản trả phí.
+   * ==========================================================================
+   */
+  if (!isTrialLicence(lic)) {
+    // `firstBind` giữ ĐÚNG nghĩa cũ: license chưa từng gắn máy nào.
+    // Nhưng với bản trả phí nó KHÔNG còn bắt mã đổi máy — bindFirstTime không
+    // được gọi cho đường này nữa (xem touchPaidLicence).
+    if (!lic.hwid) return { ok: true, paid: true, firstBind: true };
+    return { ok: true, paid: true };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* DƯỚI ĐÂY LÀ NGUYÊN VĂN CHÍNH SÁCH CỦA BẢN DÙNG THỬ — KHÔNG ĐỔI.    */
+  /* ------------------------------------------------------------------ */
   if (!lic.hwid) return { ok: true, firstBind: true };
-  if (lic.hwid !== hwid) return { ok: false, code: 'hwid_mismatch' };
+  /*
+   * ------------------------------------------------------------------
+   * CHẤP NHẬN NHIỀU CÔNG THỨC HWID — KHÔNG KHOÁ OAN KHÁCH THẬT.
+   *
+   * LỖI ĐÃ SỬA: `lic.hwid` được bind bằng một trong 6 công thức HWID có
+   * trong mã nguồn (có/không tiền tố, serial mainboard vs BIOS, ...).
+   * Trước đây chỉ so MỘT giá trị nên license bind bằng công thức cũ bị
+   * `hwid_mismatch` vĩnh viễn dù vẫn đúng máy đó — đo được trên
+   * production: AOE1-CLAF-QDAE-AHKJ bị từ chối ngay hôm nay.
+   *
+   * Nay: máy có thể gửi tới 2 hash (mỗi module tính một kiểu); khớp MỘT
+   * trong số đó là qua.
+   * ------------------------------------------------------------------
+   */
+  const want = String(lic.hwid || '').trim().toLowerCase();
+  const cands = [hwid, hwid2]
+    .map((x) => String(x || '').trim().toLowerCase())
+    .filter(Boolean);
+  const matched = cands.some((c) => c === want);
+
+  if (!matched) {
+    /*
+     * CỬA SỔ ĐỔI MÁY — KHÔNG CẦN MÃ HEX.
+     *
+     * LỖI ĐÃ SỬA: trước đây hàm này chặn `hwid_mismatch` NGAY, nên dù khách
+     * đã bấm "Đổi máy" trên web (rebind_until đang mở) thì máy mới vẫn bị
+     * từ chối — cửa sổ không bao giờ được xét tới.
+     *
+     * Nay: nếu rebind_until > now thì coi như lần bind đầu -> đi tiếp vào
+     * bindFirstTime, nơi cửa sổ được kiểm và đóng lại.
+     */
+    const windowOpen = !!(lic.rebind_until && Number(lic.rebind_until) > now);
+    if (windowOpen) return { ok: true, firstBind: true };
+    return { ok: false, code: 'hwid_mismatch' };
+  }
   return { ok: true };
 }
 
@@ -476,7 +612,38 @@ function ipOf(request) {
 async function bindFirstTime(env, lic, key, hwid, ip, now, token) {
   // reset_pending=1: admin vừa reset -> BẮT BUỘC có token.
   // activated_at != null: key đã từng dùng -> cũng cần token (đổi máy).
-  const needToken = !!lic.activated_at || !!lic.reset_pending;
+  /*
+   * CỬA SỔ ĐỔI MÁY — KHÔNG CẦN MÃ HEX.
+   *
+   * Khách bấm "Đổi máy" trên web (đã đăng nhập) -> route rebind đặt
+   * `licenses.rebind_until = now + 30 phút`. Trong cửa sổ đó máy mới chỉ
+   * cần dán KEY là kích hoạt được.
+   *
+   * Bảo mật tương đương mã dùng-1-lần cũ: chỉ chủ tài khoản (đã đăng nhập)
+   * mới mở được cửa sổ. Cửa sổ tự đóng sau 30 phút HOẶC ngay khi máy mới
+   * kích hoạt xong (rebind_until = NULL), nên không dùng lại được.
+   */
+  const windowOpen = !!(lic.rebind_until && Number(lic.rebind_until) > now);
+  const needToken = (!!lic.activated_at || !!lic.reset_pending) && !windowOpen;
+
+  if (windowOpen && lic.activated_at) {
+    await env.DB.prepare(
+      `UPDATE licenses SET hwid = ?, last_seen = ?, last_ip = ?,
+              rebind_until = NULL,
+              rebinds = COALESCE(rebinds, 0) + 1
+       WHERE key = ?`
+    ).bind(hwid, now, ip, key).run();
+
+    lic.hwid = hwid;
+    lic.rebind_until = null;
+    await logEvent(env, key, hwid, 'rebind', 'hwid changed (key window)', ip);
+    return {
+      ok: true,
+      rebind: true,
+      days: lic.expires_at > 0
+        ? Math.max(0, Math.round((lic.expires_at - now) / 86400)) : 0,
+    };
+  }
 
   if (needToken) {
     if (!token) {
@@ -517,16 +684,31 @@ async function bindFirstTime(env, lic, key, hwid, ip, now, token) {
   }
 
   // Lần kích hoạt ĐẦU TIÊN: tính hạn từ bây giờ
-  const days = lic.expires_at > 0
-    ? Math.max(1, Math.round((lic.expires_at - lic.created_at) / 86400))
-    : 0;
-  const exp = days === 0 ? 0 : now + days * 86400;
+  //
+  // LỖI ĐÃ SỬA (P1): bản cũ là
+  //   const days = lic.expires_at > 0
+  //     ? Math.max(1, Math.round((lic.expires_at - lic.created_at) / 86400))
+  //     : 0;
+  // `created_at` lưu bằng MILI-GIÂY còn `expires_at` bằng GIÂY -> hiệu
+  // ≈ -1.79e12 -> Math.max(1, …) KẸP THÀNH 1 -> key 6 tháng thành 1 NGÀY,
+  // không lỗi, không log. Nay dùng helper chuẩn hoá đơn vị và lùi về kỳ hạn
+  // đã cấu hình thay vì kẹp về 1.
+  const { resolveTermDays } = await import('../lib/trial-quota.js');
+  const term = await resolveTermDays(env, {
+    createdAt: lic.created_at,
+    expiresAt: lic.expires_at,
+    prefix: PRODUCT_PREFIX,
+    key,
+    now,
+  });
+  const days = term.forever ? 0 : term.days;
+  const exp = term.forever ? 0 : now + days * 86400;
   await env.DB.prepare(
     `UPDATE licenses SET hwid = ?, activated_at = ?, expires_at = ?,
             last_seen = ?, last_ip = ? WHERE key = ?`
   ).bind(hwid, now, exp, now, ip, key).run();
   await logEvent(env, key, hwid, 'activate',
-    'first bind, ' + (days === 0 ? 'forever' : days + 'd'), ip);
+    'first bind, ' + (term.forever ? 'forever' : days + 'd') + ' [' + term.source + ']', ip);
   lic.expires_at = exp;
   lic.activated_at = now;
   lic.hwid = hwid;
@@ -535,6 +717,92 @@ async function bindFirstTime(env, lic, key, hwid, ip, now, token) {
 
 /* ------------------------------ handlers ------------------------------ */
 
+/**
+ * License này có PHẢI của sản phẩm map sáng không?
+ *
+ * LÝ DO: `buildToken()` luôn gắn `a:'xa-nofog'` và kèm `ss`+`sv` (bảng
+ * cổng vá). Nếu key của sản phẩm TÀI NGUYÊN đi qua đây, khách chỉ mua
+ * tăng tài nguyên vẫn nhận được:
+ *   1. quyền dùng map sáng miễn phí suốt kỳ hạn, VÀ
+ *   2. toàn bộ bảng địa chỉ/cổng vá — tức tài sản reverse-engineering
+ *      bị lộ vĩnh viễn.
+ *
+ * Đây là ranh giới sản phẩm, phải chặn ở MỌI endpoint cấp token map sáng.
+ */
+function isGrantProduct(lic) {
+  return String((lic && lic.pid) || '').toLowerCase() === 'xagrant';
+}
+
+/**
+ * ĐƯỜNG ĐI CHUNG cho license ĐÃ TRẢ TIỀN — dùng cho cả /api/activate và
+ * /api/check.
+ *
+ * Hai việc, đúng thứ tự:
+ *
+ *   1. `guardAccountDevice()` — luật "1 tài khoản = 1 máy tại một thời điểm".
+ *      Áp cho CẢ bản trả phí (chính là chỗ thay thế cho việc khoá HWID vừa bỏ).
+ *      `mode='activate'`  -> máy mới CHIẾM quyền, máy cũ chết ở lần check sau.
+ *      `mode='check'`     -> khác máy thì TỪ CHỐI `session_moved`.
+ *
+ *   2. `touchPaidLicence()` — ghi "máy dùng gần nhất" vào `licenses.hwid`
+ *      (KHÔNG chặn), và nếu đây là lần kích hoạt ĐẦU TIÊN thì tính kỳ hạn.
+ *
+ * @returns {{ok:true, first:boolean, moved:boolean, enforced:boolean}
+ *          | {ok:false, code:string, msg:string}}
+ */
+async function paidLicencePipeline(env, lic, key, hwid, ip, now, mode,
+                                     request) {
+  const scope = deviceScope('nofog');
+  const owner = await ownerUserId(env, key);
+
+  // ------------------------------------------------------------------
+  // CÓ PHIÊN ĐĂNG NHẬP = KHÁCH CHỦ ĐỘNG ĐĂNG NHẬP TRÊN MÁY NÀY.
+  //
+  // Cho chiếm máy NGAY (mode 'login'), không bắt chờ 5 phút. Không có
+  // phiên thì là app tự hỏi lại định kỳ (mode 'check') -> không được cướp
+  // của máy đang chạy, nếu không hai máy giành nhau liên tục.
+  // ------------------------------------------------------------------
+  let guardMode = mode;
+  if (mode === 'check' && request) {
+    try {
+      const { getSessionUser } = await import('../lib/auth.js');
+      const u = await getSessionUser(env, request);
+      if (u && u.id === owner) guardMode = 'login';
+    } catch { /* không đọc được phiên -> giữ 'check' (an toàn) */ }
+  }
+
+  const g = await guardAccountDevice(env, {
+    userId: owner, scope, hwid, key, ip, mode: guardMode, now,
+  });
+
+  if (!g.ok) {
+    await logEvent(env, key, hwid, 'deny', 'account device: ' + g.code, ip);
+    return {
+      ok: false,
+      code: g.code,
+      msg: g.msg || MESSAGES[g.code] || g.code,
+      active_since: g.active_since || 0,
+    };
+  }
+  if (g.moved) {
+    await logEvent(env, key, hwid, 'device_move',
+      'account moved: ' + String(g.previous_hwid || '').slice(0, 12) + '… -> này', ip);
+  }
+
+  const t = await touchPaidLicence(env, lic, {
+    key, hwid, ip, now, prefix: PRODUCT_PREFIX,
+  });
+
+  await logEvent(env, key, hwid, mode === 'activate' ? 'activate' : 'check',
+    t.first
+      ? 'paid first activation, ' + (t.forever ? 'forever' : t.days + 'd')
+        + ' [' + t.source + ']'
+      : 'paid, account-bound (no hwid lock)', ip);
+
+  return { ok: true, first: !!t.first, moved: !!g.moved, enforced: !!g.enforced };
+}
+
+
 export async function apiActivate(env, request) {
   const ip = ipOf(request);
   const b = await readBody(request);
@@ -542,6 +810,13 @@ export async function apiActivate(env, request) {
 
   const key = normKey(b.key);
   const hwid = String(b.hwid || '').trim();
+  /*
+   * LỖI ĐÃ SỬA (phát hiện khi làm lại đường license): hàm này gọi
+   * `judge(lic, hwid, now, hwid2)` nhưng `hwid2` CHƯA BAO GIỜ được khai báo
+   * -> mọi lượt gọi tới dòng đó ném ReferenceError (500), tức /api/activate
+   * chết ở production. Khai báo đúng như apiCheck.
+   */
+  const hwid2 = String(b.hwid2 || '').trim();
 
   if (!key || !hwid) {
     return json({ ok: false, code: 'bad_request', msg: 'Thiếu mã hoặc HWID' }, 400);
@@ -567,7 +842,16 @@ export async function apiActivate(env, request) {
     }, 403);
   }
 
-  const v = judge(lic, hwid, now);
+  // RANH GIỚI SẢN PHẨM: key tài nguyên KHÔNG được nhận token map sáng.
+  if (isGrantProduct(lic)) {
+    await logEvent(env, key, hwid, 'deny', 'grant key via nofog activate', ip);
+    return json({
+      ok: false, code: 'wrong_product',
+      msg: 'Đây là mã tăng tài nguyên, không dùng cho map sáng.',
+    }, 403);
+  }
+
+  const v = judge(lic, hwid, now, hwid2);
 
   if (!v.ok) {
     await logAttempt(env, ip, false);
@@ -577,6 +861,30 @@ export async function apiActivate(env, request) {
       now: now,   // server-authoritative time
       expires_at: v.expires_at || 0,
     }, 403);
+  }
+
+  /*
+   * ===== ĐÃ TRẢ TIỀN: KHÔNG BIND MÁY, CHỈ GIỮ "1 NICK 1 MÁY" =====
+   *
+   * `bindFirstTime()` (mã đổi máy, rebind_until, rebind_tokens) KHÔNG còn
+   * được dùng cho đường này: nó tồn tại để chặn "cùng một key chạy hai máy",
+   * mà luật mới đã chuyển việc đó sang account_devices.
+   */
+  if (v.paid) {
+    const r = await paidLicencePipeline(env, lic, key, hwid, ip, now, 'activate');
+    if (!r.ok) {
+      await logAttempt(env, ip, false);
+      return json({
+        ok: false, code: r.code, msg: r.msg,
+        now, active_since: r.active_since || 0,
+      }, 403);
+    }
+    await logAttempt(env, ip, true);
+    return okWithToken(env, lic, key, hwid, {
+      first_bind: !!r.first,
+      binding: 'account',
+      device_moved: !!r.moved,
+    });
   }
 
   if (v.firstBind) {
@@ -608,6 +916,9 @@ export async function apiCheck(env, request) {
 
   const key = normKey(b.key);
   const hwid = String(b.hwid || '').trim();
+  // Hash thứ hai (module tài nguyên tính khác) — dùng để không khoá
+  // oan license bind bằng công thức khác.
+  const hwid2 = String(b.hwid2 || '').trim();
   if (!key || !hwid) return json({ ok: false, code: 'bad_request' }, 400);
   if (!(await rateOk(env, ip))) {
     return json({ ok: false, code: 'rate_limit', msg: MESSAGES.rate_limit }, 429);
@@ -620,10 +931,19 @@ export async function apiCheck(env, request) {
   // Trial KHÔNG dùng bindFirstTime: hạn đã được tính sẵn lúc cấp,
   // và cần trả thêm quota + nhịp recheck cho client.
   if (lic && lic.plan === 'trial') {
-    return trialCheck(env, request, lic, key, hwid, ip, now);
+    return trialCheck(env, request, lic, key, hwid, ip, now, hwid2);
   }
 
-  const v = judge(lic, hwid, now);
+  // RANH GIỚI SẢN PHẨM (xem isGrantProduct).
+  if (isGrantProduct(lic)) {
+    await logEvent(env, key, hwid, 'deny', 'grant key via nofog check', ip);
+    return json({
+      ok: false, code: 'wrong_product',
+      msg: 'Đây là mã tăng tài nguyên, không dùng cho map sáng.',
+    }, 403);
+  }
+
+  const v = judge(lic, hwid, now, hwid2);
 
   if (!v.ok) {
     await logAttempt(env, ip, false);
@@ -637,6 +957,31 @@ export async function apiCheck(env, request) {
 
   // Bản cũ gọi lại apiActivate ở đây -> body đã bị đọc -> 400.
   // Nay xử lý bind trực tiếp.
+  /*
+   * ===== ĐÃ TRẢ TIỀN: KHÔNG XÉT MÁY, CHỈ GIỮ "1 NICK 1 MÁY" =====
+   *
+   * Đây là chỗ MÁY CŨ BỊ ĐÁ: máy đang dùng là M1, tài khoản chạy `activate`
+   * trên M2 -> account_devices trỏ sang M2 -> lần `check` kế tiếp của M1 rơi
+   * vào nhánh `!r.ok` dưới đây và nhận `session_moved`.
+   */
+  if (v.paid) {
+    const r = await paidLicencePipeline(env, lic, key, hwid, ip, now, 'check',
+                                   request);
+    if (!r.ok) {
+      await logAttempt(env, ip, false);
+      return json({
+        ok: false, code: r.code, msg: r.msg,
+        now, active_since: r.active_since || 0,
+      }, 403);
+    }
+    await logAttempt(env, ip, true);
+    return okWithToken(env, lic, key, hwid, {
+      first_bind: !!r.first,
+      binding: 'account',
+      device_moved: !!r.moved,
+    });
+  }
+
   if (v.firstBind) {
     // license từng bị reset -> cần token đổi máy, tránh máy cũ tự bind lại
     const br = await bindFirstTime(env, lic, key, hwid, ip, now, b.token);
@@ -664,8 +1009,54 @@ export async function apiCheck(env, request) {
 
 /**
  * Kiểm tra trial: bắt đầu đồng hồ ở lần check ĐẦU TIÊN, trả quota + recheck.
+ *
+ * `hwid2` được nhận vào (trước đây hàm này dùng biến `hwid2` mà KHÔNG khai
+ * báo -> ReferenceError ở nhánh dữ liệu trial v1 bên dưới).
  */
-async function trialCheck(env, request, lic, key, hwid, ip, now) {
+async function trialCheck(env, request, lic, key, hwid, ip, now, hwid2) {
+  /*
+   * RANH GIỚI SẢN PHẨM — ĐẶT Ở DÒNG ĐẦU TIÊN.
+   *
+   * LỖI ĐÃ SỬA: guard trước đó nằm GIỮA hàm, sau nhánh `if (!use)`.
+   * Nhánh đó (dữ liệu trial cũ v1, không có `trial_uses`) gọi
+   * okWithToken() TRƯỚC guard, nên key `pid='xagrant'` vẫn nhận được
+   * token `xn1.` kèm bảng cổng map sáng.
+   *
+   * Nay chặn ngay đầu hàm, không nhánh nào lọt.
+   */
+  if (isGrantProduct(lic)) {
+    await logEvent(env, key, hwid, 'deny',
+      'grant key via nofog trialCheck', ip);
+    return json({
+      ok: false, code: 'wrong_product',
+      msg: 'Đây là mã tăng tài nguyên, không dùng cho map sáng.',
+      now,
+    }, 403);
+  }
+
+
+  /*
+   * ===== AUDIT #3: MÃ DÙNG THỬ ĐÃ BỊ THU HỒI THÌ KHÔNG ĐƯỢC ĐÚC TOKEN =====
+   *
+   * LỖI GỐC: `judge()` (dùng cho key trả phí) có kiểm `lic.revoked`, nhưng
+   * `trialCheck()` thì KHÔNG — nó chỉ đọc `trial_uses`. Admin bấm "Thu hồi"
+   * trong trang quản trị chỉ đặt `licenses.revoked = 1` (KHÔNG đụng
+   * `trial_uses`), nên mã trial đã bị thu hồi vẫn mint token `xn1.` và chạy
+   * bình thường tới hết hạn: lệnh thu hồi hoàn toàn vô hiệu với đường trial.
+   *
+   * Nay chặn ngay đầu hàm (sau ranh giới sản phẩm), trước khi trả bất kỳ
+   * thông tin hay token nào, và ghi lic_events để vận hành thấy.
+   */
+  if (lic.revoked) {
+    await logEvent(env, key, hwid, 'deny', 'trial revoked', ip);
+    return json({
+      ok: false,
+      code: 'revoked',
+      msg: MESSAGES.revoked || 'Mã đã bị thu hồi',
+      now,
+    }, 403);
+  }
+
   const { trialCfg, getQuota, publicUse, normKind, KIND_1H, KIND_3D } =
     await import('../lib/trial-quota.js');
 
@@ -677,7 +1068,7 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
   if (!use) {
     // License trial tồn tại nhưng không có grant -> dữ liệu cũ (v1)
     // Cho chạy nếu license còn hạn, nhưng không có quota.
-    const v = judge(lic, hwid, now);
+    const v = judge(lic, hwid, now, hwid2);
     if (!v.ok) {
       return json({
         ok: false, code: v.code, msg: MESSAGES[v.code] || v.code,
@@ -696,6 +1087,29 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
         ? 'Lượt dùng thử đã được đặt lại'
         : 'Lượt dùng thử đã kết thúc',
       now, expires_at: use.expires_at || 0,
+    }, 403);
+  }
+
+  /*
+   * ------------------------------------------------------------------
+   * KEY TÀI NGUYÊN KHÔNG ĐƯỢC NHẬN TOKEN MAP SÁNG.
+   *
+   * LỖ HỔNG ĐÃ SỬA: `trialCheck()` không kiểm sản phẩm. Một key
+   * `pid='xagrant'` (chỉ mua tăng tài nguyên) vẫn được cấp token `xn1.`
+   * kèm bảng cổng — nghĩa là dùng map sáng MIỄN PHÍ.
+   *
+   * Đã chứng minh bằng HTTP thật: /api/check cho TR-23JZ… trả về token
+   * xn1. dù entitlement chỉ có ['grant'].
+   *
+   * Nay chặn ở đây để key tài nguyên không lấy được token map sáng.
+   * ------------------------------------------------------------------
+   */
+  if (String(lic.pid || '').toLowerCase() === 'xagrant') {
+    await logEvent(env, key, hwid, 'deny', 'grant key via nofog check', ip);
+    return json({
+      ok: false, code: 'wrong_product',
+      msg: 'Đây là mã tăng tài nguyên, không dùng cho map sáng.',
+      now,
     }, 403);
   }
 
@@ -807,6 +1221,27 @@ async function trialCheck(env, request, lic, key, hwid, ip, now) {
 
 export async function apiRebind(env, request) {
   const ip = ipOf(request);
+  /*
+   * AUDIT #10: /api/rebind là endpoint CÔNG KHAI (client EXE gọi, không cần
+   * đăng nhập) và trước đây KHÔNG có rate limit theo route — chỉ có limit
+   * toàn cục 3000/phút, tức là dò key/đổi HWID thoải mái. Đây là bề mặt
+   * đoán key, nên thêm trần theo IP.
+   *
+   * 60 lần / 10 phút / IP: khách thật đổi máy vài lần trong đời; 60 lần vẫn
+   * dư cho quán net chung IP. Vượt -> 429 (bên gọi trả JSON sạch).
+   */
+  try {
+    const { rateLimit } = await import('../lib/ratelimit.js');
+    await rateLimit(env, `apirebind:${ip}`, 60, 600);
+  } catch (e) {
+    if (e && e.code === 'RATE_LIMITED') {
+      return json({
+        ok: false, code: 'rate_limit',
+        msg: MESSAGES.rate_limit || 'Quá nhiều lần thử, thử lại sau',
+      }, 429);
+    }
+    throw e;
+  }
   const b = await readBody(request);
   if (!b) return json({ ok: false, code: 'bad_request' }, 400);
 
@@ -848,6 +1283,42 @@ export async function apiRebind(env, request) {
     // Token dùng 1 lần
     await env.DB.prepare('UPDATE rebind_tokens SET used = 1 WHERE key = ? AND token_hash = ?')
       .bind(key, await sha256hex(token)).run();
+  }
+
+  /*
+   * ==========================================================================
+   * BẢN ĐÃ TRẢ TIỀN: /api/rebind THÀNH NO-OP (vẫn 200, KHÔNG 404)
+   *
+   * Chọn "no-op trả lời được" thay vì xoá endpoint vì hai lý do:
+   *   1. client EXE đã phát hành còn gọi `/api/rebind` (xa_nofog_pro.py
+   *      `--rebind`); 404 sẽ bị hiểu là "server lỗi" và khách mở ticket.
+   *   2. Có thể còn bản cài cũ chạy vòng "đổi máy" tự động.
+   *
+   * Nhưng KHÔNG còn tác dụng gì: đổi máy giờ chỉ cần `activate` ở máy mới
+   * (xem paidLicencePipeline). Số lượt đổi máy không còn ý nghĩa -> trả
+   * `rebinds_left: null` thay vì một con số gây hiểu nhầm.
+   *
+   * Vẫn GIỮ kiểm tra quyền sở hữu ở trên: no-op không được biến thành đường
+   * dò key/đọc hạn license của người khác.
+   * ==========================================================================
+   */
+  const licRebind = await getLicense(env, key);
+  if (licRebind && !isTrialLicence(licRebind)) {
+    const nowR = nowSec();
+    await env.DB.prepare(
+      'UPDATE licenses SET hwid = ?, last_seen = ?, last_ip = ? WHERE key = ?'
+    ).bind(hwid, nowR, ip, key).run();
+    await logEvent(env, key, hwid, 'rebind_noop',
+      'paid licence: account-bound, rebind not needed', ip);
+    return json({
+      ok: true,
+      binding: 'account',
+      rebinds_left: null,
+      rebind_needed: false,
+      expires_at: licRebind.expires_at,
+      msg: 'License của bạn đi theo tài khoản — không cần đổi máy. '
+        + 'Chỉ cần kích hoạt lại trên máy mới.',
+    });
   }
 
   // ===== ATOMIC: tránh TOCTOU, chỉ update khi còn lượt

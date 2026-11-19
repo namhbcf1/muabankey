@@ -152,30 +152,35 @@ async function requireUsableLicense(env, key) {
 }
 
 /**
- * Bắt đầu đồng hồ dùng thử NGAY KHI KHÁCH TẢI bộ cài.
+ * Kiểm tra mã dùng thử khi khách TẢI bộ cài — KHÔNG khởi động đồng hồ.
  *
- * YÊU CẦU CỦA CHỦ SHOP: "1 giờ cũng cấp quyền cấp hạn 1 giờ cho mỗi lượt tải".
+ * ===== AUDIT #6: BỎ việc "bắt đầu đồng hồ" ở đây =====
  *
- * Trước đây đồng hồ chạy từ lúc TẠO MÃ (trial-command.js), nên:
- *   - khách mất 15 phút đọc hướng dẫn -> chỉ còn 45 phút
- *   - thời gian tải 9 MB cũng bị trừ
+ * BẢN CŨ (`trialBeginOnDownload`, nay là `trialGuardOnDownload`) ghi
+ * `trial_uses.started_at/expires_at` và `licenses.activated_at/expires_at`
+ * ngay khi khách tải bộ cài, nhưng KHÔNG ghi `hwid` — vì handler tải bộ cài
+ * không biết HWID của máy khách (bộ cài chỉ có key). Hệ quả kép:
+ *   1. Khách mất oan thời gian dùng thử: chỉ cần mở link .cmd là đồng hồ 1 giờ
+ *      chạy, dù máy chưa cài xong (đúng thứ vừa được sửa ở trial-command.js).
+ *   2. Mã mới vẫn `hwid = NULL` trong khi đã "kích hoạt" -> mã CHIA SẺ ĐƯỢC:
+ *      máy nào chạy tool trước sẽ giành mất license, các máy khác vẫn xin được
+ *      mã mới cùng lúc.
  *
- * Nay: mã trial được cấp ở trạng thái GIỮ (started_at = NULL), và đồng hồ
- * chỉ bắt đầu ở đây — đúng khoảnh khắc khách tải/cài.
+ * NAY (chủ shop chốt hướng thứ hai — an toàn hơn): đồng hồ CHỈ bắt đầu ở nơi
+ * BIẾT HWID: /api/trial/claim (trial.js) hoặc /api/check (license-server.js).
+ * Hàm này chỉ còn một việc: chặn mã đã hết hạn GIỮ CHỖ (hold) và trả hạn giữ
+ * để bên gọi hiển thị "chờ kích hoạt". KHÔNG ghi bất kỳ dòng CSDL nào.
  *
- * NGUYÊN TỬ: UPDATE ... WHERE started_at IS NULL, nên tải lại nhiều lần
- * không reset được đồng hồ. Lần tải thứ 2 trở đi giữ nguyên hạn cũ.
- *
- * Trả { started: bool, expiresAt: number }.
+ * Trả { started: false, expiresAt } — `started` giữ nguyên khoá cho tương
+ * thích với các chỗ gọi cũ (hiện không nơi nào đọc).
  */
-async function trialBeginOnDownload(env, lic) {
+async function trialGuardOnDownload(env, lic) {
   if (String(lic.plan || '').toLowerCase() !== 'trial') {
     return { started: false, expiresAt: lic.expires_at || 0 };
   }
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Đọc kind + cấu hình thời lượng
   const use = await env.DB.prepare(
     'SELECT * FROM trial_uses WHERE lic_key = ? LIMIT 1'
   ).bind(lic.key).first();
@@ -183,7 +188,7 @@ async function trialBeginOnDownload(env, lic) {
   // Không có grant (dữ liệu cũ) -> giữ nguyên hành vi cũ
   if (!use) return { started: false, expiresAt: lic.expires_at || 0 };
 
-  // Đã bắt đầu rồi -> KHÔNG reset, trả hạn hiện tại
+  // Đã kích hoạt rồi -> trả hạn THẬT (đồng hồ), không đụng gì
   if (use.started_at) {
     return { started: false, expiresAt: use.expires_at || 0 };
   }
@@ -194,32 +199,8 @@ async function trialBeginOnDownload(env, lic) {
       'Mã dùng thử đã hết hạn giữ chỗ. Lấy mã mới trên web.', 'TRIAL_HOLD_EXPIRED');
   }
 
-  const { trialCfg, normKind, KIND_1H, KIND_3D } =
-    await import('../lib/trial-quota.js');
-  const cfg = await trialCfg(env);
-  const kind = normKind(use.kind) || KIND_3D;
-  const secs = kind === KIND_1H ? cfg.t1h.sec : cfg.t3d.sec;
-  const expiresAt = now + secs;
-
-  // Nguyên tử: chỉ request ĐẦU TIÊN đổi được started_at
-  const claim = await env.DB.prepare(
-    `UPDATE trial_uses SET started_at = ?, expires_at = ?
-     WHERE id = ? AND started_at IS NULL`
-  ).bind(now, expiresAt, use.id).run();
-
-  if (!claim.meta || claim.meta.changes !== 1) {
-    // Request khác vừa thắng -> trả hạn của nó
-    const fresh = await env.DB.prepare(
-      'SELECT expires_at FROM trial_uses WHERE id = ?'
-    ).bind(use.id).first();
-    return { started: false, expiresAt: fresh?.expires_at || 0 };
-  }
-
-  await env.DB.prepare(
-    'UPDATE licenses SET activated_at = COALESCE(activated_at, ?), expires_at = ? WHERE key = ?'
-  ).bind(now, expiresAt, lic.key).run();
-
-  return { started: true, expiresAt };
+  // Chưa kích hoạt, còn hạn giữ -> KHÔNG bắt đầu đồng hồ, chỉ báo hạn giữ.
+  return { started: false, expiresAt: use.expires_at || lic.expires_at || 0 };
 }
 
 /**
@@ -870,8 +851,8 @@ try { if (-not [Console]::IsInputRedirected) { Read-Host 'Nhan Enter de dong' | 
 export async function serveInstaller(env, request, rawKey) {
   const lic = await requireUsableLicense(env, rawKey);
   await assertCanInstall(env, request, lic.key);
-  // Bat dau dong ho dung thu NGAY khi khach tai bo cai (khong phai luc tao ma).
-  await trialBeginOnDownload(env, lic);
+  // Chi kiem han GIU cua ma dung thu — KHONG bat dau dong ho (audit #6).
+  await trialGuardOnDownload(env, lic);
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';
@@ -899,8 +880,8 @@ export async function serveInstaller(env, request, rawKey) {
 export async function servePs1(env, request, rawKey) {
   const lic = await requireUsableLicense(env, rawKey);
   await assertCanInstall(env, request, lic.key);
-  // Bat dau dong ho dung thu NGAY khi khach tai bo cai (khong phai luc tao ma).
-  await trialBeginOnDownload(env, lic);
+  // Chi kiem han GIU cua ma dung thu — KHONG bat dau dong ho (audit #6).
+  await trialGuardOnDownload(env, lic);
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';
@@ -927,8 +908,8 @@ export async function servePs1(env, request, rawKey) {
 export async function installerCommand(env, request, rawKey) {
   const lic = await requireUsableLicense(env, rawKey);
   await assertCanInstall(env, request, lic.key);
-  // Bat dau dong ho dung thu NGAY khi khach tai bo cai (khong phai luc tao ma).
-  await trialBeginOnDownload(env, lic);
+  // Chi kiem han GIU cua ma dung thu — KHONG bat dau dong ho (audit #6).
+  await trialGuardOnDownload(env, lic);
 
   const url = new URL(request.url);
   const token = url.searchParams.get('t') || '';

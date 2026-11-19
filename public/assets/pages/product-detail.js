@@ -1,8 +1,13 @@
 /** Trang chi tiết sản phẩm. */
-import { api, esc, fmtVnd, fmtNum, fmtDate, toast, navigate, loadingBlock, store, emptyBlock } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, fmtDate, loadingBlock, emptyBlock } from '../lib.js';
 import { icon } from '../icons.js';
-import { addToCart, state, notify } from '../state.js';
-import { productCard, bindProductCards } from './home.js';
+import { buyNow, bindBuyNowCards } from './checkout.js';
+import { productCard } from './home.js';
+
+/*
+ * MUA NGAY: không còn "Thêm vào giỏ", không còn chọn số lượng.
+ * Một sản phẩm -> một nút -> thẳng tới mã QR (checkout.js tự tạo đơn).
+ */
 
 /** Dải sao dùng SVG — trước đây là ký tự sao phụ thuộc font hệ thống. */
 function ratingStars(value, size = 13) {
@@ -44,11 +49,19 @@ export async function mountProductDetail(root, slug) {
   const p = data.product;
   const isLicense = p.deliveryType === 'license';
   const inStock = p.stock > 0 || p.deliveryType === 'manual' || isLicense;
-  const maxQty = isLicense ? 10 : Math.min(p.stock || 20, 20);
   const stockLabel = inStock
     ? (isLicense ? 'Giao tự động' : `Còn ${p.deliveryType === 'manual' ? 'hàng' : fmtNum(p.stock)}`)
     : 'Hết hàng';
   const badgeCls = p.badge === 'HOT' ? 'badge-hot' : p.badge === 'SALE' ? 'badge-sale' : 'badge-new';
+
+  /*
+   * Giá gạch chỉ đúng khi comparePrice CAO HƠN price. Dữ liệu cũ có sản phẩm
+   * comparePrice thấp hơn price nên trang hiện "~~60.000đ~~ 90.000đ" (giảm giá
+   * âm). Dùng đúng quy tắc server tính discountPercent (src/routes/products.js,
+   * shapeProduct): chỉ khi compare_price > price mới có giảm giá, còn lại = 0.
+   * Vì vậy chốt điều kiện comparePrice > price rồi mới vẽ giá gạch.
+   */
+  const hasCompare = Number(p.comparePrice) > Number(p.price);
 
   host.innerHTML = `
     <nav class="pd-breadcrumb" aria-label="Đường dẫn">
@@ -71,17 +84,17 @@ export async function mountProductDetail(root, slug) {
           <div class="info-strip">
             <div class="ico">${icon('bolt', { size: 17 })}</div>
             <div class="t">Giao tự động</div>
-            <div class="d">Nhận key ngay sau thanh toán</div>
+            <div class="d">Licence tự gắn sau thanh toán</div>
           </div>
           <div class="info-strip">
             <div class="ico">${icon('shieldCheck', { size: 17 })}</div>
             <div class="t">Bảo hành ${fmtNum(p.warrantyDays)} ngày</div>
-            <div class="d">Đổi mới nếu key không hoạt động</div>
+            <div class="d">Gắn lại nếu tool không chạy</div>
           </div>
           <div class="info-strip">
             <div class="ico">${icon('card', { size: 17 })}</div>
             <div class="t">VietQR</div>
-            <div class="d">Quét QR thanh toán, tự giao key ngay</div>
+            <div class="d">Quét QR, licence tự gắn vào tài khoản</div>
           </div>
         </div>
 
@@ -132,39 +145,32 @@ export async function mountProductDetail(root, slug) {
 
           <div class="pd-price">
             <span class="now">${fmtVnd(p.price)}</span>
-            ${p.comparePrice ? `<span class="old">${fmtVnd(p.comparePrice)}</span>` : ''}
-            ${p.discountPercent > 0 ? `<span class="save">Tiết kiệm ${p.discountPercent}%</span>` : ''}
+            ${hasCompare ? `<span class="old">${fmtVnd(p.comparePrice)}</span>` : ''}
+            ${hasCompare && p.discountPercent > 0 ? `<span class="save">Tiết kiệm ${p.discountPercent}%</span>` : ''}
           </div>
+
+          ${p.durationLabel ? `
+          <p class="pd-term">
+            Thời hạn: <strong>${esc(p.durationLabel)}</strong>
+            ${isLicense ? ' · 1 licence dùng cho 1 máy' : ''}
+          </p>` : ''}
 
           ${p.features && p.features.length ? `
           <ul class="feature-list">
             ${p.features.map((f) => `<li><span class="tick">${icon('check', { size: 11, stroke: 2.4 })}</span><span>${esc(f)}</span></li>`).join('')}
           </ul>` : ''}
 
-          <div class="qty-row">
-            <label class="label pd-qty-label" for="qty-val">Số lượng</label>
-            <div class="qty-ctrl">
-              <button type="button" id="qty-dec" aria-label="Giảm số lượng">${icon('minus', { size: 14 })}</button>
-              <input id="qty-val" type="text" value="1" inputmode="numeric" aria-label="Số lượng">
-              <button type="button" id="qty-inc" aria-label="Tăng số lượng">${icon('plus', { size: 14 })}</button>
-            </div>
-            <span class="pd-qty-max">Tối đa ${maxQty}</span>
-          </div>
-
           <div class="pd-actions">
-            <button class="btn btn-primary btn-lg btn-block" id="btn-add-cart" ${!inStock ? 'disabled' : ''}>
-              ${icon('cart', { size: 16 })}${inStock ? 'Thêm vào giỏ hàng' : 'Tạm hết hàng'}
-            </button>
-            <button class="btn btn-ghost btn-block" id="btn-buy-now" ${!inStock ? 'disabled' : ''}>
-              ${icon('bolt', { size: 15 })}Mua ngay
+            <button class="btn btn-primary btn-lg btn-block" id="btn-buy-now" ${!inStock ? 'disabled' : ''}>
+              ${icon('bolt', { size: 16 })}${inStock ? 'Mua ngay' : 'Tạm hết hàng'}
             </button>
           </div>
 
           <div class="alert alert-info pd-note">
-            <span class="ico">${icon(isLicense ? 'key' : 'info', { size: 15 })}</span>
+            <span class="ico">${icon(isLicense ? 'login' : 'info', { size: 15 })}</span>
             <span>${isLicense
-              ? 'Sau khi thanh toán, bạn nhận <strong>lệnh CMD cài đặt tự động</strong>. Dán vào CMD để tool tự cài, kích hoạt và tạo shortcut trên Desktop.'
-              : 'Sau khi thanh toán, key hiển thị ngay trong mục <strong>Đơn hàng</strong> và hiển thị ngay trong mục Đơn hàng (xem lại bất cứ lúc nào).'}</span>
+              ? 'Thanh toán xong, mở <strong>XA ARENA</strong> và bấm <strong>Đăng nhập</strong> — licence tự gắn vào tài khoản. Không cần nhập mã, không cần cài đặt.'
+              : 'Sau khi thanh toán, đơn hiện ngay trong mục <strong>Đơn hàng</strong> (xem lại bất cứ lúc nào).'}</span>
           </div>
         </div>
       </div>
@@ -182,68 +188,10 @@ export async function mountProductDetail(root, slug) {
     </div>` : ''}
   `;
 
-  // Qty controls
-  const qtyInput = host.querySelector('#qty-val');
-  host.querySelector('#qty-inc').onclick = () => {
-    qtyInput.value = Math.min(maxQty, (Number(qtyInput.value) || 1) + 1);
-  };
-  host.querySelector('#qty-dec').onclick = () => {
-    qtyInput.value = Math.max(1, (Number(qtyInput.value) || 1) - 1);
-  };
-  qtyInput.addEventListener('change', () => {
-    const v = Math.max(1, Math.min(maxQty, Number(qtyInput.value.replace(/\D/g, '')) || 1));
-    qtyInput.value = v;
-  });
-
-  const getQty = () => Math.max(1, Math.min(maxQty, Number(qtyInput.value) || 1));
-
-  const addBtn = host.querySelector('#btn-add-cart');
-  if (addBtn) addBtn.onclick = () => addToCart(p, getQty());
-
+  // Mua ngay: một món, một cú bấm, thẳng tới mã QR (không qua giỏ hàng).
   const buyBtn = host.querySelector('#btn-buy-now');
-  if (buyBtn) {
-    buyBtn.onclick = () => {
-      // "Mua ngay" chỉ mua sản phẩm này, KHÔNG gộp với giỏ hàng hiện có.
-      const saved = state.cart.slice();
-      const qty = getQty();
-
-      // Lấy đúng item VỪA thêm (không phụ thuộc addToCart có ghi vào state.cart
-      // hay không). Trước đây dùng state.cart.filter(i => i.productId !== p.id)
-      // rồi lấy [0] -> đó là món KHÁC hoặc undefined -> giỏ thanh toán rỗng.
-      const item = {
-        productId: p.id,
-        slug: p.slug,
-        name: p.name,
-        price: p.price,
-        // checkout.js đọc i.imageUrl (KHONG phai i.image) -> phai set dung ten
-        imageUrl: p.imageUrl || p.image || p.thumbnail || null,
-        quantity: qty,
-        deliveryType: p.deliveryType,
-        licenseDays: p.licenseDays,
-      };
-
-      if (!state.user) {
-        // Chưa đăng nhập: giữ cart cũ, chỉ lưu buynow để dùng sau khi login
-        store.set('mbk_buynow', [item]);
-        toast('Vui lòng đăng nhập để thanh toán', 'info');
-        /*
-     * PHẢI encode: parseRoute tách query bằng `split('?')` nên dấu `?` thứ hai
-     * không encode sẽ cắt mất `mode=buynow`. Khách vãng lai bấm "Mua ngay",
-     * đăng nhập xong quay về /checkout rỗng → mất sản phẩm đã chọn.
-     */
-    navigate('/login?redirect=' + encodeURIComponent('/checkout?mode=buynow'));
-        return;
-      }
-
-      // Đã đăng nhập: khôi phục cart cũ rồi sang checkout riêng
-      store.set('mbk_cart', saved);
-      state.cart = saved.slice();
-      notify();
-      store.set('mbk_buynow', [item]);
-      navigate('/checkout?mode=buynow');
-    };
-  }
+  if (buyBtn) buyBtn.onclick = () => buyNow(p);
 
   const related = host.querySelector('#related-grid');
-  if (related) bindProductCards(related, data.related);
+  if (related) bindBuyNowCards(related, data.related);
 }

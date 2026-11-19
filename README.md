@@ -16,7 +16,7 @@ https://muabankey.bangachieu2.workers.dev   ← dự phòng
 | Worker `muabankey` | Cloudflare Workers | Toàn bộ API + phục vụ SPA + license server + installer |
 | D1 `muabankey-db` | Cloudflare D1 (SQLite) | User, sản phẩm, đơn hàng, ví, license, log |
 | KV `muabankey-kv` | Cloudflare KV | Rate limit |
-| R2 `muabankey-assets` | Cloudflare R2 | Chứa `xa_nofog_pro.exe` (12.18 MB) |
+| R2 `muabankey-assets` | Cloudflare R2 | Chứa `xa_arena.exe`, `xa_setup.exe` |
 | Workers AI | `@cf/meta/llama-3.1-8b-instruct` | Chatbot tư vấn Key Bot |
 
 **Không còn worker riêng cho license** — API `/api/activate`, `/api/check`, `/api/rebind` nằm chung trong worker này.
@@ -83,7 +83,9 @@ curl -L -o "%TEMP%\xa.cmd" "https://muabankey.bangachieu2.workers.dev/i/<KEY>.cm
 | `GET /i/<KEY>.cmd` | File .cmd cá nhân hoá (chỉ trả khi key tồn tại + chưa thu hồi) |
 | `GET /i/<KEY>.ps1` | Biến thể PowerShell |
 | `GET /i/<KEY>` | JSON chứa lệnh copy-paste |
-| `GET /download/xa_nofog_pro.exe` | Tải EXE từ R2 (hỗ trợ Range/resume) |
+| `GET /download/xa_arena.exe` | Tải EXE gộp từ R2 (hỗ trợ Range/resume) |
+| `GET /download/xa_setup.exe` | Tải bộ cài GUI (khách dùng cái này) |
+| `GET /api/entitlement` | Quyền dùng chức năng theo license |
 
 ### Script cài đặt làm gì
 
@@ -92,7 +94,7 @@ curl -L -o "%TEMP%\xa.cmd" "https://muabankey.bangachieu2.workers.dev/i/<KEY>.cm
 3. Tải EXE: thử `curl` → `WebClient` → `certutil` (3 lớp dự phòng)
 4. Kiểm SHA-256: `053A6C494AE3EEE22BCD9044D495CC026C880EC22AC5E4B8FC3BF7B166DEEB75` (1.4.1.0, 9.101.312 byte)
 5. **Ép RUNASADMIN** vào cả `HKCU` và `HKLM` (AppCompatFlags\Layers)
-6. `xa_nofog_pro.exe --key <KEY>` → kích hoạt
+6. `xa_setup.exe --key <KEY>` → cài + kích hoạt + tự mở app
 7. Tạo shortcut Desktop + Start Menu
 8. Tạo `go-cai-dat.cmd` để gỡ cài đặt
 
@@ -201,8 +203,13 @@ npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema-v2.sql --yes
 npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema-license-server.sql --yes
 
 # Cập nhật EXE lên R2 (sau khi build lại)
-npx wrangler@4 r2 object put "muabankey-assets/files/xa_nofog_pro.exe" `
-  --file="C:\Program Files\XArena\_re\chayduoc\xa_nofog_pro.exe" `
+npx wrangler@4 r2 object put "muabankey-assets/files/xa_arena.exe" `
+  --file="tool\dist-arena\xa_arena.exe" `
+  --content-type="application/octet-stream" --remote
+
+# Cập nhật bộ cài (khi sửa xa_setup)
+npx wrangler@4 r2 object put "muabankey-assets/files/xa_setup.exe" `
+  --file="tool\dist-setup\xa_setup.exe" `
   --content-type="application/octet-stream" --remote
 ```
 
@@ -298,7 +305,7 @@ python -m PyInstaller --onefile --name xa_nofog_pro `
   --specpath ".\_build_spec" --noconfirm xa_nofog_pro.py
 
 # Lấy SHA-256 + size mới
-$exe = ".\_build_dist\xa_nofog_pro.exe"
+$exe = ".\tool\dist-arena\xa_arena.exe"
 (Get-FileHash $exe -Algorithm SHA256).Hash
 (Get-Item $exe).Length
 ```

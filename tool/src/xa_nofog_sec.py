@@ -566,7 +566,28 @@ def bind_token_to_machine(result, hwid=None, now=None, expire_skew=0):
     if hwid is not None:
         want = str(payload.get('h') or '').strip().lower()
         got = str(hwid).strip().lower()
-        # Server co the ky h rong (key chua bind) -> khi do bo qua.
+        # ------------------------------------------------------------------
+        # FAIL CLOSED: KHÔNG ĐƯỢC BỎ QUA KHI KHÔNG ĐỌC ĐƯỢC MÁY.
+        #
+        # LỖI ĐÃ SỬA: điều kiện cũ `if want and got and want != got` chỉ
+        # kiểm khi CẢ HAI đều có giá trị. Nếu `got` rỗng (không đọc được
+        # HWID) thì toàn bộ phép kiểm bị BỎ QUA → token dùng được trên máy
+        # bất kỳ. Trong mô hình không có key, HWID là ràng buộc DUY NHẤT,
+        # nên đây là lỗ hổng nghiêm trọng.
+        #
+        # Nay: token có `h` mà máy không đọc được HWID → TỪ CHỐI.
+        # Token cũ có `h` rỗng (license chưa bind) vẫn cho qua để không
+        # khoá oan khách cũ.
+        # ------------------------------------------------------------------
+        if want and not got:
+            return {
+                'ok': False,
+                'code': 'token_wrong_machine',
+                'msg': ('Không đọc được thông tin máy nên chưa xác minh được '
+                        'license.\n'
+                        '  Chạy lại app khi có mạng để lấy lại quyền.'),
+                'expires_at': exp,
+            }
         if want and got and want != got:
             return {
                 'ok': False,

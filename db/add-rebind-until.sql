@@ -1,0 +1,12 @@
+-- Đổi máy KHÔNG cần mã hex.
+--
+-- Trước đây: khách bấm "Đổi máy" trên web -> server sinh một mã 48 ký tự hex
+-- (hạn 30 phút, dùng 1 lần) -> khách phải chạy lệnh CMD kèm mã đó trên máy mới.
+-- Khách thấy hex ở web, lại phải dùng CMD — trái với yêu cầu "chỉ dùng key".
+--
+-- Nay: khách bấm "Đổi máy" -> server mở CỬA SỔ 30 PHÚT trên chính license đó
+-- -> trên máy mới khách chỉ cần mở tool, dán KEY, bấm Cài đặt. Không cần mã.
+--
+-- Bảo mật tương đương: chỉ chủ tài khoản (đã đăng nhập) mới mở được cửa sổ,
+-- cửa sổ tự đóng sau 30 phút hoặc ngay khi máy mới kích hoạt xong.
+ALTER TABLE licenses ADD COLUMN rebind_until INTEGER;

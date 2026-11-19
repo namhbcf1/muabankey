@@ -14,16 +14,39 @@
  * Bảo mật: chỉ chat_id trong TG_CHAT_ID mới bấm được.
  * Nút hoàn tiền yêu cầu xác nhận 2 bước.
  */
-import { mdEsc, hEsc, vnd, tgConfig, tgAnswerCallback, tgUpdateMessage, tgCall } from './telegram.js';
+import { mdEsc, hEsc, vnd, tgConfig, tgAnswerCallback,
+         tgUpdateMessage, tgCall, tgBroadcast } from './telegram.js';
 
-/** Kiểm tra user bấm có phải admin không. */
-function isAdminChat(env, cq, chatId) {
-  const allowed = String(env.TG_CHAT_ID || '').trim();
-  if (!allowed) return false;
-  // Cho phép nếu chat gốc HOẶC người bấm khớp chat riêng
-  const fromId = String(cq.from?.id || '');
-  const msgChat = String(cq.message?.chat?.id || '');
-  return fromId === allowed || msgChat === allowed;
+/**
+ * Kiểm tra người bấm nút có phải admin không.
+ *
+ * LỖI ĐÃ SỬA: bản trước dùng
+ *     return fromId === allowed || msgChat === allowed;
+ * Vế thứ hai (`msgChat`) so CHAT CHỨA TIN với admin id. Hễ tin được gửi vào
+ * group có id trùng (hoặc khi chính admin id là group), MỌI thành viên group
+ * đều qua cổng -> ai trong group cũng bấm "Duyệt & giao key" được.
+ *
+ * Nay: CHỈ so danh tính NGƯỜI BẤM (`from.id`) với danh sách admin.
+ * Chat chứa tin không có ý nghĩa gì về quyền.
+ *
+ * Hàm này hiện không được gọi (cổng thật nằm ở wallet.js), giữ lại đã sửa
+ * để không ai dùng nhầm bản sai về sau.
+ */
+function isAdminChat(env, cq, cfgChatId) {
+  const ids = new Set();
+  const push = (v) => {
+    for (const p of String(v || '').split(',')) {
+      const s = p.trim();
+      if (s) ids.add(s);
+    }
+  };
+  push(cfgChatId);
+  push(env.TG_CHAT_ID);
+  push(env.TG_ADMIN_IDS);
+
+  if (ids.size === 0) return false;           // chưa cấu hình -> đóng
+  const fromId = String(cq.from?.id || '').trim();
+  return !!fromId && ids.has(fromId);
 }
 
 /**
@@ -329,11 +352,8 @@ export async function notifyOrderPending(env, opts) {
   lines.push('');
   lines.push('<i>Bấm Giao đơn sau khi đã gửi key cho khách</i>');
 
-  return tgCall(env, 'sendMessage', {
-    chat_id: (await tgConfig(env)).chatId,
-    text: lines.join('\n'),
+  return tgBroadcast(env, lines.join('\n'), {
     parse_mode: 'HTML',
-    disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
         { text: '📦 Giao đơn', callback_data: `od:deliver:${order.id}` },
@@ -355,11 +375,8 @@ export async function notifyLowStock(env, products) {
   lines.push('');
   lines.push('<i>Nhập thêm key để không gián đoạn bán hàng</i>');
 
-  return tgCall(env, 'sendMessage', {
-    chat_id: (await tgConfig(env)).chatId,
-    text: lines.join('\n'),
+  return tgBroadcast(env, lines.join('\n'), {
     parse_mode: 'HTML',
-    disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
         { text: '🔑 Nhập key', callback_data: 'nav:keys' },
@@ -374,23 +391,39 @@ export async function notifyLowStock(env, products) {
  */
 export async function notifyExpiring(env, rows) {
   if (!rows?.length) return { ok: true, skipped: true };
-  const lines = ['⏰ <b>LICENSE SẮP HẾT HẠN</b>', ''];
+  // ------------------------------------------------------------------
+  // KHÔNG in key đầy đủ ra Telegram.
+  //
+  // LỖI ĐÃ SỬA: tin này (và 2 nút bên dưới) in nguyên key của từng khách.
+  // Nhóm Telegram có nhiều người — ai vào cũng đọc được key người khác và
+  // dùng miễn phí. Chủ shop yêu cầu "mọi thứ khép kín", "không còn key".
+  //
+  // Nay chỉ hiện 4 ký tự cuối + tên khách. `callback_data` vẫn mang key
+  // nhưng đó là dữ liệu ẩn của nút, khách không đọc được.
+  // ------------------------------------------------------------------
+  const tail = (k) => {
+    const t = String(k || '').replace(/[^A-Za-z0-9]/g, '');
+    return t.length >= 5 ? '••••' + t.slice(-4).toUpperCase() : '••••';
+  };
+  const lines = ['⏰ <b>SẮP HẾT HẠN</b>', ''];
   for (const r of rows.slice(0, 10)) {
     const d = Math.max(0, Math.ceil((r.expires_at - Date.now() / 1000) / 86400));
-    lines.push(`• <code>${hEsc(r.key)}</code> — còn <b>${d}</b> ngày`);
+    const who = r.username || r.user_name || '';
+    lines.push(`• <code>${hEsc(tail(r.key))}</code>`
+               + (who ? ` · ${hEsc(who)}` : '')
+               + ` — còn <b>${d}</b> ngày`);
   }
   lines.push('');
   lines.push('<i>Khách có thể gia hạn để không mất quyền dùng</i>');
 
-  return tgCall(env, 'sendMessage', {
-    chat_id: (await tgConfig(env)).chatId,
-    text: lines.join('\n'),
+  return tgBroadcast(env, lines.join('\n'), {
     parse_mode: 'HTML',
-    disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: rows.slice(0, 3).map((r) => ([
-        { text: `⏳ +30d ${r.key.slice(0, 12)}`, callback_data: `ls:ext30:${r.key}` },
-        { text: '🚫 Thu hồi', callback_data: `ls:revoke:${r.key}` },
+        { text: `⏳ +30 ngày ${tail(r.key)}`,
+          callback_data: `ls:ext30:${r.key}` },
+        { text: `🚫 Thu hồi ${tail(r.key)}`,
+          callback_data: `ls:revoke:${r.key}` },
       ])),
     },
   });
@@ -413,11 +446,8 @@ export async function notifyDailyReport(env, stats) {
   lines.push('');
   lines.push('<i>Báo cáo tự động hằng ngày</i>');
 
-  return tgCall(env, 'sendMessage', {
-    chat_id: (await tgConfig(env)).chatId,
-    text: lines.join('\n'),
+  return tgBroadcast(env, lines.join('\n'), {
     parse_mode: 'HTML',
-    disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: [[
         { text: '📊 Dashboard', callback_data: 'nav:dashboard' },

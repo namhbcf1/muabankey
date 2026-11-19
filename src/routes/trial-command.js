@@ -17,7 +17,8 @@
 import { json } from '../lib/http.js';
 import {
   trialCfg, kindCfg, normKind, nowSec, trialKey,
-  getQuota, consumeUse, refundUse, activeUse,
+  getQuota, consumeUse, refundUse,
+  getQuotaHw, consumeUseHw, refundUseHw,
   deviceAccountCount, countRecent, deriveIds, looksVirtual, checkWhitelist,
   KIND_1H, KIND_3D,
 } from '../lib/trial-quota.js';
@@ -86,6 +87,16 @@ export async function apiTrialCommand(env, request) {
     }
   }
   const kind = normKind(body.kind) || KIND_3D;
+  /*
+   * SAN PHAM: 'nofog' (XARENA MAP SANG) hoac 'xagrant' (XA THEM TAI NGUYEN).
+   * Mac dinh nofog de khong pha vo client cu chua gui truong nay.
+   *
+   * Truoc day trial CHI co No Fog, khach mua grant khong dung thu duoc.
+   */
+  const rawProduct = String(body.product || body.app || '').trim().toLowerCase();
+  const product = (rawProduct === 'xagrant' || rawProduct === 'xg'
+                   || rawProduct === 'grant') ? 'xagrant' : 'nofog';
+  const productPid = product === 'xagrant' ? 'xagrant' : null;
   const kc = kindCfg(cfg, kind);
   if (!kc || !kc.enabled) {
     return json({ ok: false, code: 'trial_kind_invalid', msg: `Gói ${kind} không khả dụng` }, 400);
@@ -158,26 +169,41 @@ export async function apiTrialCommand(env, request) {
   let deviceHash = null;
   if (!userId) {
     // Web không đọc được phần cứng. Neo danh tính theo thứ tự:
-    //   1. device_id (localStorage) — NHƯNG phải gắn với IP
-    //   2. weak HWID nếu có guid/bios
+    //   1. weak HWID (server tự băm từ parts) — KHÔNG phụ thuộc chuỗi client chọn
+    //   2. device_id (localStorage) — chỉ dùng khi KHÔNG có phần cứng, và phải
+    //      ghép IP
     //   3. IP
     //
     // QUAN TRỌNG: trước đây device_id đứng một mình -> khách xoá localStorage
     // hoặc gửi chuỗi ngẫu nhiên là "máy mới" -> 10 lượt mới. Test thật:
-    // 15+ mã trong 1 phiên. Nay ghép device_id với IP nên đổi device_id
-    // vẫn bị chặn bởi trần IP/ngày.
-    let anchor;
+    // 15+ mã trong 1 phiên.
+    //
+    // AUDIT #2: device_id là CHUỖI DO CLIENT CHỌN, nên mọi hạn mức neo vào nó
+    // đều xoay được (xoá localStorage = bucket mới). Nay đảo thứ tự: khi khách
+    // có gửi parts thì neo THẲNG vào `weak` (server băm guid|bios|cpu).
+    // `weak` KHÔNG chứa volume serial, nên chỉ xoay `vol` (cách làm phổ biến
+    // để lách HWID) cũng không tạo bucket mới.
+    //
+    // Giới hạn nào THẬT SỰ BINDING (nói rõ để vận hành khỏi đoán):
+    //   - Có phần cứng   -> hạn mức hwid (trial_quota_hw) + trần /24/ngày.
+    //   - Không phần cứng -> trần /24/ngày (cfg.maxPerNet24) là BINDING; IP
+    //     (cfg.maxPerIp) và trần ngày toàn hệ thống là lớp phụ.
+    // Nhờ vậy xoá localStorage chỉ đổi `device_id` — bucket và trần IP không đổi.
+    let anchor = null;
+    if (ids && ids.weak) {
+      anchor = 'hw:' + ids.weak;
+    }
     if (body.device_id) {
       const did = String(body.device_id).trim().slice(0, 64);
       if (/^[a-zA-Z0-9_-]{8,64}$/.test(did)) {
-        deviceHash = (await sha256hex('d1|' + did)).slice(0, 32);
-        // Ghép IP để không thể xoay device_id vô hạn trên cùng kết nối
-        anchor = (await sha256hex('di|' + did + '|' + ip)).slice(0, 32);
-        deviceHash = anchor;
+        // Giữ NGUYÊN công thức cũ cho whitelist scope='device' (đã phát hành).
+        deviceHash = (await sha256hex('di|' + did + '|' + ip)).slice(0, 32);
+        if (!anchor) {
+          // Không có phần cứng: đây chỉ là chuỗi client tự chọn, ghép IP để
+          // bớt xoay vòng. Trần /24 + trần ngày bên dưới mới là chốt thật.
+          anchor = deviceHash;
+        }
       }
-    }
-    if (!anchor && ids && ids.weak) {
-      anchor = ids.weak;
     }
     if (!anchor) {
       // Không có device_id và không có HWID -> dùng IP
@@ -196,22 +222,30 @@ export async function apiTrialCommand(env, request) {
     ip,
   });
 
-  // ---- Đang có trial cùng loại → resume, không trừ lượt ----
-  const active = await activeUse(env, userId, kind);
-  if (active) {
-    const q = wl.unlimited
-      ? { left: wl.quota, quota: wl.quota, used: 0 }
-      : await getQuota(env, userId, kind, kc.quota);
-    return await issueCommand(env, request, {
-      key: active.lic_key, kind, label, cfg, kc,
-      left: q.left, quota: q.quota, used: q.used,
-      resumed: true, userLabel, unlimited: wl.unlimited,
-    });
-  }
+  /*
+   * ------------------------------------------------------------------
+   * MỖI LẦN BẤM = MỘT MÃ MỚI. KHÔNG TRẢ LẠI MÃ CŨ.
+   *
+   * LỖI ĐÃ SỬA: trước đây nếu thiết bị đang có trial cùng loại còn hạn
+   * thì API trả lại CHÍNH MÃ ĐÓ (`resumed: true`). Đo được: bấm 3 lần
+   * được đúng 1 mã. Chủ shop yêu cầu mã nào cũng phải mới.
+   *
+   * Nay: bỏ hoàn toàn nhánh resume ở đây. Mỗi lần gọi đều cấp mã mới và
+   * trừ 1 lượt (đúng như cảm nhận của khách: bấm là có mã).
+   *
+   * Mã cũ KHÔNG bị huỷ — khách đã lỡ dùng thì vẫn dùng tiếp tới hết giờ.
+   * ------------------------------------------------------------------
+   */
+  // (đã bỏ resume — luôn cấp mã mới bên dưới)
 
   // ---- Hạn mức IP / subnet / ngày (BỎ QUA nếu whitelist) ----
+  //
+  // Thứ tự dưới đây là thứ tự CHẶT DẦN. `trial_uses.ip` do Cloudflare điền
+  // (cf-connecting-ip) nên ba bộ đếm này KHÔNG phụ thuộc bất kỳ dữ liệu nào
+  // client gửi lên — đây là các lớp chặn farm thật sự (audit #2).
   if (!wl.unlimited && ip !== 'unknown') {
     const net = String(ip).split('.').slice(0, 3).join('.');
+    // (a) Trần theo ĐÚNG IP trong 24h.
     const nIp = await countRecent(env, ip, net, nowSec() - 86400, { perIp: true });
     if (nIp >= cfg.maxPerIp) {
       return json({
@@ -220,6 +254,26 @@ export async function apiTrialCommand(env, request) {
       }, 429);
     }
     if (net.split('.').length === 3) {
+      /*
+       * (b) TRẦN /24 TRONG 24 GIỜ — cấu hình MỚI `trial_max_per_net24_day`
+       *     (mặc định 60).
+       *
+       * Vì sao cần: trước đây chỉ có trần /24 trong 30 NGÀY (mục c). Kẻ farm
+       * đổi IP trong cùng /24 (hoặc dùng CGNAT/4G) vẫn lấy được 60 mã/30 ngày
+       * rồi xoay tiếp; còn hạn mức 10 lượt thì neo vào `device_id` — chuỗi
+       * client tự chọn, xoá localStorage là bucket mới.
+       *
+       * Nay: 60 mã / 24 giờ / /24. Đây là trần BINDING cho mọi client không
+       * gửi được phần cứng thật.
+       */
+      const nNet24 = await countRecent(env, ip, net, nowSec() - 86400, { perIp: false });
+      if (nNet24 >= cfg.maxPerNet24) {
+        return json({
+          ok: false, code: 'trial_net_limit',
+          msg: 'Mạng này đã dùng hết lượt dùng thử trong 24 giờ. Thử lại ngày mai.',
+        }, 429);
+      }
+      // (c) Trần /24 trong 30 ngày (chống farm trường kỳ trên cùng dải mạng).
       const nNet = await countRecent(env, ip, net, nowSec() - 30 * 86400, { perIp: false });
       if (nNet >= cfg.maxPerNet) {
         return json({
@@ -231,6 +285,13 @@ export async function apiTrialCommand(env, request) {
   }
 
   // ---- Hạn mức toàn hệ thống / ngày (BỎ QUA nếu whitelist) ----
+  //
+  // ĐÃ KIỂM CHỨNG (audit #2): trần này có hiệu lực thật — nó đếm trên bảng
+  // `trial_uses` mà chính route này vừa ghi, và KHÔNG lọc theo bất kỳ dữ liệu
+  // client nào. Giới hạn đã biết: đây là đọc rồi mới ghi (không nguyên tử),
+  // nên một cụm request ĐỒNG THỜI có thể vượt trần vài đơn vị; trần /24 và
+  // trần theo IP ở trên (cũng dạng đếm) thu hẹp đúng cụm đó. Sai số này
+  // không cho phép farm số lượng lớn.
   if (!wl.unlimited) {
     const nDay = await env.DB.prepare(
       'SELECT COUNT(*) AS n FROM trial_uses WHERE created_at > ?'
@@ -257,15 +318,58 @@ export async function apiTrialCommand(env, request) {
   }
 
   // ---- Trừ lượt (BỎ QUA nếu whitelist) ----
+  //
+  // ĐẾM THEO PHẦN CỨNG TRƯỚC: HWID là khoá chính. Khách xoá cookie hoặc
+  // tạo tài khoản mới vẫn là cùng máy -> không lấy thêm được lượt.
+  // Không có HWID (không đọc được phần cứng) -> fallback user_id như cũ.
   let quota;
+  let quotaByHw = false;
+  /*
+   * ------------------------------------------------------------------
+   * KHOÁ HẠN MỨC LÀ **MÁY** (hwid), KHÔNG PHẢI TÀI KHOẢN.
+   *
+   * `quotaKind` phải khai báo Ở ĐÂY (ngoài khối else) — trước đây nó là
+   * `const` bên trong khối else nên khối `catch` bên dưới không thấy, và
+   * nhánh hoàn lượt khi ghi CSDL lỗi ném ReferenceError thay vì hoàn lượt
+   * (khách bị trừ oan 1 lượt dùng thử).
+   * ------------------------------------------------------------------
+   */
+  const quotaKind = product === 'xagrant' ? `${kind}:xagrant`
+                                           : `${kind}:nofog`;
   if (wl.unlimited) {
     quota = { ok: true, used: 0, quota: wl.quota, left: wl.quota };
   } else {
-    quota = await consumeUse(env, userId, kind, kc.quota);
+    // ------------------------------------------------------------------
+  // QUOTA TÁCH RIÊNG THEO SẢN PHẨM.
+  //
+  // LỖI ĐÃ SỬA: `trial_quota_hw` khoá bằng (hwid, kind) — KHÔNG có sản
+  // phẩm. Nên 10 lượt dùng thử bị CHIA SẺ giữa map sáng và tài nguyên:
+  // thử map sáng 7 lượt thì tài nguyên chỉ còn 3.
+  // Chủ shop yêu cầu "giới hạn tài nguyên 10 lần" — tức mỗi sản phẩm
+  // phải có 10 lượt riêng.
+  //
+  // Nay ghép sản phẩm vào khoá: '1h:nofog' / '1h:xagrant'.
+  //
+  // NGƯỜI DÙNG KHÔNG NẰM TRONG KHOÁ: `consumeUseHw(env, hwid, ...)` chỉ nhận
+  // (hwid, kind). Đăng nhập bằng tài khoản khác trên CÙNG MÁY vẫn tiêu
+  // chung 10 lượt của máy đó — đúng yêu cầu "chỉ được 10 lần 1 máy".
+  // ------------------------------------------------------------------
+  const hwidForQuota = (ids && ids.hwid) ? String(ids.hwid) : '';
+    if (hwidForQuota) {
+      const qhw = await consumeUseHw(env, hwidForQuota, quotaKind,
+                                     kc.quota);
+      if (qhw) {
+        quota = qhw;
+        quotaByHw = true;
+      }
+    }
+    if (!quota) {
+      quota = await consumeUse(env, userId, kind, kc.quota);
+    }
     if (!quota.ok) {
       return json({
         ok: false, code: 'trial_quota_exhausted',
-        msg: `Đã dùng hết ${quota.quota} lượt dùng thử ${label}. Mua key để tiếp tục.`,
+        msg: `Máy này đã dùng hết ${quota.quota} lượt ${label}. Mua key để tiếp tục.`,
         used: quota.used, quota: quota.quota, left: 0,
       }, 403);
     }
@@ -285,8 +389,10 @@ export async function apiTrialCommand(env, request) {
    *
    * Nay: grant vào trạng thái GIỮ (hold) như đường đăng nhập:
    *   started_at = NULL, expires_at = now + holdSec
-   * Đồng hồ thật bắt đầu ở `trialBeginOnDownload()` — gọi từ handler tải
-   * installer, tức đúng khoảnh khắc khách bắt đầu cài.
+   * Đồng hồ thật bắt đầu ở nơi BIẾT HWID của máy khách — /api/trial/claim
+   * (trial.js) hoặc /api/check (license-server.js) — KHÔNG phải lúc tải bộ
+   * cài nữa: handler tải bộ cài không biết HWID nên trước đây nó bật đồng hồ
+   * mà vẫn để hwid = NULL (mã chia sẻ được, audit #6).
    *
    * Giữ (hold) vẫn có hạn để mã không tồn tại vĩnh viễn.
    */
@@ -296,13 +402,21 @@ export async function apiTrialCommand(env, request) {
 
   try {
     await env.DB.batch([
+      /*
+       * max_rebind = 1 (audit #5): mã dùng thử cũng phải có ĐÚNG 1 lượt đổi
+       * máy. Trước đây 0 -> khách cài lại Windows (GUID đổi) là mã chết vĩnh
+       * viễn, không có đường cứu nào; trong khi luồng đổi máy của web vẫn
+       * hiển thị "còn 0 lượt". 1 lượt là đủ cho một lần cài lại máy và vẫn
+       * chặn chia sẻ mã.
+       */
       env.DB.prepare(
         `INSERT INTO licenses
-           (key, hwid, plan, note, created_at, activated_at, expires_at,
-            last_seen, last_ip, revoked, max_rebind, rebinds, source)
-         VALUES (?,?, 'trial', ?,?, NULL, ?, NULL, ?, 0, 0, 0, 'trial')`
-      ).bind(key, hwid, `Trial ${kind} - ${userLabel || 'web'}`,
-        now, holdUntil, ip),
+           (key, hwid, plan, pid, note, created_at, activated_at, expires_at,
+            last_seen, last_ip, revoked, max_rebind, rebinds, source, app)
+         VALUES (?,?, 'trial', ?, ?,?, NULL, ?, NULL, ?, 0, 1, 0, 'trial', ?)`
+      ).bind(key, hwid, productPid,
+        `Trial ${kind} - ${product} - ${userLabel || 'web'}`,
+        now, holdUntil, ip, product),
       env.DB.prepare(
         `INSERT INTO trial_uses
            (id, user_id, kind, lic_key, hwid, device_weak, ip, ua,
@@ -313,7 +427,11 @@ export async function apiTrialCommand(env, request) {
         holdUntil, now),
     ]);
   } catch (e) {
-    await refundUse(env, userId, kind);
+    if (quotaByHw && ids && ids.hwid) {
+      await refundUseHw(env, ids.hwid, quotaKind);
+    } else {
+      await refundUse(env, userId, kind);
+    }
     console.error('trial command issue:', e && e.message);
     return json({ ok: false, code: 'server_error', msg: 'Không tạo được mã dùng thử' }, 500);
   }
@@ -321,27 +439,31 @@ export async function apiTrialCommand(env, request) {
   return await issueCommand(env, request, {
     key, kind, label, cfg, kc,
     left: quota.left, quota: quota.quota, used: quota.used,
-    resumed: false, userLabel, unlimited: wl.unlimited,
+    resumed: false, userLabel, unlimited: wl.unlimited, product,
+    quotaByHw: quotaByHw,
   });
 }
 
 /** Sinh token + lệnh CMD cho mã trial vừa cấp. */
-async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quota, used, resumed, userLabel, unlimited }) {
-  const token = randomHex(24);
-  const tokenHash = await sha256hex(token);
-  const now = nowSec();
-
-  // Dùng chung bảng install_tokens — token này cho phép tải + kích hoạt
-  await env.DB.prepare(
-    `INSERT INTO install_tokens (token_hash, key, user_id, created_at, expires_at)
-     VALUES (?,?,?,?,?)`
-  ).bind(tokenHash, key, 'trial-web', now, now + 86400).run();
-
+async function issueCommand(env, request, { key, kind, label, cfg, kc, left,
+                                              quota, used, resumed, userLabel,
+                                              unlimited, product,
+                                              quotaByHw }) {
+  /*
+   * KHÔNG sinh mã hex nào nữa.
+   *
+   * CHỦ SHOP CHỐT: khách chỉ dùng MỘT chuỗi = license key
+   * (TR-XXXX-XXXX-XXXX cho dùng thử).
+   *
+   * LỖI ĐÃ SỬA: trước đây hàm này sinh token 48 hex, ghi vào install_tokens,
+   * rồi trả `token`, `command`, `oneLiner`, `cmdUrl` ra cho khách. Khách thấy
+   * mã hex ở modal dùng thử nhưng lại thấy key ở trang Đơn hàng -> dán nhầm.
+   *
+   * Nay: bộ cài nhận key trực tiếp qua /api/install-info?key=... nên KHÔNG
+   * cần token nữa. Bớt hẳn một dòng trong install_tokens mỗi lần dùng thử.
+   */
   const base = siteBase(request);
-  const cmdUrl = `${base}/i/${key}.cmd?t=${token}`;
-
-  // MỘT DÒNG, khách chỉ dán vào CMD và Enter. Không nhập gì.
-  const command = `curl -L -o "%TEMP%\\xa.cmd" "${cmdUrl}" && "%TEMP%\\xa.cmd"`;
+  const isXg = product === 'xagrant';
 
   return json({
     ok: true,
@@ -349,28 +471,22 @@ async function issueCommand(env, request, { key, kind, label, cfg, kc, left, quo
     kind,
     label,
     resumed,
-    /*
-     * TOKEN: trước đây KHÔNG trả ra, nên bộ cài GUI (xa_setup.exe) không có
-     * gì để dán vào. Nay trả tường minh để khách chỉ cần:
-     *   tải xa_setup.exe -> dán token -> Cài đặt.
-     * Vẫn giữ `command`/`oneLiner` cho ai quen dán lệnh (tương thích ngược).
-     */
-    token,
-    app: 'nofog',
-    setupUrl: `${base}/download/xa_setup.exe`,
+    product: isXg ? 'xagrant' : 'nofog',
+    app: isXg ? 'xagrant' : 'nofog',
+    // KHÔNG còn bộ cài. Một file duy nhất: xa_arena.exe.
+    setupUrl: `${base}/download/xa_arena.exe`,
+    appUrl: `${base}/download/xa_arena.exe`,
     // Không trả "unlimited"/quota nội bộ ra cho khách:
     // trước đây response công khai lộ quota:999999 và unlimited:true
     // -> khách thấy "999999 lượt" (vô lý) và biết ai trong whitelist.
     left: unlimited ? null : left,
     quota: unlimited ? null : quota,
-    command,
-    oneLiner: `powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm ${base}/i/${key}.ps1?t=${token})"`,
-    cmdUrl,
-    downloadUrl: `${base}/download/xa_nofog_pro.exe`,
-    expiresIn: 86400,
+    // Cho tool biết đếm theo phần cứng hay theo tài khoản
+    quota_by: quotaByHw ? 'hwid' : 'account',
+    downloadUrl: `${base}/download/xa_arena.exe`,
     minutes: Math.round(kc.sec / 60),
     days: Math.round(kc.sec / 86400),
     userLabel,
-    hint: 'Tải bộ cài, dán mã cài đặt vào ô rồi bấm Cài đặt. Không cần CMD.',
+    hint: 'Tải bộ cài, dán key ở trên vào ô rồi bấm Cài đặt. Không cần CMD.',
   });
 }

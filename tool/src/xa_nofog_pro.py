@@ -86,7 +86,6 @@ Nhay qua ca `mov [esp+0x3C],eax` -> caller dung index cu -> AV doc 0x2103E1E.
 --- Vi sao khong ghi mask ---
 Byte 2 cua mask la chi so bang. Ghi vao lam engine tra pointer sai va crash.
 """
-import base64
 import ctypes
 import ctypes.wintypes as wt
 import hashlib
@@ -213,7 +212,9 @@ REGISTER_URL = str(_c('REGISTER_URL', NF.C(NF.K_REGISTER_URL)))
 FORGOT_URL = str(_c('FORGOT_URL', 'https://xienhl.com/#/login'))
 EXIT_TRIAL_END = int(_c('EXIT_TRIAL_END', 6))
 EXIT_TRIAL_QUOTA = int(_c('EXIT_TRIAL_QUOTA', 7))
-CLIENT_VERSION = '1.4.1'
+# PHAI khop /api/app/version tren server. Server lon hon -> client tu
+# cap nhat. Tang so nay moi lan build phat hanh.
+CLIENT_VERSION = '1.5.0.0'
 
 # Dinh nghia 2 goi dung thu
 TRIAL_KINDS = {
@@ -1520,7 +1521,19 @@ def open_buy_page():
         return False
 
 
-def start_trial(kind=None, verbose=True):
+def _trial_product(product=None):
+    """Chuẩn hoá tên sản phẩm cho /api/trial/command.
+
+    'grant' / 'xagrant' / 'tai-nguyen' -> 'xagrant'; còn lại -> 'nofog'.
+    """
+    p = str(product or '').strip().lower()
+    if p in ('grant', 'xagrant', 'xg', 'tai-nguyen', 'tainguyen',
+             'resource', 'tng'):
+        return 'xagrant'
+    return 'nofog'
+
+
+def start_trial(kind=None, verbose=True, product=None):
     """Xin trial tu server. Tra dict {ok, code, msg, next, key}.
 
     next: 'run'  -> chay duoc
@@ -1547,7 +1560,6 @@ def start_trial(kind=None, verbose=True):
     # session. Truoc day goi /api/trial/start (bat buoc login) nen khach
     # phai tao tai khoan chi de dung thu -> ray ra, mat khach.
     ck = None
-    uname = None
 
     # FAIL CLOSED: server tu bam parts -> parts rong se ra HWID "toan rong"
     # giong nhau tren moi may loi => 1 tai khoan farm duoc vo han.
@@ -1571,7 +1583,12 @@ def start_trial(kind=None, verbose=True):
 
     payload = {
         'guid': parts[0], 'bios': parts[1], 'cpu': parts[2], 'vol': parts[3],
-        'kind': kind, 'app': APP_NAME, 'ver': CLIENT_VERSION, 'idem_key': idem,
+        'kind': kind, 'app': APP_NAME, 'ver': CLIENT_VERSION,
+        'idem_key': idem,
+        # SẢN PHẨM: server tách riêng bộ đếm lượt theo sản phẩm
+        # ('1h:nofog' / '1h:xagrant'). Không gửi thì server coi là
+        # nofog và lượt dùng thử tài nguyên bị trừ vào map sáng.
+        'product': _trial_product(product),
     }
 
     r = _post('/api/trial/command', payload, timeout=HTTP_TIMEOUT, retries=1, cookie=ck)
@@ -1584,12 +1601,6 @@ def start_trial(kind=None, verbose=True):
             return {'ok': False, 'code': 'login_required',
                     'msg': 'Server doi dang nhap (loi cau hinh). Thu lai sau.',
                     'next': 'retry'}
-            r = _post('/api/trial/start', payload, timeout=HTTP_TIMEOUT,
-                      retries=1, cookie=ck2)
-            if not r.get('ok'):
-                code = str(r.get('code') or '')
-            else:
-                code = ''     # thanh cong, roi xuong phan duoi
 
         if code:
             # Bang anh xa DAY DU - moi ma co next-action
@@ -1627,6 +1638,18 @@ def start_trial(kind=None, verbose=True):
     activated = bool(r.get('activated'))
     time_left = int(r.get('time_left_sec') or 0)
     expires_at = int(r.get('expires_at') or 0)
+    # SỐ LƯỢT: server trả 'left'/'quota' nhưng trước đây client VỨT ĐI nên
+    # không chỗ nào báo được "còn mấy lượt" (chủ shop yêu cầu phải báo).
+    quota_left = r.get('left')
+    quota_total = r.get('quota')
+    try:
+        quota_left = int(quota_left) if quota_left is not None else None
+    except Exception:
+        quota_left = None
+    try:
+        quota_total = int(quota_total) if quota_total is not None else None
+    except Exception:
+        quota_total = None
     kc = TRIAL_KINDS[kind]
 
     st = load_state()
@@ -1647,6 +1670,11 @@ def start_trial(kind=None, verbose=True):
         'mode': 'server',
         'recheck_sec': int(r.get('recheck_sec') or kc['recheck']),
     })
+    # Số lượt dùng thử còn lại — để GUI báo "còn N/M lượt"
+    if quota_left is not None:
+        st['quota_left'] = quota_left
+    if quota_total is not None:
+        st['quota_total'] = quota_total
     # activated=False: expires_at la HOLD (7 ngay de kip cai) -> KHONG luu lam han
     if activated:
         st['expires_at'] = expires_at
@@ -1675,7 +1703,8 @@ def start_trial(kind=None, verbose=True):
         _print_trial_banner(load_state())
 
     return {'ok': True, 'code': 'ok', 'msg': 'ok', 'next': 'run', 'key': key,
-            'kind': kind}
+            'kind': kind, 'left': quota_left, 'quota': quota_total,
+            'time_left_sec': time_left, 'expires_at': expires_at}
 
 
 _trial_next_check = {'at': 0.0}
@@ -2017,6 +2046,178 @@ class SitesUnavailable(Exception):
     """Chua nap duoc bang cong. KHONG duoc cham vao process game."""
 
 
+# ---------------------------------------------------------------------------
+# TỰ ĐỘNG CẬP NHẬT
+#
+# Chạy nền, không chặn GUI. Logic nằm trong tool/ui/xa_update.py.
+# Ở đây chỉ bọc lại cho No Fog dùng.
+# ---------------------------------------------------------------------------
+
+def _updater():
+    """Nạp module xa_update (ở tool/ui). Trả module hoặc None."""
+    try:
+        import xa_update
+        return xa_update
+    except Exception:
+        pass
+    try:
+        import os as _os
+        import sys as _sys
+        here = _os.path.dirname(_os.path.abspath(__file__))
+        ui = _os.path.abspath(_os.path.join(here, '..', 'ui'))
+        if ui not in _sys.path:
+            _sys.path.insert(0, ui)
+        import xa_update
+        return xa_update
+    except Exception:
+        return None
+
+
+def _launcher_path():
+    """Duong dan TUYET DOI cua file .exe nguoi dung bam.
+
+    Nuitka onefile: sys.frozen = False, sys.executable =
+    TEMP/onefile_*/python.exe. Duong dan that nam o sys.argv[0].
+    """
+    try:
+        a0 = sys.argv[0] if sys.argv else ''
+        if a0 and a0.lower().endswith('.exe'):
+            ap = os.path.abspath(a0)
+            low = ap.replace('/', chr(92)).lower()
+            if os.path.exists(ap) and (chr(92) + 'onefile_') not in low:
+                return ap
+        p = sys.executable or ''
+        if p.lower().endswith('.exe'):
+            ap = os.path.abspath(p)
+            low = ap.replace('/', chr(92)).lower()
+            if (os.path.exists(ap)
+                    and (chr(92) + 'onefile_') not in low
+                    and os.path.basename(ap).lower() != 'python.exe'):
+                return ap
+        return ''
+    except Exception:
+        return ''
+
+def update_check():
+    """Hỏi server xem có bản mới. Trả dict hoặc None.
+
+    Chỉ trả thông tin; KHÔNG tải. Dùng ở thread nền.
+    """
+    U = _updater()
+    if not U:
+        return None
+    try:
+        info = U.check(API_BASE, 'nofog')
+    except Exception:
+        return None
+    if not info.get('ok'):
+        return None
+    if not U.is_newer(info.get('version') or '', CLIENT_VERSION):
+        return None
+    return info
+
+
+def update_download(info, on_progress=None):
+    """Tải bản mới. Trả (ok, msg)."""
+    U = _updater()
+    if not U:
+        return False, 'khong nap duoc module cap nhat'
+    exe = _launcher_path()
+    if not exe or not os.path.exists(exe):
+        return False, 'khong xac dinh duoc file dang chay'
+    return U.download(info, exe, on_progress)
+
+
+def update_apply():
+    """Thay file + khởi động lại. Trả (ok, msg).
+
+    Người gọi phải THOÁT app ngay sau khi hàm này trả True.
+    """
+    U = _updater()
+    if not U:
+        return False, 'khong nap duoc module cap nhat'
+    exe = _launcher_path()
+    if not exe:
+        return False, 'khong xac dinh duoc file dang chay'
+    return U.apply_and_restart(exe)
+
+
+def update_pending():
+    """Đã có bản mới tải sẵn chờ thay?"""
+    U = _updater()
+    if not U:
+        return False
+    exe = _launcher_path()
+    if not exe:
+        return False
+    return U.has_pending(exe)
+
+
+def update_enforce():
+    """ÉP CẬP NHẬT trước khi mở GUI.
+
+    Trả:
+      True  -> được chạy (đã mới nhất, hoặc không hỏi được server)
+      False -> đã lên lịch cập nhật; NGƯỜI GỌI PHẢI THOÁT NGAY
+    """
+    U = _updater()
+    if not U:
+        return True
+    exe = _launcher_path()
+    if not exe:
+        # Chạy bằng python script -> không tự cập nhật được, cho chạy
+        return True
+    try:
+        st, msg = U.enforce_update(
+            API_BASE, 'nofog', CLIENT_VERSION, exe,
+            on_status=lambda m: _enforce_status(m))
+    except Exception:
+        return True
+    if st == 'updating':
+        return False
+    if st == 'error':
+        # Tải lỗi -> vẫn cho chạy bản hiện tại (không chặn vì lỗi mạng)
+        return True
+    return True
+
+
+def _enforce_status(msg):
+    """Hiện tiến trình cập nhật khi chưa có GUI.
+
+    Dùng hộp thoại Windows gốc (không cần PyQt6 đã khởi tạo).
+    """
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None, str(msg), 'XA THÊM TÀI NGUYÊN', 0x40)
+    except Exception:
+        pass
+
+
+def update_on_start(app_name='XArenaNoFog'):
+    """Gọi lúc khởi động: đếm boot, quyết định rollback.
+
+    Trả (count, should_rollback).
+    """
+    U = _updater()
+    if not U:
+        return 0, False
+    try:
+        return U.on_start(app_name)
+    except Exception:
+        return 0, False
+
+
+def update_mark_good(app_name='XArenaNoFog'):
+    """App đã chạy ổn -> xoá bộ đếm boot."""
+    U = _updater()
+    if U:
+        try:
+            U.mark_good(app_name)
+        except Exception:
+            pass
+
+
 def _require_sites():
     """Tra bang cong da giai ma. Nem SitesUnavailable neu chua co."""
     if SITES is None:
@@ -2059,8 +2260,9 @@ def _load_sites(st=None, verbose=False):
 
     SITES = r['sites']
     if verbose:
-        print('  bang cong: %d cong (gate %s...)'
-              % (r['count'], (r.get('gate') or '')[:8]))
+        # KHÔNG in gate: gate dùng sinh keystream giải mã bảng cổng nên là
+        # bí mật. Trước đây in 8 ký tự đầu ra console = rò rỉ.
+        print('  bang cong: %d cong' % r['count'])
     return True, 'ok'
 
 
@@ -2244,6 +2446,57 @@ def acquire_instance_lock():
     except Exception:
         pass
     return True
+
+
+def focus_existing_window(title_part='XARENA'):
+    """Mang cua so cua ban dang chay len truoc. Tra True neu tim thay.
+
+    DUNG KHI NAO: nguoi dung bam dup shortcut lan 2 trong khi tool dang chay.
+    Truoc day instance 2 chi in thong bao ra console (khong hien) roi thoat
+    -> khach tuong tool khong mo duoc.
+
+    Nay: tim cua so theo tieu de, bo trang thai an xuong (neu co), dua len
+    truoc va ep len foreground. Khong lam gi neu khong tim thay.
+    """
+    try:
+        u = ctypes.WinDLL('user32', use_last_error=True)
+        u.FindWindowW.restype = ctypes.c_void_p
+        u.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        u.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        u.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+        u.BringWindowToTop.argtypes = [ctypes.c_void_p]
+        u.IsIconic.argtypes = [ctypes.c_void_p]
+
+        # Tim chinh xac theo ten cua so, roi thu cac ten ung vien khac.
+        candidates = []
+        try:
+            candidates.append(str(APP_NAME))
+        except Exception:
+            pass
+        candidates.extend(['XARENA MAP SÁNG', 'XARENA MAP SANG'])
+
+        hwnd = 0
+        for c in candidates:
+            try:
+                hwnd = u.FindWindowW(None, c) or 0
+            except Exception:
+                hwnd = 0
+            if hwnd:
+                break
+        if not hwnd:
+            return False
+
+        SW_RESTORE = 9
+        SW_SHOW = 5
+        if u.IsIconic(ctypes.c_void_p(hwnd)):
+            u.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
+        else:
+            u.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOW)
+        u.BringWindowToTop(ctypes.c_void_p(hwnd))
+        u.SetForegroundWindow(ctypes.c_void_p(hwnd))
+        return True
+    except Exception:
+        return False
 
 
 def set_title(text):
@@ -2433,7 +2686,42 @@ def wr(h, a, data):
     return w.value == len(data)
 
 
+# ---------------------------------------------------------------------------
+# KHOÁ GHI GAME — DÙNG CHUNG VỚI MODULE TÀI NGUYÊN
+#
+# LỖI ĐÃ SỬA: `xa_grant` có khoá engine riêng (`engine_lock`), nhưng
+# module này KHÔNG biết khoá đó. Nên `PatchWorker` (vá map sáng) và
+# `GrantWorker` (cộng tài nguyên) có thể ghi vào tiến trình game CÙNG LÚC
+# ⇒ hỏng trạng thái ⇒ crash `0xC0000005`.
+#
+# Nay: thử mượn khoá của `xa_grant`. Nếu không import được (chạy
+# `xa_nofog_pro.exe` standalone) thì dùng khoá cục bộ — vẫn an toàn
+# trong phạm vi module đó.
+# ---------------------------------------------------------------------------
+try:
+    from xa_grant import engine_lock as _shared_engine_lock
+    _GAME_LOCK = _shared_engine_lock()
+except Exception:
+    import threading as _threading
+    _GAME_LOCK = _threading.RLock()
+
+
+def game_lock():
+    """Khoá ghi game — dùng CHUNG với module tài nguyên khi có."""
+    return _GAME_LOCK
+
+
 def write_at(h, addr, data):
+    """Ghi byte vào game — GIỮ KHOÁ để không chồng với tài nguyên.
+
+    Lỗi đã sửa: trước đây hàm này ghi thẳng, không khoá, nên có thể chạy
+    đồng thời với `GrantWorker` và làm hỏng tiến trình game.
+    """
+    with _GAME_LOCK:
+        return _write_at_locked(h, addr, data)
+
+
+def _write_at_locked(h, addr, data):
     old = wt.DWORD()
     if not kernel32.VirtualProtectEx(h, ctypes.c_void_p(addr), len(data),
                                      PAGE_EXECUTE_READWRITE, ctypes.byref(old)):
@@ -2447,6 +2735,64 @@ def write_at(h, addr, data):
                                   ctypes.byref(d))
     kernel32.FlushInstructionCache(h, ctypes.c_void_p(addr), len(data))
     return ok
+
+
+# ---------------------------------------------------------------------------
+# PHÁT HIỆN "ĐÃ VÀO TRẬN"
+#
+# VÌ SAO CẦN: bản trước vá ngay khi attach được process. Lúc đó game còn ở
+# menu, engine chưa khởi tạo vùng dữ liệu trận -> byte vá ghi vào làm game
+# lỗi (treo/mất map). Nay chỉ vá khi CHẮC CHẮN đã vào trận.
+#
+# CÁCH LÀM: EMPIRESX.EXE có con trỏ `world` tại VA cố định (ASLR tắt). Khi
+# chưa vào trận con trỏ = 0; khi vào trận nó trỏ tới cấu trúc world và
+# [world+0x3F4] là manager (cũng khác 0).
+#
+# Cùng địa chỉ này XAGrant đang dùng (PTR_WORLD), nên hai tool nhất quán.
+# ---------------------------------------------------------------------------
+
+PTR_WORLD   = 0x00585E88     # VA của con trỏ world (giống XAGrant)
+OFF_MANAGER = 0x3F4          # [world + 0x3F4] = manager
+
+
+def _u32(h, va):
+    """Đọc 1 dword. Trả None nếu không đọc được."""
+    b = rd(h, va, 4)
+    if not b or len(b) < 4:
+        return None
+    try:
+        return struct.unpack('<I', b)[0]
+    except Exception:
+        return None
+
+
+def in_match(h, base=None):
+    """True nếu game đã vào trận thật (không phải menu / loading).
+
+    Fail closed: không đọc được thì trả False -> KHÔNG vá.
+    """
+    if not h:
+        return False
+    try:
+        # VA tuyệt đối: module nạp ở PREFERRED_BASE (ASLR tắt). Nếu base lệch
+        # thì tính lại theo base để an toàn.
+        va = PTR_WORLD
+        if base:
+            va = base + (PTR_WORLD - PREFERRED_BASE)
+        world = _u32(h, va)
+        if not world:
+            return False
+        # Vùng nhớ hợp lệ của process 32-bit: 0x00010000 .. 0x7FFFFFFF
+        if world < 0x10000 or world > 0x7FFFFFFF:
+            return False
+        mgr = _u32(h, world + OFF_MANAGER)
+        if not mgr:
+            return False
+        if mgr < 0x10000 or mgr > 0x7FFFFFFF:
+            return False
+        return True
+    except Exception:
+        return False
 
 
 def patch(h, base, site, restore=False):
@@ -2516,6 +2862,108 @@ def apply_set(h, base, sites, restore, label, quiet=False):
     if bad:
         print('  loi: %s' % ' '.join(bad))
     return changed, bad
+
+
+def selftest():
+    """Kiem tra tinh toan ven — KHONG can game, KHONG can license, KHONG admin.
+
+    Muc dich: xac nhan mot ban build that su chay duoc va cac ham loi khong
+    bi hong. Dung khi khach bao "app khong dung duoc" de biet ngay la loi
+    build hay loi moi truong.
+    """
+    ok = True
+    print('SELFTEST XARENA MAP SANG (khong cham vao game)')
+    print('')
+
+    # --- 1. Import + hang so ---
+    try:
+        print('  [1] Hang so')
+        print('      APP_NAME      = %s' % APP_NAME)
+        print('      CLIENT_VERSION= %s' % CLIENT_VERSION)
+        print('      PREFERRED_BASE= 0x%08X' % PREFERRED_BASE)
+        print('      REQUIRE_ONLINE= %s' % REQUIRE_ONLINE)
+        print('      STATE_FILE    = %s' % STATE_FILE)
+        ok &= bool(APP_NAME) and bool(CLIENT_VERSION)
+    except Exception as e:
+        print('      LOI: %r' % e)
+        ok = False
+
+    # --- 2. DPAPI (ghi/doc state) ---
+    try:
+        print('  [2] DPAPI ma hoa/giiai ma')
+        probe = b'xanf-selftest-probe-12345'
+        ct = _dpapi_encrypt(probe)
+        if ct is None:
+            print('      FAIL: khong ma hoa duoc')
+            ok = False
+        else:
+            pt = _dpapi_decrypt(ct)
+            same = (pt == probe)
+            print('      %s (%d -> %d byte)' % ('OK' if same else 'FAIL',
+                                                len(probe), len(ct)))
+            ok &= same
+    except Exception as e:
+        print('      LOI: %r' % e)
+        ok = False
+
+    # --- 3. HWID ---
+    try:
+        print('  [3] HWID')
+        parts = _hwid_parts()
+        nonempty = [p for p in parts if str(p).strip()]
+        print('      manh doc duoc: %d/4' % len(nonempty))
+        h = compute_hwid()
+        print('      HWID = %s' % h)
+        ok &= (len(h) == 32)
+    except HwidUnavailable as e:
+        print('      FAIL: khong du thong tin phan cung (%s)' % e)
+        ok = False
+    except Exception as e:
+        print('      LOI: %r' % e)
+        ok = False
+
+    # --- 4. Doc/ghi state ---
+    try:
+        print('  [4] Doc state hien co')
+        st = load_state()
+        if not st:
+            print('      chua co license (binh thuong voi may moi)')
+        else:
+            k = st.get('key') or ''
+            masked = (k[:9] + '...' + k[-4:]) if len(k) > 14 else (k or '(khong co)')
+            print('      key   = %s' % masked)
+            exp = st.get('expires_at')
+            print('      han   = %s' % ('vinh vien' if exp == 0 else exp))
+    except Exception as e:
+        print('      LOI: %r' % e)
+        ok = False
+
+    # --- 5. Bang offset (neu co license) ---
+    try:
+        print('  [5] Bang offset')
+        sites = _require_sites().full()
+        print('      so cong: %d' % len(sites))
+        ok &= len(sites) > 0
+    except SitesUnavailable as e:
+        print('      chua co (can license hop le): %s' % e)
+    except Exception as e:
+        print('      LOI: %r' % e)
+        ok = False
+
+    # --- 6. Quet tien trinh ---
+    try:
+        print('  [6] Quet tien trinh game')
+        procs = find_game()
+        print('      tim thay: %d' % len(procs))
+        for pid, name in procs[:3]:
+            print('        %s (pid %d)' % (name, pid))
+    except Exception as e:
+        print('      LOI: %r' % e)
+        ok = False
+
+    print('')
+    print('  KET QUA: %s' % ('PASS' if ok else 'FAIL'))
+    return 0 if ok else 1
 
 
 def dump_state(h, base, sites):
@@ -3586,8 +4034,8 @@ def offer_install_if_needed(opts):
     # on_no_tty=True: cai dat la thao tac KHONG pha huy du lieu (chi them file
     # + shortcut) va bo cai .cmd/.ps1 goi EXE ma khong co TTY -> van phai cai
     # duoc. Khac voi --uninstall (co the xoa) nen mac dinh la TU CHOI.
-    if not _ask_yes_no('  Cai dat vao Program Files?', default=True,
-                       on_no_tty=True):
+    if not _ask_yes_no('  Cai dat vao Program Files?', default=False,
+                       on_no_tty=False):
         print('  Bo qua cai dat. Tiep tuc chay tu file hien tai.')
         return False
     run_install(opts)
@@ -3638,7 +4086,7 @@ def parse_args(argv):
          'deactivate': False, 'key': None, 'trial': False, 'buy': False,
          'rebind': None, 'token': None, 'trial_kind': None, 'trial_key': None,
          'login': None, 'logout': False, 'install': False, 'uninstall': False,
-         'force': False}
+         'force': False, 'selftest': False}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -3690,6 +4138,11 @@ def parse_args(argv):
             o['buy'] = True
         elif a in ('-h', '--help'):
             o['help'] = True
+        elif a == '--selftest':
+            # KIEM TRA TINH TOAN VEN — khong can game, khong can license.
+            # Truoc day No Fog KHONG co co nay (khac voi grant/setup), nen
+            # khong the xac nhan mot ban build co hong hay khong.
+            o['selftest'] = True
         elif a == '--key':
             i += 1
             if i >= len(argv):
@@ -3883,7 +4336,6 @@ def show_status():
     elif exp:
         print('Het han   : %s' % time.strftime('%Y-%m-%d %H:%M:%S',
                                                time.localtime(exp)))
-        left = (exp - time.time()) / 86400.0
         print('Con lai   : %s' % _fmt_left(st))
 
     # Hiển thị giờ server + phát hiện lùi đồng hồ
@@ -4194,6 +4646,10 @@ def run():
         print(help_text())
         return 0
 
+    # --selftest: kiem tra ban build, khong can game/license/admin
+    if opts.get('selftest'):
+        return selftest()
+
     # --uninstall: go cai dat (khong can license, KHONG hoi key)
     # Dat TRUOC moi thu khac: nguoi dung muon go thi phai go duoc ke ca khi
     # license hong, mat mang, hay server chet.
@@ -4406,6 +4862,102 @@ def run():
             print('Kich hoat xong. Chay lai khong tham so de va game.')
         return 0 if ok else EXIT_NO_LICENSE
 
+    # Che do chay — phai tinh TRUOC khoi GUI vi GUI dua vao resident_mode.
+    once_mode = opts['once'] or opts['dump'] or opts['restore']
+    watch_mode = opts['watch'] and not once_mode
+    resident_mode = not once_mode and not watch_mode
+
+    # ------------------------------------------------------------------
+    # GUI TRUOC TIEN khi khong co tham so.
+    #
+    # THU TU QUAN TRONG: truoc day require_license() chay TRUOC khoi nay, nen
+    # license het han -> return -> khong bao gio mo GUI -> khach khong co cho
+    # nhap key moi. Tool thanh "mo khong duoc" vinh vien.
+    #
+    # Nay GUI mo truoc; ben trong tu bao het han va hien nut "Doi key".
+    # ------------------------------------------------------------------
+    if resident_mode:
+        # ------------------------------------------------------------------
+        # KIỂM TRA KHỞI ĐỘNG HỎNG -> QUAY LUI
+        #
+        # Bản update có thể crash ngay khi mở. on_start() đếm số lần khởi
+        # động liên tiếp mà chưa chạy được 60 giây. Quá 2 lần -> quay về
+        # bản .old rồi thoát, để khách không bị kẹt vĩnh viễn.
+        # ------------------------------------------------------------------
+        try:
+            _bcnt, _should_rb = update_on_start()
+            if _should_rb:
+                _exe = _launcher_path()
+                if _exe:
+                    _U = _updater()
+                    if _U:
+                        _okrb, _msgrb = _U.rollback_now(_exe)
+                        if _okrb:
+                            try:
+                                print('Ban moi loi 2 lan — quay ve ban cu.')
+                            except Exception:
+                                pass
+                            import os as _os2
+                            _os2._exit(0)
+        except Exception:
+            pass
+
+        # ------------------------------------------------------------------
+        # ÉP CẬP NHẬT — TRƯỚC KHI MỞ GUI
+        #
+        # Chủ shop: "luôn kiểm tra version trước khi chạy. Thấp hơn thì KHÔNG
+        # cho chạy, bắt buộc đúng bản mới nhất."
+        #
+        # Nếu bản này cũ: tải bản mới + lên lịch thay file -> THOÁT NGAY.
+        # Không mở GUI, không cho dùng bản cũ.
+        # ------------------------------------------------------------------
+        try:
+            if not update_enforce():
+                import os as _os3
+                _os3._exit(0)
+        except Exception:
+            pass
+
+        try:
+            _gui_ok = False
+            try:
+                import xa_nofog_gui_qt as _qgui
+                _gui_ok = True
+            except ImportError:
+                _gui_ok = False
+
+            if _gui_ok:
+                # KHÔNG chặn GUI khi license hết hạn.
+                #
+                # LỖI ĐÃ SỬA: trước đây gọi require_license() TRƯỚC khi mở
+                # cửa sổ. Dùng thử hết hạn -> in bảng giá ra console (không
+                # hiện vì GUI-subsystem) rồi return -> khách không có cửa sổ
+                # nào để nhập key mới. Tool thành "mở không được" vĩnh viễn.
+                #
+                # Nay: GUI luôn mở. Bên trong, Worker tự kiểm license:
+                #   - còn hạn  -> chờ game và vá
+                #   - hết hạn  -> báo lỗi + nút "Đổi key" để nhập key mới
+                if offer_install_if_needed(opts):
+                    return 0
+                require_admin(allow_view=False)
+                if not acquire_instance_lock():
+                    if focus_existing_window():
+                        print('Da co ban khac dang chay — da dua cua so len.')
+                        return 0
+                    print('Da co ban khac dang chay. Khong mo them.')
+                    return EXIT_ALREADY_RUNNING
+                return _qgui.run_gui() or 0
+        except SystemExit:
+            raise
+        except Exception as _e:
+            # Khong co console -> print co the nem loi. Boc lai.
+            try:
+                print('Khong mo duoc giao dien (%s).' % _e)
+            except Exception:
+                pass
+
+
+    # ---- Duong CONSOLE (chi khi khong mo duoc GUI) ----
     # THU TU: license TRUOC, admin SAU.
     # Ly do: khong bat nguoi dung bam UAC chi de roi bi tu choi vi thieu key.
     # --off khong can license: tra goc phai luon lam duoc.
@@ -4435,14 +4987,38 @@ def run():
     else:
         sites, label = pick_sites(opts)
 
-    once_mode = opts['once'] or opts['dump'] or opts['restore']
-    watch_mode = opts['watch'] and not once_mode
-    resident_mode = not once_mode and not watch_mode
 
+
+    # ------------------------------------------------------------------
+    # GIAO DIỆN PyQt6 — chạy khi không có cờ dòng lệnh nào.
+    #
+    # YÊU CẦU CHỦ SHOP: "đợi game khi nào có thì bật map sáng, đỡ phải bật
+    # đi bật lại nhiều. Có nút bật tắt map sáng."
+    #
+    # Chỉ áp dụng cho chế độ thường trú (resident_mode) — tức lần chạy không
+    # tham số. Mọi cờ (--once, --off, --dump, --watch, --key, --install...)
+    # vẫn đi đường console như cũ, nên script và .cmd không bị ảnh hưởng.
+    #
+    # Nếu máy thiếu PyQt6 -> rơi về console để tool KHÔNG chết.
+    # ------------------------------------------------------------------
+    # KHONG kiem tra `sys.stdout is not None`.
+    #
+    # LOI DA SUA: EXE phat hanh la GUI-subsystem (--windows-console-mode=attach).
+    # Khi khach bam shortcut, khong co console -> sys.stdout = None -> dieu kien
+    # sai -> khong vao nhanh GUI -> khong hien gi ca. Khach tuong tool hong.
+    #
+    # Nay: chi can resident_mode va import duoc PyQt6 la mo GUI.
     # Chi mot ban chay o che do thuong tru. --once/--off/--dump thi khong can.
     # Dung 2 lop: mutex (nhanh) + lock file voi PID (chac chan, chong
     # PyInstaller bootloader giai phong mutex qua som).
     if resident_mode and not acquire_instance_lock():
+        # BAN DANG CHAY: mang cua so do len truoc thay vi im lang thoat.
+        #
+        # LOI DA SUA: truoc day chi in thong bao ra console. Build GUI-subsystem
+        # khong co console -> khach khong thay gi, tuong "bam khong mo duoc".
+        if focus_existing_window():
+            print('Da co ban khac dang chay — da dua cua so do len truoc.')
+            return 0
         print('Da co ban khac dang chay. Khong mo them.')
         try:
             other = _read_lock_pid()
@@ -4450,7 +5026,6 @@ def run():
                 print('(ban dang chay: PID %s)' % other)
         except Exception:
             pass
-        print('Tat ban cu truoc, hoac bam Ctrl-C o cua so do.')
         return EXIT_ALREADY_RUNNING
 
     if opts['restore']:

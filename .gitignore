@@ -1,26 +1,21 @@
-node_modules/
-.wrangler/
-*.log
-shots/
-backup-*.sql
-db/backup-*.sql
+# ===========================================================================
+# SECRETS — KHÔNG BAO GIỜ COMMIT
+# ===========================================================================
 
-# File tam khi test
-oneliner.txt
-ps1url.txt
-cmdurl.txt
-*.ps1.tmp
+# Khoá ký license (ECDSA P-256). `secrets/xn-sign-jwk.json` chứa `d` (private).
+# Lộ khoá này = mint được token hợp lệ => mất toàn bộ tác dụng bảo vệ.
+secrets/
 
-# Tool build
-tool/dist/
-tool/dist-nuitka/
-tool/.build/
-tool/src/__pycache__/
-__pycache__/
-*.pyc
-*.spec
+# Khoá mã hoá product_keys.secret — KHÔNG commit
+.key-enc.txt
 
-# SECRETS
+# Khoá ký shop
+_scratch/shop-keys.json
+
+# Kho key — KHÔNG commit
+keys/
+
+# Credentials / token
 .webhook-secret.txt
 WEBHOOK_SECRET.txt
 ADMIN_CREDENTIALS.txt
@@ -32,45 +27,70 @@ ADMIN_CREDENTIALS.txt
 *.pem
 *.key
 
-# OS
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# Kho key - KHONG commit
-keys/
-
-
-# Audit tam
-_audit/
-_audit_tmp/
-_audit_tmp_nowms.txt
-
-# Thu muc lam viec tam - chua file tai ve, dump, model, ban build
-_scratch/
-_qa_exe/
-_qa_shots/
-# tool/dist-nuitka-sec KHONG nam trong rule "tool/dist-nuitka/" ben tren
-tool/dist-nuitka-sec/
-
-
-# File chua mat khau THAT (base64 = plaintext) - KHONG commit
-#
-# BUG DA SUA: rule cu ghi "db/seed-credentials.sql" nhung file THAT nam o
-# "db/archive/seed-credentials.sql" -> rule tro sai duong dan, file van duoc
-# commit va 69 tai khoan san pham nam trong git. Dung "**/" de bat moi do sau.
+# File chứa mật khẩu THẬT (base64 = plaintext) — KHÔNG commit
+# Dùng "**/" để bắt mọi độ sâu (rule cũ trỏ sai đường dẫn đã từng làm lọt 69
+# tài khoản sản phẩm vào git).
 **/seed-credentials.sql
 scripts/gen-credentials.mjs
 
-# Token/credential nhung trong script van hanh - da chuyen sang bien moi truong
-# (.env / .dev.vars, ca hai deu da bi chan). Giu rule de khong tai pham.
+# Token/credential nhúng trong script vận hành — đã chuyển sang biến môi trường
 scripts/check-sepay-token.mjs
 
-# Khoa ma hoa product_keys.secret - KHONG commit
-.key-enc.txt
+# ===========================================================================
+# BUILD / BYTECODE
+# ===========================================================================
+node_modules/
+.wrangler/
+tool/dist/
+tool/dist-nuitka/
+tool/dist-nuitka-sec/
+tool/dist-grant/
+tool/dist-setup/
+tool/dist-arena/
+tool/.build/
+tool/build/
+**/*.build/
+**/*.onefile-build/
+**/*.dist/
+**/*.spec
+**/scons-debug.py
+__pycache__/
+tool/src/__pycache__/
+*.pyc
+*.pyo
 
-# Khoa ky license (ECDSA P-256). `secrets/xn-sign-jwk.json` chua `d` (private).
-# Lo khoa nay = mint duoc token hop le => mat toan bo tac dung bao ve.
-# Da tung bi commit; nay chan lai va da xoay khoa moi.
-secrets/
+# ===========================================================================
+# FILE TẠM / RÁC
+# ===========================================================================
+_scratch/
+_qa_exe/
+_qa_shots/
+/_cleanup.py
+/_fix_loop.py
+/_interleave.py
+/home.html
+_audit/
+_audit_tmp/
+_audit_tmp_nowms.txt
+_rev/
+_probe/
+shots/
+oneliner.txt
+ps1url.txt
+cmdurl.txt
+*.ps1.tmp
+*.bak
+*.old
+*.orig
+backup-*.sql
+db/backup-*.sql
+
+# ===========================================================================
+# LOG / OS / IDE
+# ===========================================================================
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

@@ -1,7 +1,94 @@
-/** Trang thanh toán. */
-import { api, esc, fmtVnd, toast, navigate, loadingBlock, decodeKey, copyText, store, emptyBlock } from '../lib.js';
+/**
+ * Trang thanh toán QR — MUA NGAY, KHÔNG GIỎ HÀNG.
+ *
+ * Luồng duy nhất còn lại:
+ *   bấm "Mua ngay" ở một sản phẩm -> mở trang này với ĐÚNG MỘT món
+ *   (localStorage `mbk_buynow`) -> tự tạo đơn + hiện mã QR -> khách quét.
+ *
+ * Trang KHÔNG còn: sửa/xoá dòng hàng, đổi số lượng, mã giảm giá, ghi chú đơn,
+ * bảng licence/key, panel "Cài đặt ngay". MÔ HÌNH KEYLESS: thanh toán xong chỉ
+ * cần mở XA ARENA và bấm Đăng nhập — licence tự gắn từ tài khoản (HWID).
+ */
+import { api, esc, fmtVnd, toast, navigate, loadingBlock, store, emptyBlock } from '../lib.js';
 import { icon } from '../icons.js';
-import { state, clearCart, removeFromCart, saveCart } from '../state.js';
+import { state } from '../state.js';
+
+/* ---------------- Mua ngay ---------------- */
+
+/**
+ * Dựng món "mua ngay" từ product API.
+ *
+ * `productId` (id thật) là thứ POST /api/orders cần; slug để tra lại giá.
+ * Không dùng `state.cart` nữa nên mảng này luôn có đúng 1 phần tử.
+ */
+function toBuyItem(p, qty = 1) {
+  return {
+    productId: p.id,
+    slug: p.slug,
+    name: p.name,
+    price: p.price,
+    imageUrl: p.imageUrl || null,
+    quantity: qty,
+    deliveryType: p.deliveryType,
+  };
+}
+
+/**
+ * Lưu ĐÚNG một món rồi đi thẳng thanh toán (không qua giỏ, không qua bước phụ).
+ * Chưa đăng nhập thì nhớ đường quay lại để sau khi đăng nhập vẫn vào đúng QR.
+ */
+export function buyNow(product) {
+  store.set('mbk_buynow', [toBuyItem(product, 1)]);
+  if (!state.user) {
+    toast('Đăng nhập để thanh toán', 'info');
+    /*
+     * PHẢI encode: parseRoute tách query bằng `split('?')` nên dấu `?` thứ hai
+     * không encode sẽ cắt mất `mode=buynow` -> đăng nhập xong quay về
+     * /checkout rỗng và mất sản phẩm đã chọn.
+     */
+    navigate('/login?redirect=' + encodeURIComponent('/checkout?mode=buynow'));
+    return;
+  }
+  navigate('/checkout?mode=buynow');
+}
+
+/**
+ * "Mua ngay" khi chỉ có id (nút `data-add` do home.js vẽ, không kèm dữ liệu).
+ * Tra giá thật từ server rồi mới sang trang QR.
+ */
+export async function buyNowById(productId) {
+  try {
+    const d = await api('/api/products/' + encodeURIComponent(productId));
+    buyNow(d.product);
+  } catch (e) {
+    toast(e.message || 'Không mở được sản phẩm', 'error');
+  }
+}
+
+/**
+ * Gắn "Mua ngay" cho mọi nút `[data-add]` (nút mua trên thẻ sản phẩm) trong
+ * `root`, thay cho addToCart của bindProductCards.
+ *
+ * `data-buy-bound="1"` là cờ báo cho handler capture ở app.js biết nút này đã
+ * có listener riêng (không cần chặn sự kiện nữa).
+ */
+export function bindBuyNowCards(root, products) {
+  root.querySelectorAll('[data-add]').forEach((btn) => {
+    const id = btn.dataset.add;
+    if (!id) return; // nút khác dùng data-add rỗng (trang quản trị)
+    btn.dataset.buyBound = '1';
+    if (!btn.disabled) btn.textContent = 'Mua ngay';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const p = (products || []).find((x) => x.id === id);
+      if (p) buyNow(p);
+      else buyNowById(id);
+    });
+  });
+}
+
+/* ---------------- Trang thanh toán ---------------- */
 
 export function renderCheckout() {
   return `
@@ -12,7 +99,7 @@ export function renderCheckout() {
         <a href="#/">Trang chủ</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}
         <span class="text-dim">Thanh toán</span>
       </nav>
-      <div id="checkout-content">${loadingBlock('Đang chuẩn bị đơn hàng...')}</div>
+      <div id="checkout-content">${loadingBlock('Đang chuẩn bị thanh toán...')}</div>
     </div>
   </section>
   <div id="site-footer"></div>`;
@@ -23,16 +110,9 @@ export async function mountCheckout(root, query = {}) {
   const mode = query.mode || '';
 
   /*
-   * Cleanup của màn hình QR. showQrPayment tạo interval poll 4s + đồng hồ đếm
-   * ngược và TRẢ hàm dọn dẹp. Trước đây checkout gọi nó ở 2 chỗ nhưng không
-   * chuyển giá trị đó cho router (router chỉ gọi cleanup nếu mount trả về),
-   * nên mỗi lần khách xem QR rồi rời trang là một interval sống vĩnh viễn.
-   * Đo thực tế: 8 interval còn chạy / 28 request trong 14 giây sau khi rời
-   * trang, gọi cả order id cũ đã 404.
-   *
-   * `qrCleanup` là biến đóng kín dùng chung cho cả hai đường vào màn QR
-   * (mở lại đơn có sẵn và tạo đơn mới từ nút), và mọi `return` bên dưới đều
-   * đi qua `done()` để router luôn nhận được hàm dọn dẹp.
+   * Cleanup của màn QR: showQrPayment tạo interval poll 4s + đồng hồ đếm ngược
+   * và TRẢ hàm dọn dẹp. Router chỉ gọi cleanup khi mount trả về hàm, nên mọi
+   * `return` dưới đây đều đi qua `done()`.
    */
   let qrCleanup = null;
   const done = () => () => {
@@ -43,14 +123,15 @@ export async function mountCheckout(root, query = {}) {
   };
 
   if (!state.user) {
-    const back = mode === 'buynow' ? '/checkout?mode=buynow' : '/checkout';
+    // Nhớ đúng chỗ đang muốn tới: QR của đơn có sẵn, hoặc mua ngay 1 món.
+    const back = (mode === 'order' && query.orderId)
+      ? `/order/${query.orderId}`
+      : '/checkout?mode=buynow';
     navigate('/login?redirect=' + encodeURIComponent(back), { replace: true });
     return;
   }
 
-  // ===== Chế độ XEM LẠI ĐƠN: mở QR của đơn có sẵn =====
-  // Dùng khi khách bấm "Thanh toán ngay" ở trang Đơn hàng, hoặc vào
-  // #/order/<id>. KHÔNG tạo đơn mới — chỉ hiện lại QR của đơn đó.
+  // ===== XEM LẠI: mở QR của đơn có sẵn (#/order/<id>) — KHÔNG tạo đơn mới =====
   if (mode === 'order' && query.orderId) {
     host.innerHTML = loadingBlock('Đang tải mã thanh toán...');
     try {
@@ -69,227 +150,174 @@ export async function mountCheckout(root, query = {}) {
     return done();
   }
 
-  // ===== Chế độ MUA NGAY: chỉ thanh toán 1 sản phẩm, không đụng giỏ hàng =====
-  let buyNowItems = null;
-  if (mode === 'buynow') {
-    buyNowItems = store.get('mbk_buynow', null);
-    if (!buyNowItems || buyNowItems.length === 0) {
-      navigate('/products', { replace: true });
-      return;
+  // ===== MUA NGAY: đúng MỘT món =====
+  const stored = store.get('mbk_buynow', null);
+  const picked = Array.isArray(stored) ? stored[0] : null;
+  // Không còn món "mua ngay" nhưng vừa tạo đơn (khách F5) -> vào đơn đó.
+  if (!picked) {
+    const lastId = (() => { try { return store.get('mbk_lastorder'); }
+                            catch (e) { return null; } })();
+    if (lastId) {
+      try { store.del('mbk_lastorder'); } catch (e) {}
+      navigate('/order/' + lastId, { replace: true });
+      return () => {};
     }
   }
-  const items = buyNowItems || state.cart;
 
-  if (items.length === 0) {
-    host.innerHTML = emptyBlock({
-      ico: 'cart',
-      title: 'Giỏ hàng trống',
-      desc: 'Thêm sản phẩm trước khi thanh toán.',
-      action: '<a class="btn btn-primary btn-sm" href="#/products">Xem sản phẩm</a>',
-    });
+  if (!picked) {
+    // Không có món nào -> không có gì để thanh toán, về danh sách sản phẩm.
+    navigate('/products', { replace: true });
     return;
   }
 
-  // ===== ĐỒNG BỘ GIÁ VỚI SERVER TRƯỚC KHI HIỂN THỊ =====
-  // Trước đây giỏ hàng dùng giá lưu trong localStorage -> khách thấy 1.000đ
-  // nhưng bị trừ 450.000đ. Nay luôn lấy giá thật từ server.
+  // Giá LUÔN lấy từ server (giá trong localStorage có thể cũ).
   host.innerHTML = loadingBlock('Đang kiểm tra giá...');
-  const priceChanges = [];
-  const removed = [];
+  let product;
   try {
-    for (const item of [...items]) {
-      try {
-        const d = await api('/api/products/' + encodeURIComponent(item.slug || item.productId));
-        const p = d.product;
-        const drop = () => {
-          if (buyNowItems) {
-            buyNowItems = buyNowItems.filter((x) => x.productId !== item.productId);
-            store.set('mbk_buynow', buyNowItems);
-          } else {
-            removeFromCart(item.productId);
-          }
-        };
-        if (!p.active || (!p.inStock && p.deliveryType !== 'license' && p.deliveryType !== 'manual')) {
-          removed.push({ name: item.name, reason: 'đã ngừng bán hoặc hết hàng' });
-          drop();
-          continue;
-        }
-        if (p.price !== item.price) {
-          priceChanges.push({ name: p.name, from: item.price, to: p.price });
-        }
-        // Cập nhật lại giá + tồn kho thật
-        item.price = p.price;
-        item.name = p.name;
-        item.stock = p.stock;
-        item.deliveryType = p.deliveryType;
-      } catch {
-        removed.push({ name: item.name, reason: 'không còn tồn tại' });
-        if (buyNowItems) {
-          buyNowItems = buyNowItems.filter((x) => x.productId !== item.productId);
-          store.set('mbk_buynow', buyNowItems);
-        } else {
-          removeFromCart(item.productId);
-        }
-      }
-    }
-    if (!buyNowItems) saveCart();
-  } catch { /* mạng lỗi -> dùng giá cũ, server vẫn là nguồn sự thật */ }
-
-  if (items.length === 0) {
+    const d = await api('/api/products/' + encodeURIComponent(picked.slug || picked.productId));
+    product = d.product;
+  } catch (e) {
     host.innerHTML = emptyBlock({
-      ico: 'cart',
-      title: 'Không còn sản phẩm hợp lệ',
-      desc: removed.length
-        ? removed.map((r) => `${r.name} (${r.reason})`).join(', ')
-        : 'Giỏ hàng trống',
+      ico: 'alert',
+      title: 'Không mở được sản phẩm',
+      desc: e.message || 'Sản phẩm không còn tồn tại.',
       action: '<a class="btn btn-primary btn-sm" href="#/products">Xem sản phẩm</a>',
     });
     return;
   }
 
-  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-  let discount = 0;
-  let appliedCoupon = null;
+  const sellable = product.active
+    && (product.inStock || product.deliveryType === 'license' || product.deliveryType === 'manual');
+  if (!sellable) {
+    host.innerHTML = emptyBlock({
+      ico: 'alert',
+      title: 'Sản phẩm đã ngừng bán',
+      desc: product.name || picked.name || '',
+      action: '<a class="btn btn-primary btn-sm" href="#/products">Xem sản phẩm khác</a>',
+    });
+    return;
+  }
 
-  const priceNotice = (priceChanges.length || removed.length) ? `
-    <div class="alert ${priceChanges.length ? 'alert-warn' : 'alert-info'} alert-block">
-      <span class="ico">${icon(priceChanges.length ? 'alert' : 'info', { size: 15 })}</span>
-      <span>
-        ${removed.length ? `<strong>Đã xoá khỏi giỏ:</strong> ${removed.map((r) => esc(r.name) + ' (' + esc(r.reason) + ')').join('; ')}` : ''}
-        ${removed.length && priceChanges.length ? '<br>' : ''}
-        ${priceChanges.length
-          ? `<strong>Giá đã thay đổi, vui lòng kiểm tra lại:</strong><br>` +
-            priceChanges.map((c) => `${esc(c.name)}: <s>${fmtVnd(c.from)}</s> ${icon('arrowRight', { size: 11 })} <strong>${fmtVnd(c.to)}</strong>`).join('<br>')
-          : ''}
-      </span>
-    </div>` : '';
+  const item = toBuyItem(product, 1);
 
   host.innerHTML = `
-    ${priceNotice}
-    <div class="checkout-grid">
-      <div>
-        <div class="panel">
-          <h2 class="panel-title">${icon('bag', { size: 15 })} Sản phẩm trong đơn</h2>
-          <div id="checkout-items" class="ck-items">
-            ${items.map((i) => `
-              <div class="ck-item">
-                <span class="ck-item-thumb">
-                  ${i.imageUrl ? `<img src="${esc(i.imageUrl)}" alt="" loading="lazy"
-                    data-img-fallback="class">` : ''}
-                  ${icon('package', { size: 18 })}
-                </span>
-                <div class="ck-item-main">
-                  <div class="ck-item-name">${esc(i.name)}</div>
-                  <div class="ck-item-meta">${fmtVnd(i.price)} × ${i.quantity}</div>
-                </div>
-                <div class="ck-item-total">${fmtVnd(i.price * i.quantity)}</div>
-              </div>`).join('')}
-          </div>
-        </div>
-
-        <div class="panel mt-2">
-          <div class="panel-title ck-note-title">
-            <label for="order-note">${icon('edit', { size: 15 })} Ghi chú đơn hàng</label>
-          </div>
-          <textarea class="textarea" id="order-note" placeholder="Yêu cầu đặc biệt (không bắt buộc)"
-            maxlength="500" aria-label="Ghi chú đơn hàng"></textarea>
-        </div>
-      </div>
-
-      <div>
-        <div class="panel ck-summary">
-          <h2 class="panel-title">${icon('card', { size: 15 })} Thanh toán</h2>
-
-          <div class="summary-row"><span>Tạm tính</span><span id="sum-subtotal">${fmtVnd(subtotal)}</span></div>
-          <div class="summary-row" id="sum-discount-row" hidden>
-            <span>Giảm giá</span><span class="text-green" id="sum-discount">—</span>
-          </div>
-          <div class="summary-row total"><span>Tổng cộng</span><span class="val" id="sum-total">${fmtVnd(subtotal)}</span></div>
-
-          <div class="ck-pay">
-            <div class="ck-pay-row">
-              <span class="ck-pay-label">${icon('card', { size: 13 })} Hình thức</span>
-              <strong class="ck-pay-val">Chuyển khoản QR</strong>
-            </div>
-            <div class="ck-pay-note">
-              Quét mã QR bằng app ngân hàng. Số tiền và nội dung đã điền sẵn.
-              Hệ thống tự xác nhận và giao key ngay khi tiền vào.
-            </div>
-          </div>
-
-          <button class="btn btn-primary btn-lg btn-block" id="btn-place-order">
-            ${icon('card', { size: 15 })}Tạo mã QR thanh toán
-          </button>
-
-          <div class="alert alert-info ck-secure">
-            <span class="ico">${icon('shieldCheck', { size: 14 })}</span>
-            <span>Tiền chuyển thẳng tới tài khoản shop. Key hiện ngay khi hệ thống xác nhận được tiền.</span>
-          </div>
-        </div>
-      </div>
+    <div class="panel" style="max-width:520px;margin:0 auto;text-align:center">
+      <h2 class="panel-title" style="justify-content:center">${icon('card', { size: 15 })} Thanh toán</h2>
+      <div style="font-size:15px;font-weight:700;margin:12px 0 6px">${esc(product.name)}</div>
+      <div style="font-size:22px;font-weight:800;color:#4ade80;margin-bottom:20px">${fmtVnd(product.price)}</div>
+      <button class="btn btn-primary btn-lg btn-block" id="btn-place-order">
+        ${icon('card', { size: 15 })}Tạo mã QR thanh toán
+      </button>
     </div>
   `;
 
-  // Mã giảm giá đã bị gỡ — không còn coupon trong hệ thống.
-  // discount luôn = 0, appliedCoupon luôn = null.
+  /*
+   * ĐƠN ĐÃ TẠO nhưng CHƯA lấy được mã QR.
+   *
+   * Tạo đơn và lấy QR nằm ở hai bước riêng: QR lỗi thì đơn vẫn tồn tại trên
+   * server, nên phải giữ `createdOrder` để lấy lại mã của CHÍNH đơn đó thay vì
+   * bấm lại và tạo đơn thứ hai (đơn trùng, tiền treo).
+   */
+  let createdOrder = null;
 
-  function updateTotals() {
-    const total = subtotal - discount;
-    host.querySelector('#sum-subtotal').textContent = fmtVnd(subtotal);
-    const dRow = host.querySelector('#sum-discount-row');
-    if (discount > 0) {
-      dRow.hidden = false;
-      host.querySelector('#sum-discount').textContent = '-' + fmtVnd(discount);
-    } else {
-      dRow.hidden = true;
+  const openQrForCreatedOrder = async () => {
+    try {
+      const qrData = await api(`/api/orders/${createdOrder.id}/qr`, { method: 'POST' });
+      /*
+       * Gán vào biến đóng kín `qrCleanup` (KHÔNG phải biến cục bộ): hàm này
+       * chạy trong sự kiện click, tức là SAU khi mountCheckout đã trả về, nên
+       * `return` ở đây không tới được router. Router giữ closure `done()`.
+       */
+      if (typeof qrCleanup === 'function') { try { qrCleanup(); } catch { /* ignore */ } }
+      qrCleanup = showQrPayment(host, qrData, createdOrder);
+      return true;
+    } catch (e) {
+      showQrRetry(e);
+      return false;
     }
-    host.querySelector('#sum-total').textContent = fmtVnd(total);
-    const payBtnEl = host.querySelector('#btn-place-order');
-    if (payBtnEl) payBtnEl.disabled = false;
+  };
+
+  /** Màn hình "đơn đã tạo nhưng chưa có QR" — nút thử lại DÙNG LẠI đơn cũ. */
+  function showQrRetry(err) {
+    host.innerHTML = `
+      <div class="panel" style="max-width:520px;margin:0 auto">
+        <div class="alert alert-warn alert-block">
+          <span class="ico">${icon('alert', { size: 15 })}</span>
+          <span>
+            <strong>Đơn #${esc(createdOrder.code || createdOrder.id)} đã tạo</strong> nhưng chưa lấy được mã QR.
+            ${esc(err && err.message ? err.message : 'Có thể do mạng chập chờn.')}
+            Đơn của bạn đã được ghi nhận — <strong>không cần đặt lại</strong>.
+          </span>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" data-retry-qr>
+            ${icon('refresh', { size: 14 })} Lấy lại mã QR
+          </button>
+          <a class="btn btn-ghost" href="#/orders">Đơn hàng của tôi</a>
+        </div>
+      </div>`;
+    host.querySelector('[data-retry-qr]')?.addEventListener('click', async (ev) => {
+      ev.currentTarget.disabled = true;
+      host.innerHTML = loadingBlock('Đang lấy lại mã QR...');
+      await openQrForCreatedOrder();
+    });
   }
 
   const payBtn = host.querySelector('#btn-place-order');
 
-  updateTotals();
+  const createOrder = async () => {
+    // Đã có đơn (QR lỗi lần trước) -> chỉ lấy lại mã, KHÔNG tạo đơn mới.
+    if (createdOrder) {
+      payBtn.disabled = true;
+      await openQrForCreatedOrder();
+      return;
+    }
 
-  payBtn.onclick = async () => {
     payBtn.disabled = true;
-    payBtn.textContent = 'Đang xử lý...';
+    payBtn.textContent = 'Đang tạo mã QR...';
     try {
       const orderData = await api('/api/orders', {
         method: 'POST',
-        body: {
-          items: items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-          couponCode: appliedCoupon,
-          note: host.querySelector('#order-note').value.trim() || null,
-        },
+        body: { items: [{ productId: item.productId, quantity: item.quantity }] },
       });
-
-      // Tạo đơn -> lấy QR thanh toán (KHÔNG trừ ví)
-      const qrData = await api(`/api/orders/${orderData.order.id}/qr`, { method: 'POST' });
-      if (mode === 'buynow') { store.del('mbk_buynow'); } else { clearCart(); }
-
-      /*
-       * Gán vào biến đóng kín `qrCleanup` (KHÔNG phải biến cục bộ): hàm này
-       * chạy trong sự kiện click, tức là SAU khi mountCheckout đã trả về, nên
-       * `return` ở đây không tới được router. Router đã giữ closure `done()`,
-       * nên chỉ cần cập nhật qrCleanup là lần rời trang sau sẽ dọn đúng.
-       */
-      if (typeof qrCleanup === 'function') { try { qrCleanup(); } catch { /* ignore */ } }
-      qrCleanup = showQrPayment(host, qrData, orderData.order);
+      createdOrder = orderData.order;
+      // Đơn đã ghi nhận -> xoá món "mua ngay" để không tạo đơn lần hai.
+      store.del('mbk_buynow');
+      // ----------------------------------------------------------------
+      // NHỚ ĐƠN VỪA TẠO.
+      //
+      // LỖI ĐÃ SỬA: xoá `mbk_buynow` ngay sau khi tạo đơn là đúng (không
+      // tạo đơn lần hai), NHƯNG nếu khách F5 giữa lúc quét mã thì trang
+      // không còn gì để hiện → đẩy về danh sách sản phẩm, khách tưởng mất
+      // đơn và mua lại → hai đơn chờ.
+      //
+      // Nay ghi nhớ id đơn để lần mở sau vào thẳng trang QR của đơn đó.
+      // ----------------------------------------------------------------
+      try {
+        store.set('mbk_lastorder', createdOrder.id);
+      } catch (e) {}
     } catch (e) {
       toast(e.message, 'error', 5000);
       payBtn.disabled = false;
       payBtn.innerHTML = `${icon('card', { size: 15 })}Tạo mã QR thanh toán`;
+      return;
     }
+
+    await openQrForCreatedOrder();
   };
+
+  payBtn.onclick = createOrder;
+
+  // QR hiện NGAY: khách chỉ bấm "Mua ngay" một lần, không phải bấm thêm bước nào.
+  await createOrder();
 
   // Router gọi hàm này khi rời /checkout để dọn interval của màn QR.
   return done();
 }
 
 /**
- * Màn hình QR thanh toán: số tiền + nội dung + đếm ngược + polling.
+ * Màn hình QR thanh toán: mã QR + số tiền + nội dung + thông tin ngân hàng +
+ * đồng hồ đếm ngược. Poll 4s để tự phát hiện tiền vào (giữ nguyên như trước).
  */
 export function showQrPayment(host, data, created) {
   const qr = data.qr || {};
@@ -300,25 +328,23 @@ export function showQrPayment(host, data, created) {
   let left = qr.secondsLeft || (qr.expiresAt ? qr.expiresAt - Math.floor(Date.now() / 1000) : 1800);
 
   host.innerHTML = `
-    <div class="panel" style="max-width:560px;margin:0 auto">
-      <div style="text-align:center;padding:8px 0 18px">
-        <div style="font-size:15px;font-weight:800;letter-spacing:-.02em;margin-bottom:6px">
-          Quét mã để thanh toán
-        </div>
-        <div style="font-size:12.5px;color:var(--text-mute)">
+    <div class="panel" style="max-width:520px;margin:0 auto">
+      <div style="text-align:center;padding:6px 0 14px">
+        <div style="font-size:15px;font-weight:800;letter-spacing:-.02em">Quét mã để thanh toán</div>
+        <div style="font-size:12px;color:var(--text-mute);margin-top:4px">
           Mã đơn <strong class="mono">${esc(order.code || created?.code || '')}</strong>
         </div>
       </div>
 
-      <div style="text-align:center;margin-bottom:18px">
+      <div style="text-align:center;margin-bottom:14px">
         <img src="${esc(qr.url || '')}" alt="Mã QR thanh toán"
           style="width:100%;max-width:280px;border-radius:12px;background:#fff;padding:10px"
           data-qr-img>
       </div>
 
       <div style="background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);
-        border-radius:10px;padding:14px;margin-bottom:16px">
-        <div class="flex justify-between" style="margin-bottom:10px">
+        border-radius:10px;padding:14px;margin-bottom:14px">
+        <div class="flex justify-between" style="margin-bottom:8px">
           <span style="font-size:12px;color:var(--text-mute)">Số tiền</span>
           <strong style="font-size:17px;color:#4ade80">${fmtVnd(total)}</strong>
         </div>
@@ -331,40 +357,25 @@ export function showQrPayment(host, data, created) {
         </div>
       </div>
 
-      <div style="font-size:12.5px;line-height:1.9;color:var(--text-dim);margin-bottom:16px">
+      <div style="font-size:12.5px;line-height:1.9;color:var(--text-dim);margin-bottom:14px">
         <div><strong>Ngân hàng:</strong> ${esc(bank.name || '')}</div>
         <div><strong>Số TK:</strong> <span class="mono">${esc(bank.account || '')}</span></div>
         <div><strong>Chủ TK:</strong> ${esc(bank.owner || '')}</div>
       </div>
 
-      <div class="alert alert-info" style="margin-bottom:14px">
-        <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>
-          Quét QR bằng app ngân hàng — <strong>số tiền và nội dung đã điền sẵn</strong>.
-          Không sửa nội dung, nếu không hệ thống không khớp được đơn.
-        </span>
-      </div>
-
-      <div id="qr-status" style="text-align:center;padding:14px;border-radius:10px;
-        background:rgba(255,255,255,.04);margin-bottom:14px">
+      <div id="qr-status" style="text-align:center;padding:12px;border-radius:10px;
+        background:rgba(255,255,255,.04)">
         <div style="font-size:13px;font-weight:700;color:#fbbf24">
           ⏳ Đang chờ thanh toán
         </div>
         <div style="font-size:12px;color:var(--text-mute);margin-top:6px">
-          Còn <strong id="qr-countdown">--:--</strong> · Tự động giao key khi tiền vào
+          Còn <strong id="qr-countdown">--:--</strong>
         </div>
-      </div>
-
-      <div class="flex gap-1" style="flex-wrap:wrap;justify-content:center">
-        <button class="btn btn-ghost btn-sm" data-claimed>
-          Tôi đã chuyển khoản
-        </button>
-        <a class="btn btn-ghost btn-sm" href="#/orders">Xem đơn hàng</a>
       </div>
     </div>
   `;
 
-  // Copy nội dung
+  // Copy nội dung chuyển khoản
   const copyBtn = host.querySelector('[data-copy-memo]');
   if (copyBtn) {
     copyBtn.onclick = async () => {
@@ -422,7 +433,7 @@ export function showQrPayment(host, data, created) {
         stopped = true;
         clearInterval(pollTimer);
         clearInterval(cdTimer);
-        showSuccess(host, o.order, created);
+        showSuccess(host, o.order);
         return;
       }
       if (st === 'cancelled' || st === 'expired') {
@@ -436,24 +447,6 @@ export function showQrPayment(host, data, created) {
   };
   pollTimer = setInterval(poll, 4000);
 
-  // Nút "tôi đã chuyển khoản"
-  const claimBtn = host.querySelector('[data-claimed]');
-  if (claimBtn) {
-    claimBtn.onclick = async () => {
-      claimBtn.disabled = true;
-      try {
-        const r = await api(`/api/orders/${order.id}/claimed`, { method: 'POST' });
-        toast(r.msg || 'Đã ghi nhận, admin đang kiểm tra', 'success', 7000);
-        stEl.innerHTML = '<div style="font-size:13px;font-weight:700;color:#60a5fa">'
-          + '📨 Đã báo shop — đang kiểm tra</div>'
-          + '<div style="font-size:12px;color:var(--text-mute);margin-top:6px">'
-          + 'Key sẽ hiện tự động khi shop xác nhận.</div>';
-      } catch (e) {
-        toast(e.message, 'error');
-        claimBtn.disabled = false;
-      }
-    };
-  }
   /*
    * Trả hàm dọn dẹp cho router. Thiếu nó thì poll 4s và đồng hồ đếm ngược
    * tiếp tục chạy sau khi khách rời trang, gọi API liên tục và giữ DOM cũ.
@@ -464,11 +457,11 @@ export function showQrPayment(host, data, created) {
   };
 }
 
-function showSuccess(host, order, created) {
-  const paid = order.total != null ? order.total : (created ? created.total : 0);
-  const sub = created ? created.subtotal : null;
-  const disc = created ? created.discount : 0;
-
+/**
+ * Thanh toán xong: MỘT câu + MỘT nút tải app. Không key, không licence, không
+ * hướng dẫn cài đặt.
+ */
+function showSuccess(host, order) {
   host.innerHTML = `
     <div class="panel ck-done">
       <div class="ck-done-head">
@@ -477,85 +470,13 @@ function showSuccess(host, order, created) {
         <p class="ck-done-sub">
           Mã đơn hàng: <strong class="mono ck-done-code">${esc(order.code)}</strong>
         </p>
-
-        <div class="ck-done-receipt">
-          ${sub != null ? `<div class="ck-receipt-row"><span>Tạm tính</span><span>${fmtVnd(sub)}</span></div>` : ''}
-          ${disc > 0 ? `<div class="ck-receipt-row text-green"><span>Giảm giá</span><span>−${fmtVnd(disc)}</span></div>` : ''}
-          <div class="ck-receipt-row ck-receipt-total"><span>Đã thanh toán</span><span>${fmtVnd(paid)}</span></div>
-        </div>
-
         <p class="ck-done-note">
-          ${order.status === 'delivered'
-            ? 'Sản phẩm của bạn đã được giao bên dưới.'
-            : 'Đơn hàng đang được xử lý. Chúng tôi sẽ giao trong 5–15 phút.'}
+          Thanh toán xong — mở XA ARENA, bấm Đăng nhập là có.
         </p>
       </div>
-
-      <div class="ck-delivered">
-        ${(order.delivered || order.items || []).map((d) => `
-          <section class="ck-delivered-item">
-            <h3 class="ck-delivered-name">${icon('package', { size: 15 })} ${esc(d.name)}</h3>
-            ${d.manual
-              ? `<div class="alert alert-warn ck-alert-flat">
-                   <span class="ico">${icon('clock', { size: 15 })}</span>
-                   <span>Sản phẩm này cần giao thủ công. Chúng tôi sẽ liên hệ bạn qua email hoặc Telegram trong 5–15 phút.</span>
-                 </div>`
-              : (d.keys || []).length === 0
-                ? `<div class="alert alert-info ck-alert-flat">
-                     <span class="ico">${icon('clock', { size: 15 })}</span>
-                     <span>Đơn đã được xác nhận thanh toán. Key đang được tạo — tải lại trang sau ít giây, hoặc xem tại <a href="#/orders">Đơn hàng của tôi</a>.</span>
-                   </div>`
-                : d.license
-                  ? d.keys.map((raw) => {
-                    const key = decodeKey(raw);
-                    return `
-                      <div class="key-box">
-                        <span class="key-value">${esc(key)}</span>
-                        <button type="button" class="key-copy" data-copy="${esc(key)}">
-                          ${icon('copy', { size: 13 })}Sao chép
-                        </button>
-                      </div>
-                      <div class="ck-license-hint">
-                        <div class="ck-license-title">${icon('bolt', { size: 13 })} Lấy lệnh cài đặt</div>
-                        <p class="ck-license-desc">
-                          Vào <strong>License của tôi</strong> để lấy lệnh cài đặt riêng cho key này
-                          (mỗi lệnh dùng một lần, hết hạn sau 24 giờ).
-                        </p>
-                        <a class="btn btn-primary btn-sm" href="#/licenses">
-                          ${icon('key', { size: 13 })}Lấy lệnh cài đặt
-                        </a>
-                      </div>`;
-                  }).join('')
-                : d.keys.map((raw) => {
-                    const key = decodeKey(raw);
-                    return `
-                      <div class="key-box">
-                        <span class="key-value">${esc(key)}</span>
-                        <button type="button" class="key-copy" data-copy="${esc(key)}">
-                          ${icon('copy', { size: 13 })}Sao chép
-                        </button>
-                      </div>`;
-                  }).join('')}
-          </section>`).join('')}
-      </div>
-
-      <div class="alert alert-info ck-alert-flat">
-        <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Key cũng được lưu trong mục <strong>Đơn hàng</strong> và <strong>License của tôi</strong>. Vui lòng bảo mật key.</span>
-      </div>
-
       <div class="ck-done-actions">
-        <a class="btn btn-primary" href="#/licenses">${icon('key', { size: 14 })}Xem License</a>
-        <a class="btn btn-ghost" href="#/orders">${icon('receipt', { size: 14 })}Đơn hàng</a>
-        <a class="btn btn-ghost" href="#/products">Tiếp tục mua sắm</a>
+        <a class="btn btn-primary" href="#/tai-ve">${icon('download', { size: 14 })}Tải XA ARENA</a>
       </div>
     </div>
   `;
-
-  host.querySelectorAll('[data-copy]').forEach((b) => {
-    b.onclick = async () => {
-      const okCopy = await copyText(b.dataset.copy);
-      toast(okCopy ? 'Đã sao chép' : 'Không thể sao chép, hãy chọn thủ công', okCopy ? 'success' : 'error');
-    };
-  });
 }

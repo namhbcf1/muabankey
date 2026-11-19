@@ -16,6 +16,9 @@ import * as sepayRc from './routes/sepay-reconcile.js';
 import * as admin from './routes/admin.js';
 import * as ai from './routes/ai.js';
 import * as license from './routes/license.js';
+import { postShopLic, getShopLicStatus } from './routes/shop-lic.js';
+import * as entitlement from './routes/entitlement.js';
+import * as arenaInstaller from './routes/arena-installer.js';
 import * as licenseServer from './routes/license-server.js';
 import * as trial from './routes/trial.js';
 import * as trialAdmin from './routes/trial-admin.js';
@@ -49,6 +52,20 @@ r.post('/api/auth/change-password', auth.changePassword);
 
 /* ---------- Catalog ---------- */
 r.get('/api/stats', (env) => stats.publicStats(env));
+/*
+ * /api/home — GOM moi thu trang chu can vao MOT round trip.
+ *
+ * Truoc day trang chu goi noi tiep: auth/me 657ms -> categories 542ms ->
+ * trial/status 491ms -> featured 448ms -> stats 397ms = ~1,6 giay.
+ *
+ * Nay: mot env.DB.batch() chay 12 cau lenh trong MOT lan round trip, tra
+ * {categories, products, stats, trial}. Session duoc join thang trong SQL
+ * nen khong can them /api/auth/me.
+ *
+ * Router la bang chinh xac tung duong (src/lib/router.js) — khong co
+ * catch-all, nen phai dang ky o day thi duong moi ton tai.
+ */
+r.get('/api/home', (env, req) => products.homeBundle(env, req));
 /*
  * Thong tin bo cai cho trang /tai-ve. PUBLIC co y: khach con dang phan
  * van phai xem duoc version + hash de quyet dinh tai. Chi tra ten file,
@@ -91,7 +108,7 @@ r.post('/api/licenses/:key/xg-install-token',
   (env, req, p) => xgInstaller.issueXgInstallToken(env, req, p.key));
 
 /*
- * Bộ cài GUI (xa_setup.exe) dùng 2 endpoint này thay cho việc khách phải
+ * App (xa_arena.exe) dùng 2 endpoint này thay cho việc khách phải
  * dán lệnh PowerShell vào Win+R. Cùng mức xác thực: install token còn hạn
  * HOẶC session đăng nhập sở hữu key.
  */
@@ -102,12 +119,20 @@ r.get('/api/setup/version', (env) => installInfo.setupVersion(env));
 /* ---------- Dùng thử 3 ngày ---------- */
 r.post('/api/trial/start', trial.apiTrialStart);
 r.get('/api/trial/status', trial.apiTrialStatus);
+/* So luot dung thu con lai THEO PHAN CUNG (tool hien trong app). */
+r.get('/api/trial/left', trial.apiTrialLeft);
 r.post('/api/trial/stop', trial.apiTrialStop);
 r.post('/api/trial/claim', trial.apiTrialClaim);
 r.post('/api/trial/command', trialCmd.apiTrialCommand);
 
 /* ---------- License quản lý ---------- */
 r.get('/api/licenses/mine', license.myLicenses);
+/*
+ * QUYEN DUNG CHUC NANG — app goi de biet hien/chi hien phan nao.
+ * ?key=... -> chi 1 key (khong can dang nhap)
+ * khong tham so -> tat ca key cua tai khoan dang dang nhap
+ */
+r.get('/api/entitlement', (env, req) => entitlement.buildEntitlement(env, req));
 r.post('/api/licenses/:key/rebind', (env, req, p) => license.rebindMyLicense(env, req, p.key));
 r.post('/api/licenses/:key/install-token', (env, req, p) => installer.issueInstallToken(env, req, p.key));
 
@@ -180,6 +205,12 @@ r.post('/api/admin/migrate-delivered-keys', orders.adminMigrateDeliveredKeys);
 
 r.get('/api/admin/licenses', license.adminLicenses);
 r.post('/api/admin/licenses', license.adminIssueLicenses);
+
+// Ký danh sách máy chủ shop (shop.lic) — chỉ admin.
+// Lý do: app chỉ tin danh sách do server ký; khách tạo file
+// shop.hwid tự ý sẽ không bật được tính năng.
+r.get('/api/shop/lic', getShopLicStatus);
+r.post('/api/shop/lic', postShopLic);
 r.post('/api/admin/licenses/:key/:action', (env, req, p) =>
   license.adminLicenseAction(env, req, p.key, p.action));
 
@@ -375,6 +406,58 @@ export default {
           ).run();
         } catch { /* chưa migrate */ }
 
+        /*
+         * ===== DỌN LICENSE DÙNG THỬ MỒ CÔI (audit #7) =====
+         *
+         * Trước đây cron chỉ dọn `trial_quota` / `trial_attempts`, KHÔNG đụng
+         * tới `licenses(plan='trial')` và `trial_uses`. Hai bảng đó chỉ tăng:
+         * mỗi lượt bấm dùng thử sinh 1 dòng licenses + 1 dòng trial_uses, kể
+         * cả khi khách không bao giờ cài. Trên production đã có ~326 license
+         * trial mồ côi — làm nhiễu mọi thống kê và làm trang quản trị license
+         * phải phân trang vô ích.
+         *
+         * RANH GIỚI AN TOÀN (rất quan trọng — không được xoá trial của khách
+         * đã dùng thật, họ có thể còn khiếu nại):
+         *   - `activated_at` PHẢI trống  -> chưa từng kích hoạt trên máy nào
+         *   - `trial_uses.started_at` PHẢI trống -> đồng hồ chưa chạy
+         *   - hạn GIỮ đã hết quá 30 ngày -> không còn cửa sổ cài nào
+         *   - KHÔNG đụng license đã bị thu hồi (revoked=1): giữ làm bằng chứng
+         *     khi admin đã kết luận gian lận.
+         * Trial ĐÃ kích hoạt thì giữ nguyên vĩnh viễn (chỉ `lic_events` bị dọn
+         * theo hạn 90 ngày như cũ).
+         */
+        try {
+          const cutoff = nowS - 30 * 86400;
+          // B1: xoá trial_uses của các license chưa từng kích hoạt
+          const delUses = await env.DB.prepare(
+            `DELETE FROM trial_uses
+              WHERE COALESCE(started_at, 0) = 0
+                AND lic_key IN (
+                  SELECT key FROM licenses
+                   WHERE plan = 'trial'
+                     AND COALESCE(activated_at, 0) = 0
+                     AND COALESCE(revoked, 0) = 0
+                     AND COALESCE(expires_at, 0) > 0
+                     AND expires_at < ?
+                )`
+          ).bind(cutoff).run();
+          // B2: xoá license trial (chỉ khi không còn trial_uses tham chiếu)
+          const delLic = await env.DB.prepare(
+            `DELETE FROM licenses
+              WHERE plan = 'trial'
+                AND COALESCE(activated_at, 0) = 0
+                AND COALESCE(revoked, 0) = 0
+                AND COALESCE(expires_at, 0) > 0
+                AND expires_at < ?
+                AND key NOT IN (SELECT lic_key FROM trial_uses WHERE lic_key IS NOT NULL)`
+          ).bind(cutoff).run();
+          const nUses = delUses?.meta?.changes || 0;
+          const nLic = delLic?.meta?.changes || 0;
+          if (nUses || nLic) {
+            console.log(`Dọn trial mồ côi: ${nLic} license, ${nUses} trial_uses`);
+          }
+        } catch { /* chưa migrate bảng trial -> bỏ qua, không chặn cron */ }
+
         // 5. Thông báo Telegram (chỉ chạy khi đã cấu hình, không chặn cron nếu lỗi)
         if (env.TG_BOT_TOKEN && env.TG_CHAT_ID) {
           try {
@@ -436,17 +519,19 @@ export default {
         }
         // PHẢI await: nếu không, promise reject sẽ thoát khỏi try/catch
         // và Worker ném exception -> Cloudflare 1101 thay vì 404 sạch.
+        /*
+         * AUDIT #10: /i/<KEY> là bề mặt ĐOÁN KEY công khai (không cần đăng
+         * nhập). Trước đây chỉ có trần toàn cục 3000/phút/IP nên dò key là
+         * chuyện thoải mái. Nay thêm trần theo route.
+         *
+         * 60 lượt / 1 phút / IP là RỘNG RÃI so với dùng thật: một lần cài chỉ
+         * gọi 2-4 request (.cmd -> .ps1 -> tải EXE), và bộ cài gọi lại khi
+         * khách bấm cài lại. Mục tiêu là chặn dò hàng loạt, không chặn khách.
+         */
+        await rateLimit(env, `inst:${clientIp(request)}`, 60, 60);
         if (ext === '.cmd') return await installer.serveInstaller(env, request, rawKey);
         if (ext === '.ps1') return await installer.servePs1(env, request, rawKey);
         return await installer.installerCommand(env, request, rawKey);
-      }
-
-      // /download/xa_nofog_pro.exe
-      if (url.pathname === `/download/xa_nofog_pro.exe`) {
-        if (request.method !== 'GET' && request.method !== 'HEAD') {
-          return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
-        }
-        return await installer.downloadExe(env, request);
       }
 
       // /xg/<KEY>.cmd | /xg/<KEY>.ps1 | /xg/<KEY>   (XAGrant, sản phẩm riêng)
@@ -462,20 +547,22 @@ export default {
         return await xgInstaller.xgInstallerCommand(env, request, rawKey);
       }
 
-      // /download/xa_grant.exe
-      if (url.pathname === `/download/xa_grant.exe`) {
+      // /download/xa_arena.exe — EXE GỘP (map sáng + tài nguyên)
+      if (url.pathname === `/download/xa_arena.exe`) {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
         }
-        return await xgInstaller.downloadXgExe(env, request);
+        return await arenaInstaller.downloadArenaExe(env, request);
       }
 
-      // /download/xa_setup.exe — bộ cài GUI (thay lệnh CMD/PowerShell)
+      // /download/xa_setup.exe — đường dẫn CŨ, nay trỏ về xa_arena.exe
       if (url.pathname === `/download/xa_setup.exe`) {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           return fail(405, 'Phuong thuc khong duoc ho tro', 'METHOD_NOT_ALLOWED');
         }
-        return await installInfo.downloadSetup(env, request);
+        // ĐÃ BỎ bộ cài. Chỉ còn MỘT file: xa_arena.exe.
+      // Giữ đường dẫn cũ trỏ về cùng file để link cũ không 404.
+      return await arenaInstaller.downloadArenaExe(env, request);
       }
     } catch (err) {
       if (err instanceof ApiError) {
