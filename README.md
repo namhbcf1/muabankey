@@ -16,7 +16,7 @@ https://muabankey.bangachieu2.workers.dev   ← dự phòng
 | Worker `muabankey` | Cloudflare Workers | Toàn bộ API + phục vụ SPA + license server + installer |
 | D1 `muabankey-db` | Cloudflare D1 (SQLite) | User, sản phẩm, đơn hàng, ví, license, log |
 | KV `muabankey-kv` | Cloudflare KV | Rate limit |
-| R2 `muabankey-assets` | Cloudflare R2 | Chứa `xa_arena.exe`, `xa_setup.exe` |
+| R2 `muabankey-assets` | Cloudflare R2 | Chứa **duy nhất** `xa_arena.exe` |
 | Workers AI | `@cf/meta/llama-3.1-8b-instruct` | Chatbot tư vấn Key Bot |
 
 **Không còn worker riêng cho license** — API `/api/activate`, `/api/check`, `/api/rebind` nằm chung trong worker này.
@@ -53,6 +53,11 @@ Deploy lại để áp dụng: `npx wrangler deploy`
 
 ## 3. Luồng bán license (quan trọng nhất)
 
+> **Chỉ có MỘT app duy nhất: `xa_arena.exe`** — chứa cả bỏ sương mù lẫn cộng
+> tài nguyên. Quyền bật chức năng nào do **license** quyết định, không phải
+> do cài bản nào. Bộ cài riêng (`xa_setup.exe`) và các tool tách rời
+> (`xa_nofog_pro.exe`, `xa_grant.exe`) **đã bỏ hoàn toàn**.
+
 ```
 Khách chọn gói
    ↓
@@ -60,43 +65,48 @@ Thanh toán bằng ví (VietQR nạp tiền)
    ↓
 Worker sinh key THẬT vào bảng `licenses`
    ↓
-Trả về: key + lệnh CMD cài đặt tự động
+Trả về: key + link tải xa_arena.exe
    ↓
-Khách dán lệnh vào CMD
+Khách tải và mở app
    ↓
-Script: xin admin → tải EXE → kiểm SHA-256 → ÉP RUNASADMIN
-        → kích hoạt license → tạo shortcut Desktop
+App tự ép cập nhật lên bản mới nhất → kích hoạt license
    ↓
-Xong. Mở tool từ Desktop là chạy.
+Xong. Mở app là chạy.
 ```
 
 ### Lệnh khách nhận được
 
 ```cmd
-curl -L -o "%TEMP%\xa.cmd" "https://muabankey.bangachieu2.workers.dev/i/<KEY>.cmd" && "%TEMP%\xa.cmd"
+curl -L -o "%TEMP%\xa_arena.exe" "https://xienhl.com/download/xa_arena.exe" && start "" "%TEMP%\xa_arena.exe" --key "<KEY>"
 ```
 
-### Các endpoint installer
+Sinh lệnh cho một key bất kỳ (bán thủ công qua Zalo/Telegram):
+
+```powershell
+node scripts/make-install.mjs AOE1-XXXX-XXXX-XXXX
+```
+
+### Các endpoint phát hành
 
 | Endpoint | Mô tả |
 |---|---|
-| `GET /i/<KEY>.cmd` | File .cmd cá nhân hoá (chỉ trả khi key tồn tại + chưa thu hồi) |
-| `GET /i/<KEY>.ps1` | Biến thể PowerShell |
-| `GET /i/<KEY>` | JSON chứa lệnh copy-paste |
-| `GET /download/xa_arena.exe` | Tải EXE gộp từ R2 (hỗ trợ Range/resume) |
-| `GET /download/xa_setup.exe` | Tải bộ cài GUI (khách dùng cái này) |
+| `GET /download/xa_arena.exe` | Tải EXE duy nhất từ R2 (hỗ trợ Range/resume) |
+| `GET /download/xa_setup.exe` | Đường dẫn CŨ — trỏ về cùng `xa_arena.exe` |
+| `GET /api/app/version` | Version + SHA-256 + size + URL của bản phát hành |
 | `GET /api/entitlement` | Quyền dùng chức năng theo license |
 
-### Script cài đặt làm gì
+> Các route cũ `/i/<KEY>.cmd|.ps1`, `/xg/<KEY>.cmd|.ps1`,
+> `/api/install-info`, `/api/setup/version` **đã bỏ** và trả `410` kèm
+> hướng dẫn tải bản mới.
 
-1. `net session` → nếu chưa admin, tự `Start-Process -Verb RunAs`
-2. Tạo `C:\Program Files\XArena\_re\chayduoc`
-3. Tải EXE: thử `curl` → `WebClient` → `certutil` (3 lớp dự phòng)
-4. Kiểm SHA-256: `053A6C494AE3EEE22BCD9044D495CC026C880EC22AC5E4B8FC3BF7B166DEEB75` (1.4.1.0, 9.101.312 byte)
-5. **Ép RUNASADMIN** vào cả `HKCU` và `HKLM` (AppCompatFlags\Layers)
-6. `xa_setup.exe --key <KEY>` → cài + kích hoạt + tự mở app
-7. Tạo shortcut Desktop + Start Menu
-8. Tạo `go-cai-dat.cmd` để gỡ cài đặt
+### App tự cập nhật
+
+1. Mở app → gọi `/api/app/version`
+2. Server mới hơn → tải EXE mới + kiểm SHA-256 + thay file + khởi động lại
+3. Không gọi được server → **vẫn chạy** (không chặn khách khi mất mạng)
+
+**Không có nút "Bỏ qua".** Vì vậy mỗi lần build **phải tăng version** ở
+cả `tool/app/xa_arena_app.py` và `src/routes/arena-installer.js`.
 
 ---
 
@@ -202,14 +212,9 @@ npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema.sql --yes
 npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema-v2.sql --yes
 npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema-license-server.sql --yes
 
-# Cập nhật EXE lên R2 (sau khi build lại)
+# Cập nhật EXE lên R2 (sau khi build lại) — CHỈ CÓ MỘT FILE
 npx wrangler@4 r2 object put "muabankey-assets/files/xa_arena.exe" `
   --file="tool\dist-arena\xa_arena.exe" `
-  --content-type="application/octet-stream" --remote
-
-# Cập nhật bộ cài (khi sửa xa_setup)
-npx wrangler@4 r2 object put "muabankey-assets/files/xa_setup.exe" `
-  --file="tool\dist-setup\xa_setup.exe" `
   --content-type="application/octet-stream" --remote
 ```
 
@@ -249,7 +254,7 @@ Kết quả hiện tại: **57/57 + 45/45 = 102/102 PASS**.
 muabankey/
 ├── wrangler.toml          # Cấu hình worker + bindings
 ├── src/
-│   ├── index.js           # Entry + router + installer routes
+│   ├── index.js           # Entry + router
 │   ├── lib/               # crypto, http, auth, ratelimit, validate, router
 │   └── routes/
 │       ├── auth.js        # Đăng ký/đăng nhập/hồ sơ
@@ -259,13 +264,21 @@ muabankey/
 │       ├── admin.js       # Dashboard, users, coupons, settings
 │       ├── ai.js          # Chatbot Workers AI
 │       ├── license.js     # Cấp/quản lý license
-│       ├── license-server.js  # API cho client XArena
-│       └── installer.js   # Sinh .cmd/.ps1 + phục vụ EXE
+│       ├── license-server.js   # API cho client XA ARENA
+│       ├── arena-installer.js  # Phát hành xa_arena.exe (DUY NHẤT)
+│       ├── entitlement.js      # Quyền chức năng theo license
+│       └── app-info.js         # /api/app/version
 ├── public/                # SPA (index.html + assets/)
 │   ├── assets/pages/      # home, products, product-detail, auth,
 │   │                      # checkout, account, orders, wallet,
 │   │                      # licenses, support, admin
 │   └── img/               # 19 SVG sản phẩm
+├── tool/                  # Source app XA ARENA (Python + PyQt6)
+│   ├── app/               # xa_arena_app/api/gui, trial_rules
+│   ├── grant/             # engine cộng tài nguyên
+│   ├── src/               # xa_nofog_pro (engine bỏ sương mù)
+│   ├── ui/                # theme + update
+│   └── dist-arena/        # xa_arena.exe sau khi build
 ├── db/                    # Schema + seed SQL
 └── scripts/               # e2e test, build helpers, screenshots
 ```
@@ -290,31 +303,45 @@ git status                 # trạng thái
 git add -A; git commit -m "..."   # commit thay đổi
 ```
 
-Secrets đã được `.gitignore` chặn: `ADMIN_CREDENTIALS.txt`, `.webhook-secret.txt`, `.env`, `*.pem`.
+Secrets đã được `.gitignore` chặn: `secrets/`, `keys/`, `ADMIN_CREDENTIALS.txt`,
+`WEBHOOK_SECRET.txt`, `.env`, `.dev.vars`, `.key-enc.txt`, `*.pem`.
+
+Repo GitHub (private): https://github.com/namhbcf1/muabankey
 
 ---
 
-## 12. Nếu cần build lại EXE
+## 13. Build lại EXE
 
-Sau khi sửa `xa_nofog_pro.py` (đổi `API_BASE` chẳng hạn):
+Chỉ có **một** app: `tool/app/xa_arena_app.py` (gộp cả map sáng + tài nguyên).
 
 ```powershell
-cd "C:\Program Files\XArena\_re\chayduoc"
-python -m PyInstaller --onefile --name xa_nofog_pro `
-  --distpath ".\_build_dist" --workpath ".\_build_work" `
-  --specpath ".\_build_spec" --noconfirm xa_nofog_pro.py
+cd tool\app
+python -m PyInstaller --onefile --windowed --name xa_arena `
+  --distpath "..\dist-arena" --workpath "..\.build-arena" `
+  --specpath "..\.build-arena" --noconfirm xa_arena_app.py
 
 # Lấy SHA-256 + size mới
-$exe = ".\tool\dist-arena\xa_arena.exe"
+$exe = "..\dist-arena\xa_arena.exe"
 (Get-FileHash $exe -Algorithm SHA256).Hash
 (Get-Item $exe).Length
 ```
 
-Rồi cập nhật 2 hằng số trong `src/routes/installer.js`:
+Rồi cập nhật **3 hằng số** trong `src/routes/arena-installer.js`:
 
 ```js
-const EXE_SHA256 = '<hash mới>';
-const EXE_SIZE = <size mới>;
+export const EXE_VERSION = '<version mới>';   // PHẢI khớp APP_VERSION trong app
+export const EXE_SHA256  = '<hash mới>';
+export const EXE_SIZE    = <size mới>;
 ```
 
-Cuối cùng upload R2 + deploy.
+Cuối cùng upload R2 + deploy:
+
+```powershell
+npx wrangler@4 r2 object put "muabankey-assets/files/xa_arena.exe" `
+  --file="tool\dist-arena\xa_arena.exe" `
+  --content-type="application/octet-stream" --remote
+npx wrangler@4 deploy
+```
+
+> ⚠️ **Quên tăng version = không ai nhận được bản mới** (app ép cập nhật
+> bằng cách so version, không so hash).

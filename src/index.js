@@ -25,11 +25,8 @@ import * as trialAdmin from './routes/trial-admin.js';
 import * as trialCmd from './routes/trial-command.js';
 import * as twl from './routes/trial-whitelist-admin.js';
 import * as stats from './routes/stats.js';
-import * as installer from './routes/installer.js';
 import * as appInfo from './routes/app-info.js';
 import * as xgServer from './routes/xa-grant-server.js';
-import * as xgInstaller from './routes/xa-grant-installer.js';
-import * as installInfo from './routes/install-info.js';
 
 const r = new Router();
 
@@ -104,17 +101,6 @@ r.post('/api/xg/heartbeat', xgServer.xgHeartbeat);
 r.post('/api/xg/rebind', xgServer.xgRebind);
 r.post('/api/xg/violation', xgServer.xgViolation);
 r.get('/api/xg/health', (env) => xgServer.xgHealth(env));
-r.post('/api/licenses/:key/xg-install-token',
-  (env, req, p) => xgInstaller.issueXgInstallToken(env, req, p.key));
-
-/*
- * App (xa_arena.exe) dùng 2 endpoint này thay cho việc khách phải
- * dán lệnh PowerShell vào Win+R. Cùng mức xác thực: install token còn hạn
- * HOẶC session đăng nhập sở hữu key.
- */
-r.get('/api/install-info', installInfo.installInfo);
-r.get('/api/install-info/resolve', installInfo.installResolve);
-r.get('/api/setup/version', (env) => installInfo.setupVersion(env));
 
 /* ---------- Dùng thử 3 ngày ---------- */
 r.post('/api/trial/start', trial.apiTrialStart);
@@ -134,7 +120,6 @@ r.get('/api/licenses/mine', license.myLicenses);
  */
 r.get('/api/entitlement', (env, req) => entitlement.buildEntitlement(env, req));
 r.post('/api/licenses/:key/rebind', (env, req, p) => license.rebindMyLicense(env, req, p.key));
-r.post('/api/licenses/:key/install-token', (env, req, p) => installer.issueInstallToken(env, req, p.key));
 
 /* ---------- AI ---------- */
 r.post('/api/ai/chat', ai.aiChat);
@@ -509,42 +494,26 @@ export default {
 
     /* ---------- Tuyến cài đặt tự động (ngoài /api/) ---------- */
     try {
-      // /i/<KEY>.cmd  |  /i/<KEY>.ps1  |  /i/<KEY>  (JSON lệnh)
-      const mInstaller = url.pathname.match(/^\/i\/([A-Za-z0-9-]{6,64})(\.cmd|\.ps1)?$/);
-      if (mInstaller) {
-        const rawKey = mInstaller[1];
-        const ext = mInstaller[2] || '';
-        if (request.method !== 'GET' && request.method !== 'HEAD') {
-          return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
-        }
-        // PHẢI await: nếu không, promise reject sẽ thoát khỏi try/catch
-        // và Worker ném exception -> Cloudflare 1101 thay vì 404 sạch.
-        /*
-         * AUDIT #10: /i/<KEY> là bề mặt ĐOÁN KEY công khai (không cần đăng
-         * nhập). Trước đây chỉ có trần toàn cục 3000/phút/IP nên dò key là
-         * chuyện thoải mái. Nay thêm trần theo route.
-         *
-         * 60 lượt / 1 phút / IP là RỘNG RÃI so với dùng thật: một lần cài chỉ
-         * gọi 2-4 request (.cmd -> .ps1 -> tải EXE), và bộ cài gọi lại khi
-         * khách bấm cài lại. Mục tiêu là chặn dò hàng loạt, không chặn khách.
-         */
-        await rateLimit(env, `inst:${clientIp(request)}`, 60, 60);
-        if (ext === '.cmd') return await installer.serveInstaller(env, request, rawKey);
-        if (ext === '.ps1') return await installer.servePs1(env, request, rawKey);
-        return await installer.installerCommand(env, request, rawKey);
-      }
-
-      // /xg/<KEY>.cmd | /xg/<KEY>.ps1 | /xg/<KEY>   (XAGrant, sản phẩm riêng)
-      const mXg = url.pathname.match(/^\/xg\/([A-Za-z0-9-]{6,64})(\.cmd|\.ps1)?$/);
-      if (mXg) {
-        const rawKey = mXg[1];
-        const ext = mXg[2] || '';
-        if (request.method !== 'GET' && request.method !== 'HEAD') {
-          return fail(405, 'Phương thức không được hỗ trợ', 'METHOD_NOT_ALLOWED');
-        }
-        if (ext === '.cmd') return await xgInstaller.serveXgCmd(env, request, rawKey);
-        if (ext === '.ps1') return await xgInstaller.serveXgPs1(env, request, rawKey);
-        return await xgInstaller.xgInstallerCommand(env, request, rawKey);
+      /*
+       * ĐÃ BỎ 2 BỘ CÀI CŨ (/i/... và /xg/...) — chỉ còn MỘT app: xa_arena.exe.
+       *
+       * Link .cmd/.ps1 cũ có thể còn nằm trong tin nhắn/đơn hàng của khách.
+       * Trả 410 kèm hướng dẫn thay vì 404 câm, để khách biết phải làm gì.
+       */
+      if (/^\/(i|xg)\/[A-Za-z0-9-]{6,64}(\.cmd|\.ps1)?$/.test(url.pathname)) {
+        const u = new URL(request.url);
+        return new Response(
+          `BAN CAI CU DA NGUNG SU DUNG\n\n` +
+          `Vui long tai ban moi tai: ${u.protocol}//${u.host}/#/download\n` +
+          `Chi con MOT file duy nhat: xa_arena.exe\n`,
+          {
+            status: 410,
+            headers: {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
 
       // /download/xa_arena.exe — EXE GỘP (map sáng + tài nguyên)
@@ -563,6 +532,28 @@ export default {
         // ĐÃ BỎ bộ cài. Chỉ còn MỘT file: xa_arena.exe.
       // Giữ đường dẫn cũ trỏ về cùng file để link cũ không 404.
       return await arenaInstaller.downloadArenaExe(env, request);
+      }
+
+      /*
+       * Mọi đường dẫn /download/* khác -> 404 RÕ RÀNG.
+       *
+       * Nếu để rơi xuống assets, SPA fallback (not_found_handling =
+       * single-page-application) sẽ trả index.html với status 200 và
+       * Content-Type text/html cho một URL .exe — khách tải về được một file
+       * HTML đội lốt .exe, không hiểu vì sao không chạy.
+       */
+      if (url.pathname.startsWith('/download/')) {
+        return new Response(
+          'Khong tim thay file. Chi con MOT ban duy nhat:\n' +
+          `${url.protocol}//${url.host}/download/xa_arena.exe\n`,
+          {
+            status: 404,
+            headers: {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
     } catch (err) {
       if (err instanceof ApiError) {
