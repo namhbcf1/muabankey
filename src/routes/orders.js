@@ -272,11 +272,36 @@ export async function deliverOrderItems(env, order) {
       }
 
       if (kind === 'license') {
-        // deliverLicenseLine tự sinh ĐÚNG `quantity` license trong 1 lần gọi
-        // và tự ghi license_issues. KHÔNG gọi trong vòng lặp: gọi N lần thì
-        // mỗi lần lại sinh thêm N key -> mua 2 nhận 4, và license_issues
-        // ghi trùng.
+        /*
+         * CẤP QUYỀN THẲNG VÀO TÀI KHOẢN — KHÔNG SINH KEY CHO KHÁCH.
+         *
+         * Chủ shop chốt: "bỏ toàn bộ key trên hệ thống app và web đi. Mua
+         * thì add luôn vào tài khoản."
+         *
+         * Trước đây bước này gọi deliverLicenseLine() để sinh N license +
+         * ghi license_issues, rồi trả key cho khách dán vào app. Nay:
+         *   1. Cộng hạn vào `account_entitlements` (nguồn sự thật)
+         *   2. Sinh license nội bộ để làm vật mang token (app tự dùng,
+         *      khách không thấy) — chỉ 1 license cho mỗi tính năng
+         *   3. Ghi license_issues để giữ sổ đối soát doanh thu
+         */
+        const { grantFeature, featuresOfProduct } =
+          await import('../lib/account-entitlement.js');
         const { deliverLicenseLine } = await import('./license.js');
+
+        const days = Number(product.license_days || 0);
+        const feats = featuresOfProduct(product);
+
+        // 1. Cộng hạn vào tài khoản (cộng dồn nếu đang còn hạn)
+        for (const f of feats) {
+          await grantFeature(env, {
+            userId: order.user_id, feature: f, days,
+            source: 'purchase', orderId,
+            note: `${product.name} (${qty}×)`,
+          });
+        }
+
+        // 2. Sinh license nội bộ làm vật mang token + ghi sổ đối soát
         const keys = await deliverLicenseLine(env, {
           order, orderId, userId: order.user_id, product, quantity: qty,
         });
@@ -290,9 +315,14 @@ export async function deliverOrderItems(env, order) {
           .bind(qty, item.product_id).run();
         made.soldCount.push({ productId: item.product_id, qty });
 
+        /*
+         * `keys` KHÔNG trả về cho khách nữa — chỉ đánh dấu đã giao.
+         * Khách thấy quyền trong app sau khi đăng nhập.
+         */
         delivered.push({
           productId: item.product_id, name: item.product_name,
-          keys, manual: false,
+          keys: [], manual: false, accountGranted: true,
+          features: feats, days,
         });
         continue;
       }
@@ -426,7 +456,6 @@ export async function listOrders(env, request) {
      * của khách. Mọi trạng thái khác trả mảng rỗng để frontend hiện
      * "Đang xử lý giao hàng" (nhánh sẵn có trong public/assets/pages/orders.js).
      */
-    const keysVisible = o.status === 'delivered';
     const items = itemsByOrder.get(o.id) || [];
     return {
       id: o.id,
@@ -437,8 +466,11 @@ export async function listOrders(env, request) {
       total: o.total,
       couponCode: o.coupon_code,
       createdAt: o.created_at,
-      // keys đã lọc theo trạng thái ở trên (chỉ 'delivered' mới lộ key)
-      items: items.map((it) => ({ ...it, keys: keysVisible ? it.keys : [] })),
+      /*
+       * KHÔNG TRẢ KEY — quyền nằm ở tài khoản.
+       * `delivered_keys` chỉ dùng nội bộ để đối soát.
+       */
+      items: items.map((it) => ({ ...it, keys: [] })),
     };
   });
   return ok({ orders });
@@ -468,12 +500,19 @@ export async function getOrder(env, request, orderId) {
   ).bind(o.id).all();
 
   /*
-   * getOrder là đường ĐỌC CHI TIẾT một đơn — cũng phải áp cùng quy tắc với
-   * listOrders: chỉ đơn 'delivered' mới trả keys. Nếu chỉ vá listOrders thì
-   * kẻ tấn công đổi sang GET /api/orders/:id là lấy lại được key của đơn
-   * chưa thanh toán. Hai đường phải cùng một luật.
+   * KHÔNG BAO GIỜ TRẢ KEY NỮA — QUYỀN NẰM Ở TÀI KHOẢN.
+   *
+   * Chủ shop chốt: "bỏ toàn bộ key trên hệ thống app và web đi".
+   *
+   * Trước đây nhánh này trả `keys` cho đơn 'delivered' để khách dán vào
+   * app. Nay khách chỉ cần đăng nhập, app tự lấy quyền — trả key ra chỉ
+   * làm lộ mã nội bộ và gợi ý sai rằng khách phải giữ nó.
+   *
+   * `delivered_keys` vẫn nằm trong DB để đối soát nội bộ, nhưng KHÔNG ra
+   * khỏi server.
    */
-  const keysVisible = o.status === 'delivered';
+  const keysVisible = false;
+  void keysVisible;
 
   return ok({
     order: {

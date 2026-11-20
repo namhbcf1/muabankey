@@ -1107,6 +1107,282 @@ def fetch_by_key(key):
     return d
 
 
+def start_account_trial(timeout=25):
+    """Bắt đầu/tiếp tục lượt dùng thử THEO TÀI KHOẢN.
+
+    Chủ shop chốt: mỗi tài khoản mới được 1 NGÀY, bật CẢ map sáng và tài
+    nguyên, KHÔNG phải nhập mã. Đồng hồ chạy từ lần đầu mở app.
+
+    Server trả 2 token đã ký (xn1. cho map sáng, xg1. cho tài nguyên) cùng
+    hạn. Hàm này lưu cả hai vào state để các worker khác dùng ngay, không
+    phải gọi lại server.
+
+    Trả dict:
+      ok       : True nếu có quyền dùng
+      state    : ok | login_required | used_before | device_limit | banned
+                 | expired | offline | no_hw | error
+      left_sec : số giây còn lại
+      msg      : câu tiếng Việt cho khách
+    """
+    out = {'ok': False, 'state': 'error', 'left_sec': 0,
+           'expires_at': 0, 'msg': ''}
+
+    try:
+        import xa_nofog_pro as NF
+    except Exception:
+        out['msg'] = 'Không nạp được module mạng.'
+        return out
+
+    # ---- 1. Phải có phiên đăng nhập ----
+    try:
+        ck = session_cookie()
+    except Exception:
+        ck = ''
+    if not ck:
+        out.update({'state': 'login_required',
+                    'msg': 'Đăng nhập để dùng thử miễn phí 1 ngày.'})
+        return out
+
+    # ---- 2. Đọc phần cứng ----
+    try:
+        parts = NF._hwid_parts()
+        okp, why = NF._hwid_parts_check(parts)
+        if not okp:
+            out.update({'state': 'no_hw',
+                        'msg': 'Không đọc được thông tin máy. Thử chạy lại app.'})
+            return out
+    except Exception:
+        out.update({'state': 'no_hw',
+                    'msg': 'Không đọc được thông tin máy. Thử chạy lại app.'})
+        return out
+
+    guid, bios, cpu, vol = [str(x or '') for x in parts]
+
+    # ---- 3. Gọi server ----
+    r = NF._post('/api/trial/session', {
+        'guid': guid, 'bios': bios, 'cpu': cpu, 'vol': vol,
+        'app': 'xa-arena', 'ver': NF.CLIENT_VERSION,
+    }, timeout=timeout, retries=1, cookie=ck)
+
+    if not r.get('ok'):
+        code = str(r.get('code') or '').lower()
+        msg = str(r.get('msg') or '')
+
+        if code == 'login_required':
+            out.update({'state': 'login_required',
+                        'msg': 'Phiên đăng nhập đã hết. Đăng nhập lại.'})
+        elif code in ('trial_used_before',):
+            out.update({'state': 'used_before',
+                        'msg': 'Tài khoản này đã dùng thử rồi. Mua license để tiếp tục.'})
+        elif code in ('trial_device_limit',):
+            out.update({'state': 'device_limit', 'msg': msg or
+                        'Máy này đã dùng thử cho nhiều tài khoản khác.'})
+        elif code in ('trial_banned', 'trial_denied_device'):
+            out.update({'state': 'banned', 'msg': msg or 'Thiết bị không được dùng thử.'})
+        elif code in ('trial_expired',):
+            out.update({'state': 'expired',
+                        'msg': msg or 'Lượt dùng thử đã kết thúc. Mua license để tiếp tục.'})
+        elif code in ('trial_disabled', 'rate_limit'):
+            out.update({'state': 'offline', 'msg': msg or 'Dùng thử đang tạm đóng.'})
+        elif code in ('network', 'timeout', ''):
+            out.update({'state': 'offline',
+                        'msg': 'Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.'})
+        else:
+            out.update({'state': 'error', 'msg': msg or code or 'Không bật được dùng thử.'})
+        return out
+
+    # ---- 4. Lưu token map sáng vào state ----
+    no = r.get('nofog') or {}
+    gr = r.get('grant') or {}
+    exp = int(r.get('expires_at') or 0)
+    started = int(r.get('started_at') or 0)
+
+    if no.get('token'):
+        try:
+            st = NF.load_state()
+            NF.anchor_server_time(st, r.get('now'))
+            st.update({
+                'key': no.get('key') or '',
+                'hwid': no.get('hwid') or '',
+                'xn_token': no['token'],
+                'expires_at': exp,
+                'activated_at': started,
+                'plan': 'trial',
+                'is_trial': True,
+                'grace_hours': 0,
+                'last_ok': time.time(),
+                'mode': 'server',
+            })
+            NF.save_state(st)
+        except Exception as e:
+            out.update({'state': 'error', 'msg': 'Không lưu được quyền: %s' % str(e)[:60]})
+            return out
+
+    # ---- 5. Lưu token tài nguyên ----
+    if gr.get('token'):
+        try:
+            import xa_grant as XG
+            XG.write_token(gr['token'])
+        except Exception:
+            # Không lưu được token tài nguyên thì map sáng vẫn chạy;
+            # lần sau sẽ xin lại. Không chặn toàn bộ.
+            pass
+
+    out.update({
+        'ok': True,
+        'state': 'ok',
+        'left_sec': int(r.get('left_sec') or 0),
+        'expires_at': exp,
+        'started_at': started,
+        'msg': '',
+        'has_nofog': bool(no.get('token')),
+        'has_grant': bool(gr.get('token')),
+    })
+    return out
+
+
+def fetch_account_token(timeout=25):
+    """Lấy token theo QUYỀN CỦA TÀI KHOẢN (đã mua hoặc đang dùng thử).
+
+    MÔ HÌNH MỚI: không còn key. App chỉ cần đăng nhập, server biết tài khoản
+    có quyền gì và ký token tương ứng.
+
+    Trả dict giống start_account_trial().
+    """
+    out = {'ok': False, 'state': 'error', 'left_sec': 0,
+           'expires_at': 0, 'msg': ''}
+
+    try:
+        import xa_nofog_pro as NF
+    except Exception:
+        out['msg'] = 'Không nạp được module mạng.'
+        return out
+
+    try:
+        ck = session_cookie()
+    except Exception:
+        ck = ''
+    if not ck:
+        out.update({'state': 'login_required', 'msg': 'Đăng nhập để sử dụng app.'})
+        return out
+
+    # ---- Đọc phần cứng ----
+    try:
+        parts = NF._hwid_parts()
+        okp, _why = NF._hwid_parts_check(parts)
+        if not okp:
+            out.update({'state': 'no_hw',
+                        'msg': 'Không đọc được thông tin máy. Thử chạy lại app.'})
+            return out
+    except Exception:
+        out.update({'state': 'no_hw',
+                    'msg': 'Không đọc được thông tin máy. Thử chạy lại app.'})
+        return out
+
+    guid, bios, cpu, vol = [str(x or '') for x in parts]
+
+    r = NF._post('/api/account/token', {
+        'guid': guid, 'bios': bios, 'cpu': cpu, 'vol': vol,
+        'app': 'xa-arena', 'ver': NF.CLIENT_VERSION,
+    }, timeout=timeout, retries=1, cookie=ck)
+
+    if not r.get('ok'):
+        code = str(r.get('code') or '').lower()
+        msg = str(r.get('msg') or '')
+        if code == 'login_required':
+            out.update({'state': 'login_required',
+                        'msg': 'Phiên đăng nhập đã hết. Đăng nhập lại.'})
+        elif code in ('no_entitlement',):
+            out.update({'state': 'no_entitlement',
+                        'msg': msg or 'Tài khoản chưa có quyền. Dùng thử hoặc mua license.'})
+        elif code in ('network', 'timeout', ''):
+            out.update({'state': 'offline',
+                        'msg': 'Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.'})
+        else:
+            out.update({'state': 'error', 'msg': msg or code or 'Không lấy được quyền.'})
+        return out
+
+    # ---- Lưu token map sáng ----
+    no = r.get('nofog') or {}
+    gr = r.get('grant') or {}
+    exp = int((no.get('expires_at') or gr.get('expires_at') or 0))
+
+    if no.get('token'):
+        try:
+            st = NF.load_state()
+            NF.anchor_server_time(st, r.get('now'))
+            st.update({
+                'key': '',
+                'hwid': '',
+                'xn_token': no['token'],
+                'expires_at': exp,
+                'activated_at': int(no.get('activated_at') or 0),
+                'plan': no.get('plan') or 'aoe1',
+                'grace_hours': 0,
+                'last_ok': time.time(),
+                'mode': 'server',
+            })
+            for _k in ('is_trial', 'trial_weak', 'trial_started', 'trial_days'):
+                st.pop(_k, None)
+            NF.save_state(st)
+        except Exception as e:
+            out.update({'state': 'error', 'msg': 'Không lưu được quyền: %s' % str(e)[:60]})
+            return out
+
+    if gr.get('token'):
+        try:
+            import xa_grant as XG
+            XG.write_token(gr['token'])
+        except Exception:
+            pass
+
+    out.update({
+        'ok': True, 'state': 'ok',
+        'left_sec': max(0, exp - int(time.time())) if exp else 0,
+        'expires_at': exp,
+        'msg': '',
+        'features': r.get('features') or [],
+        'has_nofog': bool(no.get('token')),
+        'has_grant': bool(gr.get('token')),
+    })
+    return out
+
+
+def register(username, password):
+    """Tạo tài khoản mới ngay trong app. Trả (ok, msg).
+
+    Chủ shop chốt: "bắt buộc phải đăng ký mới sử dụng được app, đăng ký luôn
+    trên EXE cũng được."
+
+    Dùng /api/auth/register — server trả Set-Cookie ngay, nên tạo xong là
+    đăng nhập luôn, khách không phải gõ lại mật khẩu.
+    """
+    try:
+        import xa_nofog_pro as NF
+    except Exception:
+        return False, 'không nạp được module mạng'
+    try:
+        ok, msg, _ck = NF.register_to_server(username, password, verbose=False)
+    except Exception as e:
+        return False, str(e)[:120]
+    if not ok:
+        return False, msg or 'không tạo được tài khoản'
+
+    # Tạo xong thì key dán tay không cần nữa
+    try:
+        clear_manual_key()
+    except Exception:
+        pass
+
+    # Lấy quyền ngay để giao diện biết bật khối nào
+    d = fetch_entitlement()
+    if not d.get('ok'):
+        # Tạo tài khoản THÀNH CÔNG nhưng chưa lấy được quyền (mạng chập chờn)
+        # -> vẫn trả True, lần làm mới sau sẽ có. Không doạ khách.
+        return True, ''
+    return True, ''
+
+
 def login(username, password):
     """Đăng nhập. Trả (ok, msg). Thành công -> tự lấy quyền."""
     try:
@@ -2581,11 +2857,12 @@ def fmt_left(sec):
 
 
 def ensure_tokens(d, on_step=None):
-    """Bảo đảm token cục bộ khớp với quyền trên server.
+    """Bảo đảm token cục bộ khớp với quyền trên TÀI KHOẢN.
 
-    VÌ SAO CẦN: entitlement nói khách CÓ quyền bật map sáng, nhưng máy có
-    thể chưa có token (máy mới) hoặc token ĐÃ HẾT HẠN. Thiếu token thì
-    không biết vá vào đâu -> phải gọi /api/activate lấy token mới.
+    MÔ HÌNH MỚI: không còn key. Quyền nằm ở tài khoản, server trả token đã
+    ký khi app gọi /api/trial/session (dùng thử) hoặc /api/account/token
+    (đã mua). Hàm này chỉ lo lấy/làm mới token, không bao giờ hỏi khách
+    nhập gì.
 
     Trả (ok, msg). Không ném ra ngoài.
     """
@@ -2605,52 +2882,41 @@ def ensure_tokens(d, on_step=None):
     if token_ok():
         return True, ''          # token còn tốt
 
-    key = nofog_key_of(d)
-    if not key:
-        return False, 'không tìm thấy key cấp quyền map sáng'
+    say('Đang lấy quyền từ tài khoản…')
 
-    # ------------------------------------------------------------------
-    # KEY DÙNG THỬ ĐI ĐƯỜNG RIÊNG.
+    # ---- Đường duy nhất: lấy token theo TÀI KHOẢN ----
     #
-    # LỖI ĐÃ SỬA: trước đây MỌI key đều gọi NF.activate() -> POST
-    # /api/activate. Server TỪ CHỐI key trial ở đó (403 trial_only, đúng
-    # thiết kế để 1 mã không share cho 100 máy). Kết quả: khách dán mã
-    # dùng thử vào app thì luôn nhận "Đây là mã dùng thử, không kích hoạt
-    # được theo cách này" và KHÔNG bao giờ dùng được.
-    #
-    # Đường đúng cho TR-: /api/trial/claim -> /api/check (cấp token xn1.
-    # có ss/sv). Đã kiểm bằng HTTP thật: token sinh ra dùng được, 17 cổng.
-    # ------------------------------------------------------------------
-    if is_trial_key(key):
-        return claim_trial_key(key, on_step=on_step)
-
-    say('Đang kích hoạt license…')
+    # Thứ tự: thử /api/account/token trước (khách đã mua — chỉ ĐỌC quyền),
+    # nếu chưa có quyền thì mới xin lượt dùng thử 1 ngày.
     try:
-        import xa_nofog_pro as NF
-    except Exception as e:
-        return False, 'không nạp được module: %s' % e
-
-    try:
-        ok, msg = NF.activate(key, verbose=False)
+        r = fetch_account_token()
     except Exception as e:
         set_last_code('network')
-        return False, 'kích hoạt lỗi: %s' % str(e)[:100]
+        return False, 'không lấy được quyền: %s' % str(e)[:100]
 
-    if not ok:
-        # Mã lỗi (nếu có) để giao diện chọn đúng câu hướng dẫn kế tiếp.
-        set_last_code(error_code_of(msg))
-        return False, msg or 'kích hoạt thất bại'
-    set_last_code('')
+    if not r.get('ok') and r.get('state') == 'no_entitlement':
+        # Chưa mua gì -> xin dùng thử 1 ngày
+        try:
+            r = start_account_trial()
+        except Exception as e:
+            set_last_code('network')
+            return False, 'không bật được dùng thử: %s' % str(e)[:100]
+
+    if not r.get('ok'):
+        set_last_code(r.get('state') or 'error')
+        return False, r.get('msg') or 'không lấy được quyền'
 
     # Nạp lại bảng cổng sau khi có token mới
     try:
+        import xa_nofog_pro as NF
         ok2, _m2 = NF._load_sites(None, verbose=False)
         if not ok2:
             return False, 'token mới vẫn không dùng được'
     except Exception:
         return False, 'không nạp được bảng cổng'
 
-    say('Đã kích hoạt.')
+    set_last_code('')
+    say('Đã có quyền.')
     return True, ''
 
 
@@ -2716,7 +2982,21 @@ def ensure_grant_token(d, on_step=None):
 
     key = grant_key_of(d)
     if not key:
-        return False, msgE or 'không tìm thấy key cấp quyền tài nguyên'
+        # MÔ HÌNH MỚI: không còn key. Quyền tài nguyên nằm ở TÀI KHOẢN.
+        # Lấy token bằng cách gọi lại /api/trial/session — đã mua hay dùng
+        # thử đều đi qua cùng một đường, server biết tài khoản có gì.
+        say('Đang lấy quyền tài nguyên từ tài khoản…')
+        r = start_account_trial()
+        if not r.get('ok'):
+            return False, r.get('msg') or 'không lấy được quyền tài nguyên'
+        try:
+            okE3, msgE3 = XG.ensure_engine(None)
+        except Exception as e:
+            return False, str(e)[:100]
+        if not okE3:
+            return False, msgE3 or 'token tài nguyên mới vẫn không dùng được'
+        say('Đã có quyền tài nguyên.')
+        return True, ''
 
     # ---- HWID ----
     hwid = ''

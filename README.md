@@ -53,38 +53,36 @@ Deploy lại để áp dụng: `npx wrangler deploy`
 
 ## 3. Luồng bán license (quan trọng nhất)
 
-> **Chỉ có MỘT app duy nhất: `xa_arena.exe`** — chứa cả bỏ sương mù lẫn cộng
-> tài nguyên. Quyền bật chức năng nào do **license** quyết định, không phải
-> do cài bản nào. Bộ cài riêng (`xa_setup.exe`) và các tool tách rời
-> (`xa_nofog_pro.exe`, `xa_grant.exe`) **đã bỏ hoàn toàn**.
+> **KHÔNG CÒN KEY.** Mọi thứ đi theo **TÀI KHOẢN**.
+>
+> - Khách đăng ký trên web **hoặc ngay trong app** (chỉ cần tên + mật khẩu)
+> - Tài khoản mới: **dùng thử 1 NGÀY**, bật **cả map sáng và tài nguyên**
+> - Đồng hồ tính từ **lần đầu mở app**, không phải lúc đăng ký
+> - Mua trên web → quyền **cộng thẳng vào tài khoản**, app tự nhận khi mở
+> - Khách không bao giờ thấy, giữ hay gõ một "key" nào
 
 ```
-Khách chọn gói
+Khách mở app
    ↓
-Thanh toán bằng ví (VietQR nạp tiền)
+Chưa đăng nhập → BẮT BUỘC đăng nhập / tạo tài khoản (ngay trong app)
    ↓
-Worker sinh key THẬT vào bảng `licenses`
+Tài khoản mới → tự nhận 1 NGÀY dùng thử (cả 2 tính năng)
    ↓
-Trả về: key + link tải xa_arena.exe
+Hết hạn → app chỉ còn nút "Mua"
    ↓
-Khách tải và mở app
+Mua trên web → quyền cộng vào tài khoản
    ↓
-App tự ép cập nhật lên bản mới nhất → kích hoạt license
-   ↓
-Xong. Mở app là chạy.
+Mở app → tự nhận quyền, không thao tác gì
 ```
 
-### Lệnh khách nhận được
+### Bảng quyết định quyền
 
-```cmd
-curl -L -o "%TEMP%\xa_arena.exe" "https://xienhl.com/download/xa_arena.exe" && start "" "%TEMP%\xa_arena.exe" --key "<KEY>"
-```
-
-Sinh lệnh cho một key bất kỳ (bán thủ công qua Zalo/Telegram):
-
-```powershell
-node scripts/make-install.mjs AOE1-XXXX-XXXX-XXXX
-```
+| Nguồn | Tính năng | Bảng dữ liệu |
+|---|---|---|
+| Dùng thử 1 ngày | `nofog` + `grant` | `account_entitlements` (source=`trial`) |
+| Mua gói XARENA | `nofog` | `account_entitlements` (source=`purchase`) |
+| Mua gói XA THÊM TÀI NGUYÊN | `grant` | `account_entitlements` (source=`purchase`) |
+| Admin cấp tay | tuỳ | `account_entitlements` (source=`admin`) |
 
 ### Các endpoint phát hành
 
@@ -93,7 +91,10 @@ node scripts/make-install.mjs AOE1-XXXX-XXXX-XXXX
 | `GET /download/xa_arena.exe` | Tải EXE duy nhất từ R2 (hỗ trợ Range/resume) |
 | `GET /download/xa_setup.exe` | Đường dẫn CŨ — trỏ về cùng `xa_arena.exe` |
 | `GET /api/app/version` | Version + SHA-256 + size + URL của bản phát hành |
-| `GET /api/entitlement` | Quyền dùng chức năng theo license |
+| `POST /api/trial/session` | Bắt đầu/tiếp tục lượt dùng thử 1 ngày |
+| `GET /api/trial/session` | Xem trạng thái dùng thử (không chạy đồng hồ) |
+| `POST /api/account/token` | Cấp token theo quyền tài khoản (đã mua) |
+| `GET /api/entitlement` | Quyền + hạn từng tính năng + trạng thái dùng thử |
 
 > Các route cũ `/i/<KEY>.cmd|.ps1`, `/xg/<KEY>.cmd|.ps1`,
 > `/api/install-info`, `/api/setup/version` **đã bỏ** và trả `410` kèm

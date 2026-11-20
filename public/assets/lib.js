@@ -377,47 +377,6 @@ export function emptyBlock({ ico = 'inbox', title, desc = '', action = '' }) {
   </div>`;
 }
 
-/* ---------- Giải mã key giao cho khách ---------- */
-/**
- * Giải mã key giao cho khách.
- *
- * Key thường lưu dạng base64; riêng key license là chuỗi thuần (AOE1-XXXX-...).
- * Trước đây chỉ kiểm tra ký tự in được nên chuỗi base64 vô nghĩa vẫn bị giải mã
- * thành mojibake (vd "KEY12345" -> "(F5Û~9"). Nay kiểm tra round-trip.
- */
-export function decodeKey(raw) {
-  const s = String(raw ?? '');
-  // Dạng license thuần
-  if (/^[A-Z0-9]+(-[A-Z0-9]+){1,4}$/i.test(s)) return s;
-  // Không giống base64 -> trả nguyên
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return s;
-
-  /*
-   * Base64 không padding vẫn hợp lệ (độ dài mod 4 = 2 hoặc 3). Trước đây điều
-   * kiện `length % 4 !== 0` từ chối thẳng, nên key tài khoản dài 30 ký tự
-   * (vd "bmZ4MDFAbmZ4Lm11YWJhbmtleS52bn") hiện ra nguyên chuỗi base64 thay vì
-   * "nfx01@nfx.muabankey.vn". Bù padding rồi mới giải mã.
-   */
-  const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
-
-  try {
-    const dec = atob(padded);
-    // Round-trip: mã hoá lại phải khớp bản gốc (bỏ padding)
-    if (btoa(dec).replace(/=+$/, '') !== s.replace(/=+$/, '')) return s;
-    // Phải là text đọc được (không có ký tự điều khiển)
-    if (/[\x00-\x1F\x7F]/.test(dec)) return s;
-    /*
-     * Chuỗi giải mã phải "giống thông tin đăng nhập". Tập ký tự phải đủ rộng
-     * cho mật khẩu thật: trước đây thiếu `#` nên key có mật khẩu dạng
-     * "MbkNFX@2025#01" bị từ chối và khách thấy nguyên chuỗi base64.
-     */
-    if (!/^[A-Za-z0-9@._:|\-+/=#$%^&*!?~[\]{}()<>;,'"\s]{4,}$/.test(dec)) return s;
-    return dec;
-  } catch {
-    return s;
-  }
-}
-
 /* ---------- Debounce ---------- */
 export function debounce(fn, ms = 300) {
   let t;

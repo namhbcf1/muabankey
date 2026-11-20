@@ -508,8 +508,14 @@ async function paidLicencePipeline(env, lic, key, hwid, ip, now, mode,
   return { ok: true, first: !!t.first, moved: !!g.moved, enforced: !!g.enforced };
 }
 
-/** Tạo phiên mới + token. Xoá phiên cũ của cùng key+hwid (chỉ 1 máy chạy). */
-async function issueSession(env, lic, key, hwid, ip, fp, ua) {
+/**
+ * Tạo phiên mới + token. Xoá phiên cũ của cùng key+hwid (chỉ 1 máy chạy).
+ *
+ * XUẤT RA NGOÀI (`export`) để đường dùng thử theo tài khoản
+ * (src/routes/trial-account.js) cấp được token tài nguyên mà không phải
+ * dựng lại logic phiên/gate ở một chỗ thứ hai.
+ */
+export async function issueSession(env, lic, key, hwid, ip, fp, ua) {
   const now = nowSec();
   const sid = randomHex(16);
   const ssec = randomHex(32);

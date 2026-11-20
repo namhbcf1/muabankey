@@ -38,6 +38,7 @@ import xa_trial_rules as TR
 from PyQt6.QtCore import Qt, QThread, QTimer, QEvent, pyqtSignal, QSize
 from PyQt6.QtGui import (
     QGuiApplication, QPainter, QColor, QPixmap, QIcon, QLinearGradient, QBrush,
+    QCursor,
 )
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -458,22 +459,26 @@ class TokenWorker(QThread):
 
 
 class FreeTrialWorker(QThread):
-    """Xin thời gian dùng thử cho MÁY NÀY — không cần key, không cần đăng nhập.
+    """Bắt đầu/tiếp tục lượt dùng thử THEO TÀI KHOẢN.
 
-    Chủ shop: "bỏ nhập key đi, ghi luôn nhận dùng thử".
+    Chủ shop chốt: mỗi tài khoản mới được 1 NGÀY, bật CẢ map sáng và tài
+    nguyên, KHÔNG cần nhập mã. Bắt buộc đã đăng nhập.
+
     Chạy nền để cửa sổ không đứng hình khi mạng chậm.
     """
     done = pyqtSignal(dict)
 
     def __init__(self, product=None, parent=None):
         super().__init__(parent)
+        # `product` giữ lại cho tương thích chỗ gọi cũ; mô hình mới luôn
+        # bật CẢ HAI tính năng trong cùng một lượt dùng thử.
         self.product = product
 
     def run(self):
         try:
             import xa_arena_api as API
-            r = API.ensure_free_trial(product=self.product)
-        except Exception:
+            r = API.start_account_trial()
+        except Exception as e:
             r = {'ok': False, 'state': 'error', 'left': None,
                  'left_sec': 0,
                  'msg': 'Chưa bật được dùng thử. Bấm "Kiểm tra lại".'}
@@ -530,17 +535,21 @@ class EntitlementWorker(QThread):
 
 
 class LoginWorker(QThread):
-    """Đăng nhập ở nền."""
+    """Đăng nhập hoặc TẠO TÀI KHOẢN ở nền."""
 
     done = pyqtSignal(bool, str)
 
-    def __init__(self, u, p, parent=None):
+    def __init__(self, u, p, parent=None, register=False):
         super().__init__(parent)
         self.u, self.p = u, p
+        self.register = bool(register)
 
     def run(self):
         try:
-            ok, msg = API.login(self.u, self.p)
+            if self.register:
+                ok, msg = API.register(self.u, self.p)
+            else:
+                ok, msg = API.login(self.u, self.p)
             self.done.emit(ok, msg or '')
         except Exception as e:
             self.done.emit(False, str(e)[:120])
@@ -1068,22 +1077,34 @@ class GrantWorker(QThread):
 # ---------------------------------------------------------------------------
 
 class LoginDialog(QDialog):
-    def __init__(self, parent=None):
+    """Đăng nhập HOẶC đăng ký ngay trong app.
+
+    CHỦ SHOP CHỐT: "bắt buộc phải đăng ký mới sử dụng được app. Đăng ký luôn
+    trên EXE cũng được."
+
+    Vì vậy hộp thoại này có 2 chế độ:
+      * Đăng nhập  — khách đã có tài khoản
+      * Đăng ký    — tạo tài khoản mới, xong là vào luôn (không hỏi email/SĐT)
+    """
+
+    def __init__(self, parent=None, mode='login'):
         super().__init__(parent)
-        self.setWindowTitle('Đăng nhập')
-        self.setMinimumWidth(340)
+        self.mode = 'login' if mode != 'register' else 'register'
+        self.setMinimumWidth(380)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 18, 20, 16)
         lay.setSpacing(10)
 
-        lay.addWidget(T.label('Đăng nhập tài khoản xienhl.com', 'h3'))
-        lay.addWidget(T.label(
-            'App tự lấy license của bạn — không cần dán key.', 'mute'))
+        self.lbl_title = T.label('', 'h3')
+        lay.addWidget(self.lbl_title)
+        self.lbl_sub = T.label('', 'mute', wrap=True)
+        lay.addWidget(self.lbl_sub)
 
         lay.addSpacing(4)
         lay.addWidget(T.label('Tên đăng nhập', 'mute'))
         self.e_user = T.line_input('')
         self.e_user.setMinimumHeight(38)
+        self.e_user.setPlaceholderText('3-32 ký tự, không dấu')
         lay.addWidget(self.e_user)
 
         lay.addWidget(T.label('Mật khẩu', 'mute'))
@@ -1092,57 +1113,86 @@ class LoginDialog(QDialog):
         self.e_pass.setMinimumHeight(38)
         lay.addWidget(self.e_pass)
 
+        # Ô nhập lại mật khẩu — CHỈ hiện ở chế độ Đăng ký
+        self.lbl_pass2 = T.label('Nhập lại mật khẩu', 'mute')
+        self.e_pass2 = T.line_input('')
+        self.e_pass2.setEchoMode(QLineEdit.EchoMode.Password)
+        self.e_pass2.setMinimumHeight(38)
+        lay.addWidget(self.lbl_pass2)
+        lay.addWidget(self.e_pass2)
+
         self.lbl_err = T.label('', 'err', wrap=True)
         lay.addWidget(self.lbl_err)
+
+        # Nút chuyển chế độ
+        self.btn_switch = QPushButton('')
+        self.btn_switch.setFlat(True)
+        self.btn_switch.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_switch.clicked.connect(self._toggle_mode)
+        lay.addWidget(self.btn_switch)
 
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel)
-        bb.button(QDialogButtonBox.StandardButton.Ok).setText('Đăng nhập')
-        bb.button(QDialogButtonBox.StandardButton.Cancel).setText('Huỷ')
-        bb.accepted.connect(self.accept)
+        self.btn_ok = bb.button(QDialogButtonBox.StandardButton.Ok)
+        _set_button_text(
+            bb.button(QDialogButtonBox.StandardButton.Cancel), 'Thoát')
+        bb.accepted.connect(self._on_ok)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+
+        self._apply_mode()
+
+    def _apply_mode(self):
+        is_reg = self.mode == 'register'
+        self.setWindowTitle('Tạo tài khoản' if is_reg else 'Đăng nhập')
+        self.lbl_title.setText(
+            'Tạo tài khoản miễn phí' if is_reg else 'Đăng nhập tài khoản xienhl.com')
+        self.lbl_sub.setText(
+            'Chỉ cần tên đăng nhập và mật khẩu. Không cần email hay số điện thoại.\n'
+            'Tài khoản mới được dùng thử MIỄN PHÍ 1 NGÀY — cả map sáng và tài nguyên.'
+            if is_reg else
+            'App tự lấy quyền từ tài khoản của bạn.')
+        self.lbl_pass2.setVisible(is_reg)
+        self.e_pass2.setVisible(is_reg)
+        _set_button_text(self.btn_ok, 'Tạo tài khoản' if is_reg else 'Đăng nhập')
+        self.btn_switch.setText(
+            'Đã có tài khoản? Đăng nhập' if is_reg
+            else 'Chưa có tài khoản? Tạo miễn phí')
+        self.lbl_err.setText('')
+        if is_reg:
+            self.e_user.setFocus()
+
+    def _toggle_mode(self):
+        self.mode = 'login' if self.mode == 'register' else 'register'
+        self.e_pass.setText('')
+        self.e_pass2.setText('')
+        self._apply_mode()
+
+    def _on_ok(self):
+        """Kiểm tra phía client trước khi gửi lên server."""
+        u = self.e_user.text().strip()
+        p = self.e_pass.text()
+        if not u or not p:
+            self.lbl_err.setText('Nhập đủ tên đăng nhập và mật khẩu.')
+            return
+        if self.mode == 'register':
+            if len(u) < 3:
+                self.lbl_err.setText('Tên đăng nhập phải có ít nhất 3 ký tự.')
+                return
+            if len(p) < 6:
+                self.lbl_err.setText('Mật khẩu phải có ít nhất 6 ký tự.')
+                return
+            if p != self.e_pass2.text():
+                self.lbl_err.setText('Hai lần nhập mật khẩu không khớp.')
+                return
+        self.accept()
 
     def values(self):
         return (self.e_user.text().strip(), self.e_pass.text())
 
-
-class KeyDialog(QDialog):
-    """Hỏi key — nút tiếng Việt, KHÔNG dùng QInputDialog của Windows.
-
-    LỖI ĐÃ SỬA: QInputDialog.getText hiện nút "OK / Cancel" tiếng Anh giữa
-    một cửa sổ toàn tiếng Việt.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle('Nhập key')
-        self.setMinimumWidth(380)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 18, 20, 16)
-        lay.setSpacing(10)
-        lay.addWidget(T.label('Nhập key bản quyền', 'h3'))
-        lay.addWidget(T.label(
-            'Dán key của bạn (AOE1-… / XAGR-… / TR-…).', 'mute'))
-        lay.addSpacing(4)
-        self.e_key = T.line_input('')
-        self.e_key.setPlaceholderText('Dán key vào đây…')
-        self.e_key.setMinimumHeight(40)
-        lay.addWidget(self.e_key)
-        bb = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel)
-        _set_button_text(bb.button(QDialogButtonBox.StandardButton.Ok),
-                         'Đồng ý')
-        _set_button_text(bb.button(QDialogButtonBox.StandardButton.Cancel),
-                         'Huỷ')
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-    def value(self):
-        return (self.e_key.text() or '').strip()
+    def is_register(self):
+        return self.mode == 'register'
 
 
 # ---------------------------------------------------------------------------
@@ -1198,6 +1248,8 @@ class ArenaWindow(QWidget):
         # ------------------------------------------------------------------
         self._kicked = False
         self._allow_free = False
+        self._login_prompting = False
+        self._login_is_register = False
 
         self.my_buttons = load_buttons()
 
@@ -1215,7 +1267,9 @@ class ArenaWindow(QWidget):
 
         self._build()
         self._init_realtime()
-        self._refresh_entitlement()
+        # Hoãn sang nhịp kế tiếp: hộp thoại đăng nhập bắt buộc cần cửa sổ đã
+        # hiện ra trước, nếu không nó sẽ nổi lên trên một cửa sổ chưa vẽ.
+        QTimer.singleShot(0, self._refresh_entitlement)
 
         # Dọn file tạm còn sót từ lần trước (.part, .new/.old quá cũ).
         # LỖI ĐÃ SỬA: không dọn thì .new mồ côi làm app tưởng "có bản mới
@@ -1327,17 +1381,18 @@ class ArenaWindow(QWidget):
         top.addWidget(self.btn_update, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ------------------------------------------------------------------
-        # KHÔNG CÒN NÚT "NHẬP KEY".
+        # KHÔNG CÒN "NHẬP KEY" — HOÀN TOÀN THEO TÀI KHOẢN.
         #
-        # Chủ shop: "bỏ nhập key đi, ghi luôn nhận dùng thử".
-        # App tự xin thời gian dùng thử theo MÁY (HWID) khi mở lần đầu;
-        # mua xong thì đăng nhập là licence tự gắn, không phải gõ gì.
+        # Chủ shop chốt: "bỏ toàn bộ key trên hệ thống app và web đi".
         #
-        # Vẫn giữ đối tượng `btn_key` (ẩn) để code cũ không vỡ, nhưng nó
-        # có tác dụng khác: mở hộp ĐĂNG NHẬP (dùng khi đã mua).
+        # Mọi thứ giờ đi qua TÀI KHOẢN:
+        #   * Đăng nhập (hoặc tạo tài khoản ngay trong app) là bắt buộc
+        #   * Tài khoản mới được dùng thử 1 NGÀY, cả map sáng + tài nguyên
+        #   * Mua trên web -> quyền cộng thẳng vào tài khoản, app tự nhận
+        #
+        # Không còn ô nhập key, không còn mã để khách phải giữ hay gõ sai.
         # ------------------------------------------------------------------
         # NÚT MUA — hiện khi hết quyền. Mở thẳng trang mua trên web.
-        # Chủ shop: "khi nào hết thì đưa lên web mua".
         self.btn_buy = T.btn('Mua', 'primary')
         self.btn_buy.setFixedWidth(88)
         self.btn_buy.setToolTip('Mở trang mua trên xienhl.com')
@@ -1345,11 +1400,11 @@ class ArenaWindow(QWidget):
         self.btn_buy.hide()
         top.addWidget(self.btn_buy, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        # Nút ĐĂNG NHẬP / ĐĂNG XUẤT
         self.btn_key = T.btn('Đăng nhập', 'ghost')
         self.btn_key.setFixedWidth(88)
-        self.btn_key.setToolTip('Đăng nhập tài khoản để app tự lấy license')
-        self.btn_key.clicked.connect(self._ask_key)
-        self.btn_key.hide()
+        self.btn_key.setToolTip('Đăng nhập tài khoản — app tự lấy quyền')
+        self.btn_key.clicked.connect(self._do_login)
         top.addWidget(self.btn_key, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Thanh trên cao CỐ ĐỊNH: nếu để layout tự co giãn, khoảng trống
@@ -2372,6 +2427,7 @@ class ArenaWindow(QWidget):
         # lần 1 máy"). Trước đây có session là bỏ luôn dùng thử.
         self._allow_free = bool(allow_free) and key is None and not self._kicked
         need_free = False
+        need_login = False
         if key is None and allow_free:
             try:
                 import xa_arena_api as _A
@@ -2401,9 +2457,27 @@ class ArenaWindow(QWidget):
                     has_key = bool(_A.local_token_key() or _A.load_manual_key())
                 except Exception:
                     has_key = False
-                need_free = (not has_tok) and (not has_sess) and (not has_key)
+
+                # ----------------------------------------------------------
+                # BẮT BUỘC ĐĂNG NHẬP (chủ shop chốt).
+                #
+                # Trước đây không đăng nhập vẫn xin được dùng thử theo máy.
+                # Nay dùng thử tính theo TÀI KHOẢN, nên không có phiên thì
+                # không có gì để tính -> phải đăng nhập (hoặc tạo tài khoản
+                # ngay trong app).
+                # ----------------------------------------------------------
+                if not has_sess and not has_key:
+                    need_login = True
+                else:
+                    # Đã đăng nhập mà chưa có token -> bắt đầu lượt dùng thử
+                    need_free = (not has_tok) and has_sess
             except Exception:
                 need_free = False
+
+        if need_login:
+            self._state('Cần đăng nhập để sử dụng', 'warn')
+            self._require_login()
+            return
 
         if need_free:
             self._allow_free = False      # đã xin ở đây rồi, không xin lại
@@ -2669,7 +2743,7 @@ class ArenaWindow(QWidget):
             _code_low = API.account_code_of(code)
             self.lbl_right.setText('Chưa có quyền')
             self.btn_logout.hide()
-            self._state('Cần đăng nhập hoặc dán key', 'warn')
+            self._state('Cần đăng nhập', 'warn')
             # ------------------------------------------------------------------
             # KHÔNG CÒN PHIÊN -> NÚT ĐĂNG NHẬP PHẢI BẤM LẠI ĐƯỢC.
             #
@@ -2685,7 +2759,7 @@ class ArenaWindow(QWidget):
                 except Exception:
                     pass
             if code == 'NEED_LOGIN_OR_KEY':
-                self._say('Bấm "Đăng nhập" hoặc "Nhập key" để bắt đầu.')
+                self._say('Bấm "Đăng nhập" để bắt đầu.')
                 self.btn_recheck.hide()
             elif code:
                 # Lỗi khi hỏi quyền: nêu bước tiếp theo theo ĐÚNG nguyên nhân
@@ -3175,7 +3249,7 @@ class ArenaWindow(QWidget):
                         self._say(_st)
                     self.btn_recheck.hide()
                 else:
-                    self._state('Cần đăng nhập hoặc dán key', 'warn')
+                    self._state('Cần đăng nhập', 'warn')
                     self.btn_recheck.hide()
                     # Chưa đăng nhập -> nút chính là "Đăng nhập".
                     try:
@@ -3305,10 +3379,75 @@ class ArenaWindow(QWidget):
         self.lbl_lic.setText('—')
         self._hide_toast()
         self._state('Đã đăng xuất', 'info')
-        self._say('Đã đăng xuất. Bấm "Đăng nhập" hoặc "Nhập key" để dùng lại.')
+        self._say('Đã đăng xuất. Bấm "Đăng nhập" để dùng lại.')
+
+    def _require_login(self):
+        """BẮT BUỘC đăng nhập: mở hộp thoại, khách không thoát được nếu chưa có tài khoản.
+
+        Chủ shop chốt: "bất buộc phải đăng ký mới sử dụng được app. Đăng ký
+        luôn trên EXE cũng được."
+
+        Luồng:
+          1. Đã có phiên -> không làm gì
+          2. Chưa có -> mở hộp thoại (đăng nhập hoặc tạo tài khoản)
+          3. Khách bấm Thoát -> đóng app (không cho dùng chế độ không tài khoản)
+        """
+        if getattr(self, '_login_prompting', False):
+            return
+        try:
+            import xa_arena_api as _A
+            if _A.session_cookie():
+                return
+        except Exception:
+            pass
+
+        self._login_prompting = True
+        try:
+            d = LoginDialog(self)
+            if d.exec() != QDialog.DialogCode.Accepted:
+                # Không đăng nhập -> không dùng được app.
+                self._say('Cần đăng nhập để sử dụng. Đang đóng…')
+                self._closing = True
+                QTimer.singleShot(120, self.close)
+                return
+            u, p = d.values()
+            if not u or not p:
+                QTimer.singleShot(120, self._require_login)
+                return
+            self._login_is_register = d.is_register()
+            self._state('Đang tạo tài khoản…' if self._login_is_register
+                        else 'Đang đăng nhập…', 'warn')
+            w = getattr(self, 'login_worker', None)
+            if w is not None and w.isRunning():
+                QTimer.singleShot(300, self._require_login)
+                return
+            self.login_worker = LoginWorker(u, p, self,
+                                            register=self._login_is_register)
+            self.login_worker.done.connect(self._on_login_required)
+            self.login_worker.start()
+        finally:
+            self._login_prompting = False
+
+    def _on_login_required(self, ok, msg):
+        """Đăng nhập/tạo tài khoản ở cổng bắt buộc xong."""
+        if not ok:
+            self._state('Đăng nhập thất bại', 'err')
+            self._tech('login: %s' % msg)
+            self._say(msg or 'Không đăng nhập được. Thử lại.')
+            # Cho khách thử lại, không đóng app ngay
+            QTimer.singleShot(200, self._require_login)
+            return
+        self._say('Tạo tài khoản thành công. Đang bật dùng thử 1 ngày…'
+                  if getattr(self, '_login_is_register', False)
+                  else 'Đăng nhập thành công.')
+        self._kicked = False
+        self._free_state = ''
+        # Có tài khoản rồi -> xin lượt dùng thử 1 ngày ngay
+        self._state('Đang bật dùng thử cho tài khoản…', 'warn')
+        self._start_free_trial()
 
     def _do_login(self):
-        """Mở hộp thoại đăng nhập."""
+        """Mở hộp thoại đăng nhập / tạo tài khoản."""
         d = LoginDialog(self)
         if d.exec() != QDialog.DialogCode.Accepted:
             return
@@ -3316,14 +3455,22 @@ class ArenaWindow(QWidget):
         if not u or not p:
             self._state('Thiếu tên đăng nhập hoặc mật khẩu', 'err')
             return
-        self._state('Đang đăng nhập…', 'warn')
-        self.login_worker = LoginWorker(u, p, self)
+        is_reg = d.is_register()
+        self._state('Đang tạo tài khoản…' if is_reg else 'Đang đăng nhập…', 'warn')
+        # Chặn gán đè worker đang chạy (thread mồ côi -> có thể crash khi thoát)
+        w = getattr(self, 'login_worker', None)
+        if w is not None and w.isRunning():
+            self._state('Đang xử lý, chờ một chút…', 'warn')
+            return
+        self._login_is_register = is_reg
+        self.login_worker = LoginWorker(u, p, self, register=is_reg)
         self.login_worker.done.connect(self._on_login)
         self.login_worker.start()
 
     def _on_login(self, ok, msg):
         if ok:
-            self._say('Đăng nhập thành công.')
+            self._say('Tạo tài khoản thành công.' if getattr(self, '_login_is_register', False)
+                      else 'Đăng nhập thành công.')
             # Đăng nhập lại sau khi bị đá sang máy khác: lần hỏi này ĐƯỢC
             # PHÉP xin dùng thử theo máy (nếu tài khoản không có gói trả phí
             # và máy này còn lượt) — nên phải đặt lại cờ trước khi hỏi.
@@ -3331,9 +3478,10 @@ class ArenaWindow(QWidget):
             self._free_state = ''
             self._refresh_entitlement()
         else:
-            self._state('Đăng nhập thất bại', 'err')
+            self._state('Tạo tài khoản thất bại' if getattr(self, '_login_is_register', False)
+                        else 'Đăng nhập thất bại', 'err')
             self._tech('login: %s' % msg)
-            self._say('Đăng nhập không được. Kiểm tra tên và mật khẩu.')
+            self._say(msg or 'Không đăng nhập được. Kiểm tra tên và mật khẩu.')
 
     def _do_buy(self):
         """Mở trang mua trên web."""
@@ -3349,15 +3497,14 @@ class ArenaWindow(QWidget):
             self._say('Mở xienhl.com để mua.')
 
     def _ask_key(self):
-        # Hộp thoại riêng, nút tiếng Việt (QInputDialog hiện OK/Cancel).
-        d = KeyDialog(self)
-        if d.exec() != QDialog.DialogCode.Accepted:
-            return
-        k = d.value()
-        if not k:
-            return
-        self._state('Đang kiểm tra key…', 'warn')
-        self._refresh_entitlement(key=k)
+        """ĐÃ BỎ: không còn nhập key.
+
+        Giữ hàm rỗng để tín hiệu `patcher.need_key` (phát khi token hỏng)
+        không làm vỡ chương trình. Nay token hỏng nghĩa là phiên đăng nhập
+        hoặc lượt dùng thử có vấn đề — việc đúng là làm mới quyền, không
+        phải bắt khách gõ key.
+        """
+        self._refresh_entitlement()
 
     # ---------------- map sáng ----------------
 

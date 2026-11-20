@@ -36,6 +36,13 @@ export async function trialCfg(env) {
   return {
     enabled: bool('trial_enabled', true),
     requireLogin: bool('trial_require_account', true),
+    /*
+     * DÙNG THỬ THEO TÀI KHOẢN (mô hình hiện hành).
+     *
+     * Mỗi tài khoản mới được `accountDays` ngày, bật CẢ map sáng + tài nguyên.
+     * Đồng hồ chạy từ lần đầu mở app, không phải lúc đăng ký.
+     */
+    accountDays: num('trial_account_days', 1),
     // 1 giờ
     t1h: {
       enabled: bool('trial1h_enabled', true),

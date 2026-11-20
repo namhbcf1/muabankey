@@ -1,12 +1,13 @@
 /**
  * Trang "Bản quyền của tôi" — dạng THẺ, KHÔNG BAO GIỜ in key.
  *
- * Mô hình: khách đăng nhập bằng tài khoản web, app gắn licence vào TÀI KHOẢN.
- *   - ĐÃ MUA: bản quyền theo TÀI KHOẢN -> đổi máy nào cũng được, mỗi lúc chỉ
+ * Mô hình: khách đăng nhập bằng tài khoản web, quyền gắn vào TÀI KHOẢN.
+ *   - ĐÃ MUA: quyền theo TÀI KHOẢN -> đổi máy nào cũng được, mỗi lúc chỉ
  *     1 máy đăng nhập. Trang KHÔNG hiện mã máy (với khách nó vô nghĩa).
- *   - DÙNG THỬ: gắn với MÁY (server chặn theo máy) -> vẫn hiện "dùng thử gắn
- *     với máy này" + số lượt đổi máy còn lại.
- * Muốn nhận diện licence thì dùng 4 ký tự cuối của `key` (xem keyTail()).
+ *   - DÙNG THỬ: 1 ngày cho mỗi tài khoản mới, bật cả map sáng + tài nguyên.
+ *
+ * KHÔNG có khái niệm "key" với khách: server sinh mã nội bộ và app tự dùng,
+ * khách chỉ thấy TÊN GÓI + HẠN.
  */
 import {
   api, esc, fmtDate, timeAgo, toast, navigate, loadingBlock,
@@ -21,16 +22,6 @@ import { state } from '../state.js';
  * Quá mốc này thì coi như licence đang nằm ở máy khác.
  */
 const RECENT_MS = 7 * 86400000;
-
-/**
- * 4 ký tự cuối của key — đủ để khách nhận ra licence, KHÔNG đủ để dùng.
- * Không bao giờ trả cả key về DOM.
- */
-function keyTail(key) {
-  const s = String(key || '').replace(/[^A-Za-z0-9]/g, '');
-  if (s.length < 5) return '••••';
-  return '••••' + s.slice(-4).toUpperCase();
-}
 
 /** Số ngày còn lại; null khi vĩnh viễn hoặc không rõ hạn. */
 function daysLeftOf(expiresAt, nowMs) {
@@ -171,8 +162,7 @@ function licenceCard(l, i, nowMs) {
               </div>
             </div>
             <div class="lic-src">
-              <span class="mono">${esc(keyTail(l.key))}</span>
-              ${l.orderCode ? `<br>Đơn <span class="mono">${esc(l.orderCode)}</span>` : ''}
+              ${l.orderCode ? `Đơn <span class="mono">${esc(l.orderCode)}</span>` : ''}
               ${l.purchasedAt ? `<br>${esc(timeAgo(l.purchasedAt))}` : ''}
             </div>
           </div>

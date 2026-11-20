@@ -388,8 +388,12 @@ async function mintToken(env, payload) {
  *
  * Trả `{ token, gate_hex }`. `token` là chuỗi client cần; `gate_hex` chỉ để
  * log/health, KHÔNG trả cho client (client lấy gate TỪ token đã ký).
+ *
+ * XUẤT RA NGOÀI (`export`) để đường dùng thử theo tài khoản
+ * (src/routes/trial-account.js) ký được token mà không phải dựng lại toàn bộ
+ * logic mã hoá bảng cổng ở một chỗ thứ hai.
  */
-async function buildToken(env, lic, key, hwid) {
+export async function buildToken(env, lic, key, hwid) {
   const gate = await deriveGate(key);
   const sealed = await sealSites(gate);
   const payload = {

@@ -21,6 +21,7 @@ import * as entitlement from './routes/entitlement.js';
 import * as arenaInstaller from './routes/arena-installer.js';
 import * as licenseServer from './routes/license-server.js';
 import * as trial from './routes/trial.js';
+import * as trialAccount from './routes/trial-account.js';
 import * as trialAdmin from './routes/trial-admin.js';
 import * as trialCmd from './routes/trial-command.js';
 import * as twl from './routes/trial-whitelist-admin.js';
@@ -103,6 +104,28 @@ r.post('/api/xg/violation', xgServer.xgViolation);
 r.get('/api/xg/health', (env) => xgServer.xgHealth(env));
 
 /* ---------- Dùng thử 3 ngày ---------- */
+/*
+ * DÙNG THỬ THEO TÀI KHOẢN — mô hình hiện hành.
+ *
+ *   POST /api/trial/session  -> bắt đầu/tiếp tục, trả token cả 2 tính năng
+ *   GET  /api/trial/session  -> xem trạng thái, KHÔNG chạy đồng hồ
+ *
+ * Khách KHÔNG phải nhập mã. Mỗi tài khoản mới được 1 ngày, bật cả map sáng
+ * và tài nguyên, đồng hồ chạy từ lần đầu mở app.
+ */
+r.post('/api/trial/session', (env, req) => trialAccount.startSession(env, req));
+r.get('/api/trial/session', (env, req) => trialAccount.sessionStatus(env, req));
+/* Cấp token theo QUYỀN TÀI KHOẢN (đã mua hoặc đang dùng thử). */
+r.post('/api/account/token', (env, req) => trialAccount.issueAccountToken(env, req));
+r.get('/api/admin/trial/account-trials', (env, req) => trialAccount.adminListAccountTrials(env, req));
+r.post('/api/admin/trial/account-reset', (env, req) => trialAccount.adminResetAccountTrial(env, req));
+
+/*
+ * ĐƯỜNG CŨ (mã TR-) — GIỮ LẠI CHO BẢN EXE ĐÃ PHÁT HÀNH.
+ *
+ * Không xoá ngay: khách còn dùng bản cũ sẽ gọi các route này. Chỉ cần xoá
+ * khi đã chắc mọi máy đã cập nhật lên bản dùng thử theo tài khoản.
+ */
 r.post('/api/trial/start', trial.apiTrialStart);
 r.get('/api/trial/status', trial.apiTrialStatus);
 /* So luot dung thu con lai THEO PHAN CUNG (tool hien trong app). */

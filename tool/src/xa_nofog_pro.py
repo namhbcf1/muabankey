@@ -830,6 +830,46 @@ def drop_session():
     return save_state(st)
 
 
+def register_to_server(username, password, verbose=True):
+    """Tao tai khoan moi tren server. Tra (ok, msg, cookie).
+
+    CHU SHOP CHOT: "bat buoc phai dang ky moi su dung duoc app. dang ky luon
+    tren EXE cung duoc."
+
+    Vi vay app phai tu dang ky duoc, khong bat khach mo trinh duyet. Server
+    da co san /api/auth/register (chi username + password, KHONG hoi email/
+    so dien thoai/ho ten) va tra Set-Cookie ngay -> dang ky xong la dang
+    nhap luon, khach khong phai go lai mat khau.
+    """
+    r = _post('/api/auth/register',
+              {'username': username, 'password': password},
+              timeout=HTTP_TIMEOUT, retries=0)
+    if not r.get('ok'):
+        code = str(r.get('code') or '')
+        msg = str(r.get('msg') or r.get('error') or '')
+        if code == 'USERNAME_EXISTS':
+            return False, 'Tên đăng nhập này đã có người dùng. Chọn tên khác hoặc đăng nhập.', None
+        if code == 'VALIDATION':
+            return False, msg or 'Tên đăng nhập 3-32 ký tự, mật khẩu tối thiểu 6 ký tự.', None
+        if code == 'RATE_LIMITED':
+            return False, 'Thao tác quá nhanh, chờ 1-2 phút rồi thử lại.', None
+        return False, msg or code or 'không tạo được tài khoản', None
+
+    ck = r.get('_set_cookie')
+    if not ck:
+        # Server khong tra cookie -> van cho dang nhap lai bang mat khau vua tao
+        ok, _m, ck2 = login_to_server(username, password, verbose=False)
+        if ok and ck2:
+            return True, 'ok', ck2
+        return False, 'Tạo tài khoản xong nhưng chưa đăng nhập được. Thử đăng nhập lại.', None
+
+    uname = (r.get('user') or {}).get('username') or username
+    save_session(ck, uname)
+    if verbose:
+        print('  Da tao tai khoan: %s' % uname)
+    return True, 'ok', ck
+
+
 def login_to_server(username, password, verbose=True):
     """Dang nhap lay session. Tra (ok, msg, cookie)."""
     r = _post('/api/auth/login', {'username': username, 'password': password},

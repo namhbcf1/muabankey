@@ -244,6 +244,47 @@ export async function buildEntitlement(env, request) {
       .filter(Boolean);
 
     /*
+     * ===== LICENSE NỘI BỘ CỦA LƯỢT DÙNG THỬ THEO TÀI KHOẢN =====
+     *
+     * LỖI ĐÃ SỬA: đường dùng thử mới tạo 2 license nội bộ (map sáng + tài
+     * nguyên) nhưng KHÔNG ghi `license_issues` — cố ý, để khách không thấy
+     * 2 key lạ trong trang "License của tôi". Hệ quả phụ: câu SQL ở trên
+     * (join license_issues) không thấy chúng, nên `hasNofog`/`hasGrant`
+     * luôn false và app không bật được tính năng nào.
+     *
+     * Nay đọc thêm từ `trial_accounts` — nguồn sự thật của lượt dùng thử —
+     * rồi gộp vào danh sách quyền. Vẫn KHÔNG ghi license_issues nên trang
+     * license của khách vẫn sạch.
+     */
+    try {
+      const ta = await env.DB.prepare(
+        `SELECT nofog_key, grant_key FROM trial_accounts
+          WHERE user_id = ? AND ended_at IS NULL AND expires_at > ?`
+      ).bind(user.id, now).first();
+
+      const tKeys = [ta?.nofog_key, ta?.grant_key].filter(Boolean);
+      if (tKeys.length) {
+        const ph = tKeys.map(() => '?').join(',');
+        const { results: tRows } = await env.DB.prepare(
+          `SELECT key, COALESCE(pid, '') AS pid, COALESCE(plan, '') AS plan,
+                  COALESCE(expires_at, 0) AS expires_at,
+                  COALESCE(revoked, 0) AS revoked, hwid
+             FROM licenses WHERE key IN (${ph})`
+        ).bind(...tKeys).all();
+
+        const have = new Set(views.map((v) => String(v.key || '')));
+        for (const r of tRows || []) {
+          if (have.has(String(r.key || ''))) continue;
+          const v = shapeEntitlement({
+            key: r.key, pid: r.pid, plan: r.plan,
+            expires_at: r.expires_at, revoked: r.revoked, hwid: r.hwid,
+          }, now, qHwid, qHwid2);
+          if (v) views.push(v);
+        }
+      }
+    } catch { /* chưa migrate trial_accounts -> bỏ qua */ }
+
+    /*
      * ===== AUDIT #8: ĐƯỜNG "ĐÃ ĐĂNG NHẬP" CŨNG PHẢI DÙNG ĐỒNG HỒ THẬT =====
      *
      * Bản sửa trước chỉ áp cho đường 2 (chỉ có key) — đường 1 (session, tức
@@ -281,16 +322,56 @@ export async function buildEntitlement(env, request) {
       }
     }
 
+    /*
+     * ===== QUYỀN THEO TÀI KHOẢN — NGUỒN SỰ THẬT =====
+     *
+     * Chủ shop chốt: "bỏ toàn bộ key, mua thì add luôn vào tài khoản".
+     *
+     * `views` ở trên được dựng từ `license_issues` (đường cũ: đơn hàng sinh
+     * key). Từ nay quyền đọc từ `account_entitlements` — bảng ghi trực tiếp
+     * khi mua hoặc khi dùng thử. Hai nguồn được HỢP LẠI để khách đã mua
+     * trước đây (dữ liệu cũ) không mất quyền.
+     */
+    let acc = null;
+    try {
+      const { shapeAccountEntitlements } = await import('../lib/account-entitlement.js');
+      acc = await shapeAccountEntitlements(env, user.id, now);
+    } catch { /* chưa migrate -> dùng đường cũ */ }
+
     const u = unionFeatures(views);
+
+    // Hợp quyền: bảng tài khoản thắng nếu đang active
+    const hasNofog = Boolean(u.hasNofog) || Boolean(acc?.hasNofog);
+    const hasGrant = Boolean(u.hasGrant) || Boolean(acc?.hasGrant);
+    const features = [];
+    if (hasNofog) features.push('nofog');
+    if (hasGrant) features.push('grant');
+
+    /*
+     * KHỐI `trial` — TRẠNG THÁI DÙNG THỬ THEO TÀI KHOẢN.
+     *
+     * LỖI ĐÃ SỬA: app đọc `d.get('trial')` (xa_arena_api.py) nhưng endpoint
+     * này KHÔNG hề trả trường đó, nên app luôn phải gọi thêm 2 request
+     * /api/trial/left mỗi lần làm mới quyền (20 giây/lần).
+     */
+    let trialBlock = acc?.trial || null;
+    if (!trialBlock) {
+      trialBlock = { state: 'available', started_at: 0, expires_at: 0, left_sec: 0 };
+    }
+
     return json({
       ok: true,
       now,
       via: 'session',
       user: { id: user.id, username: user.username || '' },
       licenses: views,
-      features: u.features,
-      hasNofog: u.hasNofog,
-      hasGrant: u.hasGrant,
+      features,
+      hasNofog,
+      hasGrant,
+      /* Chi tiết hạn từng tính năng — web hiện "còn X ngày" */
+      nofog: acc?.nofog || null,
+      grant: acc?.grant || null,
+      trial: trialBlock,
     });
   }
 
