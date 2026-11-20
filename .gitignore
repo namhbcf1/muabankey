@@ -45,6 +45,7 @@ tool/dist/
 tool/dist-nuitka/
 tool/dist-nuitka-sec/
 tool/dist-grant/
+tool/grant/dist/
 tool/dist-setup/
 tool/dist-arena/
 tool/.build/
