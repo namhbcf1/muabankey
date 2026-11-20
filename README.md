@@ -207,10 +207,8 @@ npx wrangler@4 tail muabankey
 # Chạy local
 npx wrangler@4 dev
 
-# Áp schema
+# Áp schema (file duy nhất, đã là toàn bộ cấu trúc hiện hành)
 npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema.sql --yes
-npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema-v2.sql --yes
-npx wrangler@4 d1 execute muabankey-db --remote --file=./db/schema-license-server.sql --yes
 
 # Cập nhật EXE lên R2 (sau khi build lại) — CHỈ CÓ MỘT FILE
 npx wrangler@4 r2 object put "muabankey-assets/files/xa_arena.exe" `

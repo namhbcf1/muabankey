@@ -71,25 +71,20 @@ export async function aiChat(env, request) {
 }
 
 async function buildSuggestions(env, q) {
-  const lower = q.toLowerCase();
-  const map = [
-    [/windows|microsoft|office|word|excel/, 'windows-office'],
-    [/ai|chatgpt|claude|gemini|perplexity|trí tuệ/, 'ai-tools'],
-    [/design|thiết kế|photoshop|canva|figma|adobe/, 'thiet-ke'],
-    [/netflix|spotify|youtube|phim|nhạc|giải trí/, 'giai-tri'],
-    [/code|lập trình|dev|github|copilot|ide/, 'lap-trinh'],
-    [/vpn|antivirus|bảo mật|diệt virus/, 'bao-mat'],
-  ];
-  let slug = null;
-  for (const [re, s] of map) {
-    if (re.test(lower)) { slug = s; break; }
-  }
-  const sql = slug
-    ? 'SELECT slug, name, price FROM products WHERE active = 1 AND category_id = (SELECT id FROM categories WHERE slug = ?) ORDER BY sold_count DESC LIMIT 3'
-    : 'SELECT slug, name, price FROM products WHERE active = 1 ORDER BY featured DESC, sold_count DESC LIMIT 3';
-  const { results } = slug
-    ? await env.DB.prepare(sql).bind(slug).all()
-    : await env.DB.prepare(sql).all();
+  /*
+   * ĐÃ BỎ bảng ánh xạ từ khoá -> slug danh mục.
+   *
+   * Lý do: shop chỉ còn MỘT danh mục có sản phẩm (`license-xarena`). Sáu danh
+   * mục còn lại (windows-office, ai-tools, thiet-ke, giai-tri, lap-trinh,
+   * bao-mat) đều 0 sản phẩm, nên mọi nhánh ánh xạ đều truy vấn ra rỗng và
+   * chatbot trả về "gợi ý" trống — tệ hơn là không gợi ý gì.
+   *
+   * Nay luôn gợi ý theo sản phẩm nổi bật/bán chạy, đúng với thực tế shop.
+   */
+  void q;
+  const { results } = await env.DB.prepare(
+    'SELECT slug, name, price FROM products WHERE active = 1 ORDER BY featured DESC, sold_count DESC LIMIT 3'
+  ).all();
   return (results || []).map((p) => ({ slug: p.slug, name: p.name, price: p.price }));
 }
 

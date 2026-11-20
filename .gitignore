@@ -85,6 +85,9 @@ cmdurl.txt
 *.orig
 backup-*.sql
 db/backup-*.sql
+# Dump D1 chứa DỮ LIỆU KHÁCH THẬT (users, hash mật khẩu, license) — KHÔNG commit
+backups/
+/cleanup-*.sql
 
 # ===========================================================================
 # LOG / OS / IDE

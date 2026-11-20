@@ -159,13 +159,13 @@ export async function getProduct(env, slugOrId) {
     .first();
   if (!row || !row.active) throw new ApiError(404, 'Sản phẩm không tồn tại', 'NOT_FOUND');
 
-  const { results: reviews } = await env.DB.prepare(
-    `SELECT r.rating, r.comment, r.created_at, u.full_name
-     FROM reviews r JOIN users u ON u.id = r.user_id
-     WHERE r.product_id = ? ORDER BY r.created_at DESC LIMIT 20`
-  )
-    .bind(row.id)
-    .all();
+  /*
+   * ĐÃ BỎ truy vấn bảng `reviews`.
+   *
+   * Bảng đó luôn rỗng vì KHÔNG có route nào ghi đánh giá (không có
+   * POST /api/reviews). Giữ lại chỉ tốn 1 round trip DB cho mọi lần mở
+   * trang sản phẩm mà luôn trả về mảng rỗng.
+   */
 
   const { results: related } = await env.DB.prepare(
     `${PRODUCT_SELECT} WHERE p.active = 1 AND p.id != ? AND p.category_id = ?
@@ -176,20 +176,8 @@ export async function getProduct(env, slugOrId) {
 
   return ok({
     product: shapeProduct(row),
-    reviews: (reviews || []).map((r) => ({
-      rating: r.rating,
-      comment: r.comment,
-      createdAt: r.created_at,
-      author: maskName(r.full_name || 'Khách hàng'),
-    })),
     related: (related || []).map(shapeProduct),
   });
-}
-
-function maskName(name) {
-  const parts = String(name).trim().split(/\s+/);
-  if (parts.length === 1) return parts[0][0] + '***';
-  return parts[0][0] + '*** ' + parts[parts.length - 1][0] + '***';
 }
 
 export async function getFeatured(env) {
@@ -401,8 +389,12 @@ export async function adminSaveProduct(env, request, productId = null) {
   const badge = body.badge ? str(body.badge, 'badge', { max: 20 }) : null;
   const price = int(body.price, 'price', { min: 0, max: 1_000_000_000 });
   const comparePrice = body.comparePrice ? int(body.comparePrice, 'comparePrice', { min: 0 }) : null;
-  const deliveryType = enum_ok(body.deliveryType || 'key',
-    ['key', 'account', 'file', 'manual', 'license'], 'deliveryType');
+  /*
+   * Chỉ còn 2 kiểu giao hàng. `key` / `account` / `file` đã bỏ cùng bảng
+   * `product_keys` — nhận chúng nữa chỉ tạo ra sản phẩm không thể giao.
+   */
+  const deliveryType = enum_ok(body.deliveryType || 'license',
+    ['manual', 'license'], 'deliveryType');
   const warrantyDays = body.warrantyDays ? int(body.warrantyDays, 'warrantyDays', { min: 0, max: 3650 }) : 0;
   const durationLabel = str(body.durationLabel, 'durationLabel', { required: false, max: 60 }) || '';
   const features = Array.isArray(body.features) ? JSON.stringify(body.features.slice(0, 20)) : '[]';
@@ -459,75 +451,14 @@ export async function adminDeleteProduct(env, request, productId) {
   return ok({ id: productId });
 }
 
-/* ---------------- Admin: kho key ---------------- */
-
-export async function adminListKeys(env, request, productId) {
-  await requireAdmin(env, request);
-  const { results } = await env.DB.prepare(
-    `SELECT id, product_id, note, status, delivered_at, created_at,
-       CASE WHEN status='available' THEN substr(secret,1,6) || '••••••' || substr(secret,-4) ELSE '***' END AS masked,
-       length(secret) AS secret_len
-     FROM product_keys WHERE product_id = ? ORDER BY created_at DESC LIMIT 500`
-  )
-    .bind(productId)
-    .all();
-  return ok({ keys: results || [] });
-}
-
-export async function adminAddKeys(env, request, productId) {
-  /* Nap key vao kho = tao hang that. Chi admin that. */
-  const admin = await requireAdminStrict(env, request);
-  const body = await readJson(request);
-  const raw = str(body.keys, 'keys', { min: 1, max: 200000, trim: false });
-  const note = str(body.note, 'note', { required: false, max: 200 }) || '';
-
-  const product = await env.DB.prepare('SELECT id FROM products WHERE id = ?').bind(productId).first();
-  if (!product) throw new ApiError(404, 'Sản phẩm không tồn tại', 'NOT_FOUND');
-
-  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) throw new ApiError(400, 'Không có key hợp lệ', 'VALIDATION');
-  if (lines.length > 3000) throw new ApiError(400, 'Tối đa 3000 key mỗi lần', 'VALIDATION');
-
-  const now = Date.now();
-  // Mã hoá secret trước khi lưu (AES-GCM nếu có KEY_ENC).
-  // Trước đây lưu plaintext -> ai đọc DB là có toàn bộ mật khẩu sản phẩm.
-  const { sealSecret } = await import('../lib/secrets.js');
-  const sealed = await Promise.all(lines.map((s) => sealSecret(env, s)));
-
-  const stmts = sealed.map((secret) =>
-    env.DB.prepare(
-      'INSERT INTO product_keys (id, product_id, secret, note, status, created_at) VALUES (?,?,?,?,?,?)'
-    ).bind(uuid(), productId, secret, note, 'available', now)
-  );
-  for (let i = 0; i < stmts.length; i += 50) {
-    await env.DB.batch(stmts.slice(i, i + 50));
-  }
-  await syncStock(env, productId);
-  await audit(env, admin.id, 'keys.add', productId, { count: lines.length });
-  return ok({ added: lines.length });
-}
-
-export async function adminDeleteKey(env, request, keyId) {
-  /* Xoa key kho = xoa hang that. Chi admin that. */
-  const admin = await requireAdminStrict(env, request);
-  const row = await env.DB.prepare('SELECT product_id, status FROM product_keys WHERE id = ?').bind(keyId).first();
-  if (!row) throw new ApiError(404, 'Key không tồn tại', 'NOT_FOUND');
-  await env.DB.prepare("UPDATE product_keys SET status='disabled' WHERE id = ?").bind(keyId).run();
-  await syncStock(env, row.product_id);
-  await audit(env, admin.id, 'key.disable', keyId, {});
-  return ok({ id: keyId });
-}
-
-export async function syncStock(env, productId) {
-  await env.DB.prepare(
-    `UPDATE products SET stock_count = (
-       SELECT COUNT(*) FROM product_keys WHERE product_id = ? AND status = 'available'
-     ) WHERE id = ?`
-  )
-    .bind(productId, productId)
-    .run();
-}
-
+/*
+ * ĐÃ BỎ toàn bộ "kho key" (adminListKeys / adminAddKeys / adminDeleteKey /
+ * syncStock) cùng bảng `product_keys`.
+ *
+ * Shop chỉ bán license sinh động; không còn sản phẩm nào kiểu kho key.
+ * Ba route /api/admin/products/:id/keys và /api/admin/keys/:id đã xoá khỏi
+ * src/index.js, tab "Kho key" đã xoá khỏi trang quản trị.
+ */
 export async function audit(env, actorId, action, target, meta) {
   try {
     await env.DB.prepare(

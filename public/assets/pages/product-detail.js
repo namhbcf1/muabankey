@@ -1,5 +1,5 @@
 /** Trang chi tiết sản phẩm. */
-import { api, esc, fmtVnd, fmtNum, fmtDate, loadingBlock, emptyBlock } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, loadingBlock, emptyBlock } from '../lib.js';
 import { icon } from '../icons.js';
 import { buyNow, bindBuyNowCards } from './checkout.js';
 import { productCard } from './home.js';
@@ -102,24 +102,6 @@ export async function mountProductDetail(root, slug) {
           <h2 class="panel-title">${icon('file', { size: 15 })} Mô tả sản phẩm</h2>
           <div class="pd-desc">${esc(p.description || p.shortDesc || 'Đang cập nhật.')}</div>
         </div>
-
-        ${data.reviews && data.reviews.length ? `
-        <div class="panel mt-3">
-          <h2 class="panel-title">${icon('messageCircle', { size: 15 })} Đánh giá từ khách hàng
-            <span class="pd-count">${fmtNum(p.ratingCount)}</span>
-          </h2>
-          <div class="pd-reviews">
-            ${data.reviews.map((r) => `
-              <article class="pd-review">
-                <header class="pd-review-head">
-                  <span class="pd-review-author">${esc(r.author)}</span>
-                  ${ratingStars(r.rating, 12)}
-                </header>
-                <p class="pd-review-body">${esc(r.comment || '')}</p>
-                <time class="pd-review-time">${fmtDate(r.createdAt)}</time>
-              </article>`).join('')}
-          </div>
-        </div>` : ''}
       </div>
 
       <div>

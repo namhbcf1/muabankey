@@ -139,9 +139,7 @@ r.get('/api/admin/products', products.adminListProducts);
 r.post('/api/admin/products', (env, req) => products.adminSaveProduct(env, req, null));
 r.patch('/api/admin/products/:id', (env, req, p) => products.adminSaveProduct(env, req, p.id));
 r.delete('/api/admin/products/:id', (env, req, p) => products.adminDeleteProduct(env, req, p.id));
-r.get('/api/admin/products/:id/keys', (env, req, p) => products.adminListKeys(env, req, p.id));
-r.post('/api/admin/products/:id/keys', (env, req, p) => products.adminAddKeys(env, req, p.id));
-r.delete('/api/admin/keys/:id', (env, req, p) => products.adminDeleteKey(env, req, p.id));
+/* ĐÃ BỎ 3 route kho key — shop chỉ bán license sinh động. */
 
 r.get('/api/admin/orders', orders.adminListOrders);
 r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManual(env, req, p.id));

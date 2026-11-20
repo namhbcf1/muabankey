@@ -4,7 +4,7 @@ import { int, str, pageNum } from '../lib/validate.js';
 import { uuid, orderCode } from '../lib/crypto.js';
 import { requireUser, requireAdmin, requireAdminStrict } from '../lib/auth.js';
 import { rateLimit, clientIp } from '../lib/ratelimit.js';
-import { syncStock, audit } from './products.js';
+import { audit } from './products.js';
 import { deliverLicenseLine } from './license.js';
 
 /** Trả lại lượt dùng coupon khi đơn không thành công. */
@@ -179,7 +179,6 @@ export async function createOrder(env, request) {
  */
 export async function deliverOrderItems(env, order) {
   const orderId = order.id;
-  const now = Date.now();
 
   const { results: items } = await env.DB.prepare(
     'SELECT * FROM order_items WHERE order_id = ?'
@@ -217,21 +216,23 @@ export async function deliverOrderItems(env, order) {
       continue;
     }
 
-    // Hàng key: kiểm tra tồn kho
-    const avail = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM product_keys WHERE product_id = ? AND status = 'available'"
-    ).bind(item.product_id).first();
-    if ((avail?.n || 0) < item.quantity) {
-      throw new Error(
-        `"${item.product_name}" không đủ hàng (cần ${item.quantity}, còn ${avail?.n || 0})`
-      );
-    }
-    planned.push({ item, product, qty: item.quantity, kind: 'key' });
+    /*
+     * ĐÃ BỎ kiểu giao hàng 'key' / 'account' (kho key tĩnh).
+     *
+     * Shop chỉ bán license sinh động (`delivery_type='license'`) và giao tay
+     * (`manual`). Bảng `product_keys` đã xoá cùng bảng kho key.
+     *
+     * Nếu dữ liệu cũ còn sót một sản phẩm kiểu 'key', ném lỗi RÕ RÀNG thay vì
+     * giao nhầm — trước đây nhánh này âm thầm đọc kho rỗng rồi báo "không đủ
+     * hàng", khách tưởng hết hàng trong khi thật ra kiểu giao hàng đã bị bỏ.
+     */
+    throw new Error(
+      `"${item.product_name}" dùng kiểu giao hàng không còn hỗ trợ (${product.delivery_type})`
+    );
   }
 
   // ===== BƯỚC 2: GIAO =====
   const delivered = [];
-  const { openSecret } = await import('../lib/secrets.js');
 
   /*
    * SỔ TÀI NGUYÊN ĐÃ GIAO TRONG CHÍNH REQUEST NÀY.
@@ -248,7 +249,7 @@ export async function deliverOrderItems(env, order) {
    * Chỉ ghi những gì REQUEST NÀY tạo ra — KHÔNG đụng dòng đã giao ở lần
    * trước (kind === 'already'), vì đó là hàng khách đã trả tiền từ trước.
    */
-  const made = { licenses: [], keyIds: [], items: [], soldCount: [] };
+  const made = { licenses: [], items: [], soldCount: [] };
 
   try {
     for (const p of planned) {
@@ -296,53 +297,12 @@ export async function deliverOrderItems(env, order) {
         continue;
       }
 
-      // kind === 'key'
-      const { results: keys } = await env.DB.prepare(
-        `SELECT id, secret FROM product_keys
-         WHERE product_id = ? AND status = 'available'
-         ORDER BY created_at ASC LIMIT ?`
-      ).bind(item.product_id, qty).all();
-
-      const secrets = [];
-      for (const k of keys || []) {
-        const up = await env.DB.prepare(
-          `UPDATE product_keys SET status = 'sold', order_id = ?, delivered_at = ?
-           WHERE id = ? AND status = 'available'`
-        ).bind(orderId, now, k.id).run();
-        if (up.meta && up.meta.changes === 1) {
-          // CHỈ ghi nhận khi UPDATE thật sự đổi được dòng: đây là key mà
-          // request này đã chiếm. Key bị request khác giành trước không
-          // được đưa vào sổ, nếu không rollback sẽ trả nhầm hàng của đơn khác.
-          made.keyIds.push(k.id);
-          secrets.push(await openSecret(env, k.secret));
-        }
-      }
-
-      if (secrets.length < qty) {
-        // Race: trả key đã giữ về available rồi throw -> catch bên dưới
-        // vẫn chạy rollback cho các dòng TRƯỚC đó.
-        for (const kid of made.keyIds) {
-          await env.DB.prepare(
-            `UPDATE product_keys SET status = 'available', order_id = NULL, delivered_at = NULL
-             WHERE id = ? AND order_id = ?`
-          ).bind(kid, orderId).run();
-        }
-        throw new Error(`Giữ hàng thất bại cho "${item.product_name}", thử lại`);
-      }
-
-      await env.DB.prepare('UPDATE order_items SET delivered_keys = ? WHERE id = ?')
-        .bind(await sealKeys(env, secrets), item.id).run();
-      made.items.push(item.id);
-
-      await env.DB.prepare('UPDATE products SET sold_count = sold_count + ? WHERE id = ?')
-        .bind(qty, item.product_id).run();
-      made.soldCount.push({ productId: item.product_id, qty });
-
-      delivered.push({
-        productId: item.product_id, name: item.product_name,
-        keys: secrets, manual: false,
-      });
-      await syncStock(env, item.product_id);
+      /*
+       * ĐÃ BỎ nhánh giao hàng kho key (`kind === 'key'`) cùng bảng
+       * `product_keys`. Mọi sản phẩm hiện đều `delivery_type='license'`
+       * hoặc `manual`, và bước KIỂM TRA ở trên đã chặn kiểu lạ.
+       */
+      throw new Error(`Kiểu giao hàng không hỗ trợ: ${kind}`);
     }
   } catch (err) {
     /*
@@ -387,17 +347,7 @@ async function rollbackDelivered(env, orderId, made) {
     } catch { /* không để lỗi thu hồi che lỗi gốc */ }
   }
 
-  // 2. Trả key kho về available. Dùng status='sold' + order_id làm điều kiện
-  //    để không "hồi sinh" một key mà người khác đã mua lại trong lúc này.
-  for (const kid of made.keyIds) {
-    try {
-      await env.DB.prepare(
-        `UPDATE product_keys
-            SET status = 'available', order_id = NULL, delivered_at = NULL
-          WHERE id = ? AND order_id = ? AND status = 'sold'`
-      ).bind(kid, orderId).run();
-    } catch { /* ignore */ }
-  }
+  // 2. (ĐÃ BỎ) Trả key kho về available — bảng `product_keys` không còn.
 
   // 3. Xoá delivered_keys của đúng các dòng vừa ghi. Giữ lại thì listOrders
   //    vẫn trả key cho khách dù đơn không thành công.
@@ -417,10 +367,7 @@ async function rollbackDelivered(env, orderId, made) {
     } catch { /* ignore */ }
   }
 
-  // 5. Đồng bộ tồn kho để stock_count khớp số key available thật.
-  for (const pid of new Set(made.soldCount.map((s) => s.productId))) {
-    try { await syncStock(env, pid); } catch { /* ignore */ }
-  }
+  // 5. (ĐÃ BỎ) Đồng bộ tồn kho từ kho key — không còn kho key.
 }
 
 export async function listOrders(env, request) {
@@ -811,7 +758,7 @@ export async function adminRefund(env, request, orderId) {
 
   // ===== THU HỒI HÀNG ĐÃ GIAO =====
   // Hoàn tiền mà giữ key thì khách được cả tiền lẫn hàng.
-  const revoked = { keys: 0, licenses: 0 };
+  const revoked = { licenses: 0 };
   try {
     // 1. Thu hồi license đã phát hành cho đơn này
     const { results: issues } = await env.DB.prepare(
@@ -826,20 +773,8 @@ export async function adminRefund(env, request, orderId) {
       revoked.licenses++;
     }
 
-    // 2. Thu hồi key kho đã giao (đưa về disabled, không bán lại được)
-    const { results: soldKeys } = await env.DB.prepare(
-      "SELECT id, product_id FROM product_keys WHERE order_id = ? AND status = 'sold'"
-    ).bind(orderId).all();
-    const affectedProducts = new Set();
-    for (const k of soldKeys || []) {
-      await env.DB.prepare("UPDATE product_keys SET status='disabled' WHERE id = ?")
-        .bind(k.id).run();
-      affectedProducts.add(k.product_id);
-      revoked.keys++;
-    }
-    for (const pid of affectedProducts) {
-      await syncStock(env, pid);
-    }
+    // 2. (ĐÃ BỎ) Thu hồi key kho — bảng `product_keys` không còn.
+    //    Shop chỉ bán license sinh động, thu hồi ở bước 1.
 
     // 3. Giảm sold_count tương ứng
     const { results: items } = await env.DB.prepare(
@@ -880,7 +815,7 @@ export async function adminRefund(env, request, orderId) {
       `UPDATE refund_ledger SET state = 'done', revoked = ?,
        claim_token = NULL, at = ?
        WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
-    ).bind(revoked.keys + revoked.licenses, now, orderId, claimToken),
+    ).bind(revoked.licenses, now, orderId, claimToken),
     env.DB.prepare(
       `UPDATE orders SET status = 'refunded',
               admin_note = ? WHERE id = ?`

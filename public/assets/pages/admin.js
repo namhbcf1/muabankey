@@ -16,7 +16,6 @@ const NAV = [
   ['orders', 'package', 'Đơn hàng'],
   ['topups', 'coins', 'Chờ thanh toán'],
   ['products', 'bag', 'Sản phẩm'],
-  ['keys', 'key', 'Kho key'],
   ['licenses', 'ticket', 'License'],
   ['trial', 'gift', 'Dùng thử'],
   ['whitelist', 'star', 'Vô hạn'],
@@ -43,7 +42,7 @@ export function renderAdmin(query) {
       <div class="page-head">
         <div>
           <h1 class="page-title">Quản trị hệ thống</h1>
-          <p class="page-desc">Quản lý đơn hàng, sản phẩm, kho key và người dùng.</p>
+          <p class="page-desc">Quản lý đơn hàng, sản phẩm, license và người dùng.</p>
         </div>
       </div>
       <div class="admin-layout">
@@ -81,7 +80,6 @@ export async function mountAdmin(root, query) {
     else if (tab === 'orders') await renderOrders(host);
     else if (tab === 'topups') await renderTopups(host);
     else if (tab === 'products') await renderProducts(host);
-    else if (tab === 'keys') await renderKeys(host, query);
     else if (tab === 'licenses') await renderLicenses(host);
     else if (tab === 'trial') await renderTrial(host);
     else if (tab === 'whitelist') await renderWhitelist(host);
@@ -479,7 +477,6 @@ async function renderProducts(host) {
                 <td><span class="pill ${p.active ? 'pill-green' : 'pill-gray'}">${p.active ? 'Đang bán' : 'Ẩn'}</span></td>
                 <td>
                   <div class="adm-actions">
-                    <button type="button" class="btn btn-ghost btn-sm" data-keys="${esc(p.id)}">${icon('key', { size: 13 })} Key</button>
                     <button type="button" class="btn btn-ghost btn-sm" data-edit="${esc(p.id)}">${icon('edit', { size: 13 })} Sửa</button>
                     <button type="button" class="btn btn-danger btn-sm" data-del="${esc(p.id)}">Ẩn</button>
                   </div>
@@ -491,10 +488,6 @@ async function renderProducts(host) {
     </div>`;
 
   host.querySelector('#add-product').onclick = () => openProductEditor(host, null);
-
-  host.querySelectorAll('[data-keys]').forEach((b) => {
-    b.onclick = () => navigate('/admin?tab=keys&product=' + b.dataset.keys);
-  });
 
   host.querySelectorAll('[data-edit]').forEach((b) => {
     b.onclick = () => openProductEditor(host, d.products.find((x) => x.id === b.dataset.edit));
@@ -549,8 +542,8 @@ function openProductEditor(host, p) {
     <div class="adm-form-row">
       <div class="field"><label class="label" for="ed-delivery">Kiểu giao hàng</label>
         <select class="select adm-select-full" id="ed-delivery">
-          ${[['key', 'Key có sẵn (kho)'], ['account', 'Tài khoản (kho)'], ['license', 'License sinh tự động'], ['manual', 'Giao thủ công']]
-            .map(([v, t]) => `<option value="${v}"${(p ? p.deliveryType : 'key') === v ? ' selected' : ''}>${t}</option>`).join('')}
+          ${[['license', 'License sinh tự động'], ['manual', 'Giao thủ công']]
+            .map(([v, t]) => `<option value="${v}"${(p ? p.deliveryType : 'license') === v ? ' selected' : ''}>${t}</option>`).join('')}
         </select></div>
       <div class="field"><label class="label" for="ed-licprefix">Tiền tố license</label>
         <input class="input" id="ed-licprefix" value="${esc(p && p.licensePrefix ? p.licensePrefix : 'AOE1')}" placeholder="AOE1"></div>
@@ -604,106 +597,6 @@ function openProductEditor(host, p) {
   });
 }
 
-/* ---------------- Keys ---------------- */
-async function renderKeys(host, query) {
-  const productId = query.product || '';
-  const d = await api('/api/admin/products');
-
-  host.innerHTML = `
-    <div class="panel">
-      <div class="panel-title">${icon('key', { size: 15 })} Quản lý kho key</div>
-      <div class="field">
-        <label class="label" for="key-product">Chọn sản phẩm</label>
-        <select class="select adm-select-full" id="key-product">
-          <option value="">— Chọn sản phẩm —</option>
-          ${d.products.map((p) => `<option value="${esc(p.id)}"${productId === p.id ? ' selected' : ''}>${esc(p.name)} (${p.stock} key)</option>`).join('')}
-        </select>
-      </div>
-      <div id="key-list"></div>
-    </div>`;
-
-  const sel = host.querySelector('#key-product');
-  sel.onchange = () => navigate('/admin?tab=keys&product=' + sel.value);
-  if (productId) await loadKeys(host, productId);
-}
-
-async function loadKeys(host, productId) {
-  const listHost = host.querySelector('#key-list');
-  listHost.innerHTML = loadingBlock();
-  try {
-    const d = await api(`/api/admin/products/${productId}/keys`);
-    listHost.innerHTML = `
-      <div class="alert alert-info">
-        <span class="ico">${icon('chart', { size: 15 })}</span>
-        <span>Tổng <strong>${d.keys.length}</strong> key ·
-          Còn hàng: <strong class="text-green">${d.keys.filter((k) => k.status === 'available').length}</strong> ·
-          Đã bán: <strong>${d.keys.filter((k) => k.status === 'sold').length}</strong></span>
-      </div>
-      <div class="panel adm-panel-soft">
-        <div class="panel-title adm-panel-title-sm">${icon('plus', { size: 14 })} Thêm key hàng loạt</div>
-        <label class="sr-only" for="new-keys">Danh sách key mới, mỗi dòng một key</label>
-        <textarea class="textarea adm-textarea-keys" id="new-keys"
-          placeholder="Mỗi dòng 1 key...&#10;XXXXX-XXXXX-XXXXX&#10;YYYYY-YYYYY-YYYYY"></textarea>
-        <div class="adm-inline-row">
-          <input class="input" id="key-note" placeholder="Ghi chú (loại key, lô...)" aria-label="Ghi chú cho lô key">
-          <button type="button" class="btn btn-primary" id="btn-add-keys">Thêm key</button>
-        </div>
-      </div>
-      <div class="table-wrap adm-table-wrap mt-2">
-        <table class="adm-table">
-          <thead><tr>
-            <th scope="col">Key (đã che)</th>
-            <th scope="col">Ghi chú</th>
-            <th scope="col">Trạng thái</th>
-            <th scope="col">Tạo</th>
-            <th scope="col">Thao tác</th>
-          </tr></thead>
-          <tbody>
-            ${d.keys.length === 0
-              ? `<tr><td colspan="5" class="adm-empty">Chưa có key nào</td></tr>`
-              : d.keys.map((k) => `
-                <tr>
-                  <td><span class="mono adm-mono-sm">${esc(k.masked)}</span></td>
-                  <td class="adm-cell-sub">${esc(k.note || '—')}</td>
-                  <td><span class="pill ${k.status === 'available' ? 'pill-green' : k.status === 'sold' ? 'pill-blue' : 'pill-gray'}">${esc(k.status)}</span></td>
-                  <td class="adm-cell-sub">${fmtDate(k.created_at)}</td>
-                  <td>${k.status === 'available'
-                    ? `<button type="button" class="btn btn-danger btn-sm" data-delkey="${esc(k.id)}">Xoá</button>`
-                    : ''}</td>
-                </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
-
-    listHost.querySelector('#btn-add-keys').onclick = async () => {
-      const keys = listHost.querySelector('#new-keys').value;
-      const note = listHost.querySelector('#key-note').value.trim();
-      if (!keys.trim()) { toast('Vui lòng nhập key', 'error'); return; }
-      try {
-        const res = await api(`/api/admin/products/${productId}/keys`, {
-          method: 'POST',
-          body: { keys, note },
-        });
-        toast(`Đã thêm ${res.added} key`, 'success');
-        loadKeys(host, productId);
-      } catch (e) { toast(e.message, 'error'); }
-    };
-
-    listHost.querySelectorAll('[data-delkey]').forEach((b) => {
-      b.onclick = async () => {
-        if (!await confirmDialog('Xoá key này?', 'Key sẽ bị vô hiệu hoá.', 'Xoá')) return;
-        try {
-          await api('/api/admin/keys/' + b.dataset.delkey, { method: 'DELETE' });
-          toast('Đã xoá key', 'success');
-          loadKeys(host, productId);
-        } catch (e) { toast(e.message, 'error'); }
-      };
-    });
-  } catch (e) {
-    listHost.innerHTML = `<div class="empty-state"><div class="ico">${icon('alert', { size: 26 })}</div>
-      <div class="t">${esc(e.message)}</div></div>`;
-  }
-}
 
 /* ---------------- Licenses ---------------- */
 const LIC_STATUS = {

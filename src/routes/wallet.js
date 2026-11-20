@@ -617,7 +617,7 @@ export async function telegramWebhook(env, request) {
           }
 
           // ===== THU HỒI HÀNG ĐÃ GIAO (trước khi cộng tiền) =====
-          const revoked = { keys: 0, licenses: 0 };
+          const revoked = { licenses: 0 };
           try {
             const lics = await env.DB.prepare(
               'SELECT license_key FROM license_issues WHERE order_id = ?'
@@ -629,17 +629,7 @@ export async function telegramWebhook(env, request) {
             }
           } catch { /* bảng có thể không có order_id */ }
 
-          try {
-            const sold = await env.DB.prepare(
-              "SELECT id FROM product_keys WHERE order_id = ? AND status = 'sold'"
-            ).bind(o.id).all();
-            for (const k of sold.results || []) {
-              await env.DB.prepare(
-                "UPDATE product_keys SET status='disabled' WHERE id = ?"
-              ).bind(k.id).run();
-              revoked.keys++;
-            }
-          } catch { /* ignore */ }
+          // (ĐÃ BỎ) Thu hồi key kho — bảng `product_keys` không còn.
 
           /*
            * ===== CỘNG TIỀN + CHỐT SỔ TRONG MỘT TRANSACTION =====
@@ -660,7 +650,7 @@ export async function telegramWebhook(env, request) {
               `UPDATE refund_ledger SET state = 'done', revoked = ?,
                       claim_token = NULL, at = ?
                 WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
-            ).bind(revoked.keys + revoked.licenses, now, o.id, claimToken),
+            ).bind(revoked.licenses, now, o.id, claimToken),
             env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?").bind(o.id),
           ]);
 
