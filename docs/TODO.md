@@ -10,6 +10,15 @@
 - F17: cart module, dead CSS, duplicate route.
 - QA guard, P0 hardening, release manifest pipeline, 17 test suites.
 
+## Kết quả quét vòng hai — đã xử lý
+
+- `npm run db:migrate` không còn silent no-op; remote runner yêu cầu `CONFIRM_REMOTE_MIGRATION=YES` và dừng khi migration lỗi.
+- Entitlement không còn fallback khi batch lỗi tùy ý; chỉ fallback khi xác định thiếu bảng `entitlement_grants`, tránh double-grant khi UNIQUE/transient error.
+- Global rate limiter fail-closed khi D1/KV lỗi.
+- Product image URL chỉ nhận HTTPS hợp lệ, tránh CSP mismatch và URL scheme nguy hiểm.
+- XA ARENA updater fail-closed khi không kiểm tra được release metadata.
+- Thêm test migration command, global rate limit và updater policy; tổng verify hiện tại 20/20 suite pass.
+
 ## P0 triển khai còn cần làm
 
 - Rotate webhook/provider secrets đã từng xuất hiện trong lịch sử git.
