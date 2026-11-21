@@ -30,7 +30,7 @@ param(
     [switch]$SkipSign,
     [switch]$Clean,
     [string]$CertThumbprint = $env:XA_SIGN_THUMBPRINT,
-    [string]$TimestampUrl   = 'http://timestamp.digicert.com'
+    [string]$TimestampUrl   = 'https://timestamp.digicert.com'
 )
 
 $ErrorActionPreference = 'Stop'

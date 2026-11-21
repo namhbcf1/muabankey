@@ -345,20 +345,35 @@ export async function startSession(env, request) {
     const days = Number(cfg.accountDays) || 1;
     const expiresAt = now + days * DAY_SEC;
 
-    await env.DB.prepare(
-      `INSERT INTO trial_accounts
-         (user_id, state, created_at, started_at, expires_at,
-          hwid, device_weak, ip, ua, rebinds, updated_at)
-       VALUES (?, 'active', ?, ?, ?, ?, ?, ?, ?, 0, ?)`
-    ).bind(user.id, now, now, expiresAt, ids.hwid, ids.weak, ip, ua, now).run();
+    try {
+      await env.DB.prepare(
+        `INSERT INTO trial_accounts
+           (user_id, state, created_at, started_at, expires_at,
+            hwid, device_weak, ip, ua, rebinds, updated_at)
+         VALUES (?, 'active', ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+      ).bind(user.id, now, now, expiresAt, ids.hwid, ids.weak, ip, ua, now).run();
+      state = 'new';
+      await logEvent(env, '-', ids.hwid, 'trial_account_start',
+        `${days} ngày, cả 2 tính năng`, ip);
+    } catch (e) {
+      /*
+       * Hai lần mở app đồng thời cùng user: user_id là PRIMARY KEY nên một
+       * INSERT thắng, một INSERT nhận UNIQUE. Đây không phải lỗi 500 — đọc lại
+       * row đã thắng và tiếp tục idempotent như một request resume.
+       */
+      if (!/unique|constraint/i.test(String(e?.message || e))) throw e;
+      row = await env.DB.prepare(
+        'SELECT * FROM trial_accounts WHERE user_id = ?'
+      ).bind(user.id).first();
+      if (!row) throw e;
+      state = 'resume';
+    }
 
-    row = await env.DB.prepare(
-      'SELECT * FROM trial_accounts WHERE user_id = ?'
-    ).bind(user.id).first();
-
-    state = 'new';
-    await logEvent(env, '-', ids.hwid, 'trial_account_start',
-      `${days} ngày, cả 2 tính năng`, ip);
+    if (!row) {
+      row = await env.DB.prepare(
+        'SELECT * FROM trial_accounts WHERE user_id = ?'
+      ).bind(user.id).first();
+    }
   } else {
     // ===== TÀI KHOẢN ĐÃ CÓ LƯỢT DÙNG THỬ =====
 
