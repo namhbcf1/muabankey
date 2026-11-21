@@ -38,6 +38,25 @@ const {
 } = await import('../src/lib/account-entitlement.js');
 
 /* ================================================================== */
+S.section('grantFeature — không fallback khi lỗi batch không phải thiếu schema');
+
+{
+  const { env, sqlite } = makeEnv({ migrations: MIGRATIONS });
+  seedUser(sqlite, 'u0');
+  const originalBatch = env.DB.batch.bind(env.DB);
+  env.DB.batch = () => Promise.reject(new Error('database is temporarily unavailable'));
+  let threw = false;
+  try {
+    await grantFeature(env, { userId: 'u0', feature: FEATURE_NOFOG, days: 30, source: 'purchase' });
+  } catch (e) {
+    threw = true;
+    S.ok(/temporarily unavailable/.test(String(e.message)), 'truyền nguyên lỗi D1 transient, không fallback cộng quyền');
+  } finally {
+    env.DB.batch = originalBatch;
+  }
+  S.ok(threw, 'lỗi batch transient phải fail-closed');
+}
+
 S.section('grantFeature — gia hạn cộng dồn');
 
 {

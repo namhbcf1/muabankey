@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate": "node db/migrate.mjs --remote",
-    "db:migrate:check": "node db/migrate.mjs --check",
+    "db:migrate": "node scripts/migrate-remote.mjs",
+    "db:migrate:check": "node db/migrate.mjs --check", 
+    "db:migrate:local": "node db/migrate.mjs --sqlite .wrangler/local-muabankey.sqlite" ,
     "db:export": "wrangler d1 export muabankey-db --remote --output=backups/backup.sql",
     "tail": "wrangler tail",
     "test": "node test/run.mjs",

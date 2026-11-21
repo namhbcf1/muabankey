@@ -374,6 +374,23 @@ export async function adminListProducts(env, request) {
   return ok({ products: (results || []).map(shapeProduct) });
 }
 
+function normalizeProductImageUrl(value) {
+  const raw = str(value, 'imageUrl', { required: false, max: 500 }) || '';
+  if (!raw) return '';
+  try {
+    const u = new URL(raw);
+    // Product art phải HTTPS; URL relative/self-hosted cũng được phép.
+    if (u.protocol !== 'https:') {
+      throw new ApiError(400, 'Ảnh sản phẩm phải dùng HTTPS', 'IMAGE_URL_INSECURE');
+    }
+    // Không cho javascript/data/blob/file URL lọt vào CSP hoặc log.
+    return u.href;
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    throw new ApiError(400, 'URL ảnh sản phẩm không hợp lệ', 'IMAGE_URL_INVALID');
+  }
+}
+
 export async function adminSaveProduct(env, request, productId = null) {
   /* Sua san pham = sua GIA ban cho moi khach. Chi admin that. */
   const admin = await requireAdminStrict(env, request);
@@ -385,7 +402,7 @@ export async function adminSaveProduct(env, request, productId = null) {
   const categoryId = body.categoryId ? str(body.categoryId, 'categoryId', { max: 64 }) : null;
   const shortDesc = str(body.shortDesc, 'shortDesc', { required: false, max: 300 }) || '';
   const description = str(body.description, 'description', { required: false, max: 20000 }) || '';
-  const imageUrl = str(body.imageUrl, 'imageUrl', { required: false, max: 500 }) || '';
+  const imageUrl = normalizeProductImageUrl(body.imageUrl);
   const badge = body.badge ? str(body.badge, 'badge', { max: 20 }) : null;
   const price = int(body.price, 'price', { min: 0, max: 1_000_000_000 });
   const comparePrice = body.comparePrice ? int(body.comparePrice, 'comparePrice', { min: 0 }) : null;

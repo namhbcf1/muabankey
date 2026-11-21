@@ -47,6 +47,12 @@
  * ============================================================================
  */
 
+/* Chỉ dùng fallback khi lỗi thật sự là thiếu bảng migration. */
+function isMissingSchemaError(error, table) {
+  const msg = String(error?.message || error || '').toLowerCase();
+  return msg.includes('no such table') && msg.includes(String(table).toLowerCase());
+}
+
 /** Hai tính năng bán được. */
 export const FEATURE_NOFOG = 'nofog';
 export const FEATURE_GRANT = 'grant';
@@ -258,9 +264,12 @@ export async function grantFeature(env, {
     ]);
   } catch (e) {
     /*
-     * Sổ chưa migrate (hoặc bảng thiếu) -> vẫn phải cấp được quyền, nếu không
-     * khách trả tiền mà không có gì. Chỉ mất tính idempotent, không mất quyền.
+     * Chỉ fallback khi xác định CHÍNH XÁC là schema cũ chưa có entitlement_grants.
+     * Bản cũ bắt mọi lỗi ở đây: UNIQUE race, D1 transient hoặc SQL lỗi đều bị
+     * coi như "thiếu bảng", rồi fallback UPSERT cộng thêm ngày — phá idempotency
+     * và có thể cấp trùng cùng một order.
      */
+    if (!isMissingSchemaError(e, 'entitlement_grants')) throw e;
     await env.DB.prepare(
       `INSERT INTO account_entitlements
          (user_id, feature, expires_at, source, order_id, note, created_at, updated_at)
