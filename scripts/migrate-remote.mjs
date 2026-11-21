@@ -11,10 +11,11 @@
  * Chạy `db:migrate:check` trước để xem migration local.
  */
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const root = resolve(new URL('..', import.meta.url).pathname);
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dbName = process.env.D1_DATABASE || 'muabankey-db';
 const confirm = process.env.CONFIRM_REMOTE_MIGRATION;
 
@@ -34,10 +35,12 @@ console.log(`Sẽ chạy ${files.length} migration trên D1: ${dbName}`);
 for (const file of files) {
   const path = join(dir, file);
   console.log(`\n▶ ${file}`);
-  const r = spawnSync('npx', [
-    '--no-install', 'wrangler', 'd1', 'execute', dbName,
-    '--remote', `--file=${path}`, '--yes',
-  ], { cwd: root, stdio: 'inherit', env: process.env });
+  const args = ['--no-install', 'wrangler', 'd1', 'execute', dbName,
+    '--remote', `--file=${path}`, '--yes'];
+  const command = process.platform === 'win32'
+    ? `${process.env.ComSpec || 'cmd.exe'} /d /s /c "npx ${args.map((a) => `\"${a}\"`).join(' ')}"`
+    : `npx ${args.map((a) => `\"${a}\"`).join(' ')}`;
+  const r = spawnSync(command, { cwd: root, stdio: 'inherit', env: process.env, shell: true });
   if (r.error) {
     console.error(`Không chạy được Wrangler: ${r.error.message}`);
     process.exit(1);
