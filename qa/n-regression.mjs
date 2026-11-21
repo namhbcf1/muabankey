@@ -1,8 +1,9 @@
 import { Client, q, q1, BASE } from './q.mjs';
+import { adminCredentials } from './qa-guard.mjs';
 import { rec, newUser, makeOrder, getQr, hook, dump, SECRET } from './lib.mjs';
 
 const adm = new Client();
-await adm.req('/api/auth/login', { method: 'POST', body: { username: 'namhbcf', password: 'namhbcf123' } });
+await adm.req('/api/auth/login', { method: 'POST', body: adminCredentials() });
 const setS = (k, v) => q(`UPDATE settings SET value = ? WHERE key = ?`, [String(v), k]);
 const getS = async (k) => (await q1('SELECT value FROM settings WHERE key = ?', [k]))?.value;
 

@@ -1,5 +1,5 @@
 /** MuaBanKey SPA — bộ định tuyến & khởi tạo. */
-import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks, bindScrollHints, closeAllModals } from './lib.js';
+import { parseRoute, navigate, toast, loadingBlock, esc, bindImageFallbacks, bindScrollHints, closeAllModals, routeContext, isAborted } from './lib.js';
 import { state, loadUser, loadCategories } from './state.js';
 import { icon } from './icons.js';
 import {
@@ -70,6 +70,16 @@ const ROUTES = [
 ];
 
 let currentCleanup = null;
+/** Ngữ cảnh sống theo route hiện tại (AbortController + disposers). */
+let routeCtx = null;
+
+/**
+ * Ngữ cảnh của route đang hiển thị. Trang dùng `getRouteContext().signal`
+ * cho mọi request và `.setInterval()` / `.listen()` cho mọi thứ cần dọn.
+ */
+export function getRouteContext() {
+  return routeCtx;
+}
 
 function renderNotFound() {
   return `
@@ -158,15 +168,184 @@ function mountChrome(app) {
   void app;
 }
 
-/** Bọc nội dung trang trong <main> nếu trang chưa tự làm. */
+/**
+ * Bọc nội dung trang trong <main> — BỎ header/footer ra ngoài.
+ *
+ * ============================================================================
+ * LỖI ĐÃ SỬA (audit web, severity high): <header> và <footer> NẰM TRONG <main>
+ *
+ * Bản cũ gọi `ensureMain(app)` TRƯỚC `mountChrome(app)`:
+ *
+ *     app.innerHTML = matched.render();
+ *     ensureMain(app);     // chuyển MỌI con của #app vào <main>
+ *     mountChrome(app);    // rồi đổ header/footer vào các placeholder
+ *
+ * `#site-header` và `#site-footer` nằm trong markup của trang, nên bước
+ * ensureMain chuyển chúng VÀO <main>. Sau đó mountChrome đổ header/footer vào
+ * chính hai placeholder đã nằm trong <main>. Kết quả DOM:
+ *
+ *     <main> <header>…</header> …nội dung… <footer>…</footer> </main>
+ *
+ * Đây là cấu trúc NGƯỢC với WCAG 1.3.1: trình đọc màn hình coi toàn bộ điều
+ * hướng nằm trong vùng "nội dung chính", và landmark `banner`/`contentinfo`
+ * mất tác dụng. Comment cũ trong code khẳng định "header/footer được render
+ * sau nên nằm ngoài <main> — đúng cấu trúc" — điều đó SAI so với chính code.
+ *
+ * NAY: `ensureMain` chỉ chuyển các node KHÔNG PHẢI placeholder chrome vào
+ * <main>, và tự chèn <main> vào đúng vị trí giữa header và footer.
+ * ============================================================================
+ */
+const CHROME_IDS = new Set(['site-header', 'site-footer', 'skip-link']);
+
+function isChromeNode(node) {
+  if (!node || node.nodeType !== 1) return false;
+  if (CHROME_IDS.has(node.id)) return true;
+  // AI widget + toast + modal là overlay, không thuộc nội dung chính.
+  if (node.id === 'ai-fab') return true;
+  return false;
+}
+
 function ensureMain(app) {
-  if (app.querySelector('main#main-content')) return;
+  const existing = app.querySelector('main#main-content');
+  if (existing) return existing;
+
   const main = document.createElement('main');
   main.id = 'main-content';
   main.tabIndex = -1;
-  // Chuyển toàn bộ con hiện có vào <main>, giữ nguyên thứ tự và event listener.
-  while (app.firstChild) main.appendChild(app.firstChild);
-  app.appendChild(main);
+
+  /*
+   * Thu thập nội dung TRƯỚC khi di chuyển: vừa append vừa duyệt trên cùng một
+   * danh sách con sẽ bỏ sót node (vì appendChild lấy node ra khỏi #app).
+   */
+  const content = [];
+  for (const node of Array.from(app.childNodes)) {
+    if (!isChromeNode(node)) content.push(node);
+  }
+  for (const node of content) main.appendChild(node);
+
+  /*
+   * Chèn <main> vào ĐÚNG VỊ TRÍ: ngay sau header (nếu trang có), trước footer.
+   * Nếu không có header thì chèn ở đầu.
+   */
+  const headerEl = app.querySelector('#site-header');
+  if (headerEl && headerEl.parentNode === app) {
+    headerEl.insertAdjacentElement('afterend', main);
+  } else {
+    app.insertBefore(main, app.firstChild);
+  }
+
+  /* Footer phải đứng SAU <main> — đưa về cuối nếu nó bị kẹt phía trước. */
+  const footerEl = app.querySelector('#site-footer');
+  if (footerEl && footerEl.parentNode === app) {
+    app.appendChild(footerEl);
+  }
+
+  return main;
+}
+
+/**
+ * Tiêu đề trang theo route.
+ *
+ * Bản cũ không đặt `document.title` ở đâu cả, nên mọi trang đều mang tiêu đề
+ * tĩnh của index.html. Hệ quả với người dùng thật: mở nhiều tab thì không
+ * phân biệt được, bookmark lưu sai tên, và trình đọc màn hình đọc một câu
+ * không liên quan tới nội dung đang xem.
+ *
+ * Bảng dưới đây cố ý đặt ở client (không phải server) vì SPA dùng hash router:
+ * server không bao giờ thấy phần sau `#`.
+ */
+const TITLES = {
+  '/': 'Một app, hai tính năng — map sáng & tài nguyên',
+  '/products': 'Bảng giá',
+  '/product': 'Chi tiết gói',
+  '/login': 'Đăng nhập',
+  '/register': 'Tạo tài khoản',
+  '/checkout': 'Thanh toán',
+  '/account': 'Tài khoản của tôi',
+  '/orders': 'Đơn hàng của tôi',
+  '/licenses': 'Quyền & thiết bị',
+  '/support': 'Hỗ trợ',
+  '/huong-dan': 'Hướng dẫn cài đặt',
+  '/tai-ve': 'Tải app',
+  '/admin': 'Quản trị',
+};
+
+const SITE = 'XA ARENA';
+
+function routeTitleKey(path) {
+  if (path === '/') return '/';
+  if (/^\/product\/[^/]+$/.test(path)) return '/product';
+  if (/^\/order\/[^/]+$/.test(path)) return '/checkout';
+  if (path === '/wallet') return '/orders';
+  return Object.prototype.hasOwnProperty.call(TITLES, path) ? path : null;
+}
+
+let lastTitleSet = '';
+
+function applyRouteTitle(route, param, matched) {
+  const key = routeTitleKey(route.path);
+  const base = key ? TITLES[key] : null;
+  let title;
+  if (!base) {
+    title = `Không tìm thấy trang · ${SITE}`;
+  } else if (key === '/product' && param) {
+    // Tên sản phẩm thật được ghi đè sau khi trang nạp xong (xem setPageTitle).
+    title = `${base} · ${SITE}`;
+  } else {
+    title = `${base} · ${SITE}`;
+  }
+  document.title = title;
+  lastTitleSet = title;
+  void matched;
+}
+
+/**
+ * Cho trang tự đặt tiêu đề chi tiết hơn (vd tên sản phẩm) sau khi có dữ liệu.
+ * Chỉ nhận khi người dùng chưa chuyển sang route khác trong lúc nạp.
+ */
+export function setPageTitle(detail) {
+  const d = String(detail || '').trim();
+  if (!d) return;
+  document.title = `${d} · ${SITE}`;
+  lastTitleSet = document.title;
+}
+
+/**
+ * Đưa focus vào <main> khi THẬT SỰ đổi trang.
+ *
+ * Vì sao cần: SPA thay toàn bộ `#app` bằng `innerHTML`, nên node đang giữ focus
+ * (link vừa bấm) bị xoá khỏi DOM. Trình duyệt đẩy focus về <body>, và người
+ * dùng bàn phím phải Tab lại từ đầu trang — họ không biết mình vừa đi đâu.
+ *
+ * Không làm ở lần tải đầu tiên: lúc đó focus nên ở đầu tài liệu.
+ * Không cướp focus khi người dùng đang gõ trong một ô nhập (ví dụ ô tìm kiếm
+ * tự điều hướng) — trường hợp đó do trang tự xử lý.
+ */
+let hasRenderedOnce = false;
+
+function focusMainIfNavigating() {
+  const first = !hasRenderedOnce;
+  hasRenderedOnce = true;
+  if (first) return;
+
+  const active = document.activeElement;
+  if (active) {
+    const tag = String(active.tagName || '').toLowerCase();
+    const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select'
+      || active.isContentEditable;
+    // Ô nhập còn nằm trong DOM = trang cố ý giữ focus (xem products.js).
+    if (isTyping && document.body.contains(active)) return;
+  }
+
+  const main = document.getElementById('main-content');
+  if (main) {
+    try { main.focus({ preventScroll: true }); } catch { /* trình duyệt cũ */ }
+  }
+}
+
+/** Lấy tiêu đề hiện tại — dùng cho kiểm thử. */
+export function currentPageTitle() {
+  return lastTitleSet;
 }
 
 /**
@@ -195,6 +374,28 @@ async function router() {
   // node trực tiếp sẽ bỏ sót listener Escape trên document và không trả focus.
   closeAllModals();
 
+  /*
+   * ========================================================================
+   * F12 — DỌN SẠCH TRANG CŨ TRƯỚC KHI RỜI
+   *
+   * `routeCtx.dispose()` làm hai việc:
+   *   1. `abort()` mọi fetch của trang cũ -> phản hồi về muộn không ghi đè
+   *      DOM của trang mới;
+   *   2. chạy mọi hàm dọn trang đăng ký (clearInterval của poll 4 giây, gỡ
+   *      listener trên window/document).
+   *
+   * Bản cũ chỉ gọi `currentCleanup` — và biến đó CHỈ được gán nếu trang trả
+   * về một hàm. Các trang dùng setInterval/addEventListener mà quên trả về
+   * là rò rỉ im lặng. Nay `routeContext` là chỗ duy nhất để đăng ký.
+   * ========================================================================
+   */
+  if (routeCtx) {
+    try { routeCtx.dispose(); } catch { /* không chặn điều hướng */ }
+    routeCtx = null;
+  }
+  routeCtx = routeContext();
+  const ctx = routeCtx;
+
   if (currentCleanup) {
     try { currentCleanup(); } catch { /* ignore */ }
     currentCleanup = null;
@@ -209,9 +410,13 @@ async function router() {
 
   if (!matched) {
     app.innerHTML = renderNotFound();
+    /* 404 cũng phải đi qua ensureMain để giữ đúng cấu trúc landmark. */
+    ensureMain(app);
     mountChrome(app);
     bindNotFound(app);
+    document.title = `Không tìm thấy trang · ${SITE}`;
     window.scrollTo(0, 0);
+    focusMainIfNavigating();
     return;
   }
 
@@ -225,8 +430,10 @@ async function router() {
     } catch (e) {
       console.error('Route load error:', e);
       app.innerHTML = renderNotFound();
+      ensureMain(app);
       mountChrome(app);
       bindNotFound(app);
+      document.title = `Không tìm thấy trang · ${SITE}`;
       window.scrollTo(0, 0);
       return;
     }
@@ -240,14 +447,37 @@ async function router() {
    */
   app.innerHTML = matched.render(route.query || {}, param);
   /*
-   * Bọc nội dung trong <main> NGAY sau khi render, trước mountChrome: skip
-   * link `#main-content` cần đích tồn tại, và trình đọc màn hình cần landmark
-   * nội dung chính (WCAG 1.3.1 + 2.4.1). Header/footer được render sau nên
-   * nằm ngoài <main> — đúng cấu trúc.
+   * Bọc nội dung trong <main> SAU khi render và TRƯỚC mountChrome.
+   *
+   * `ensureMain` giờ bỏ header/footer ra ngoài <main> (xem giải thích dài
+   * trong hàm), nên thứ tự ensureMain -> mountChrome là an toàn: <main> được
+   * chèn giữa hai placeholder, rồi header/footer được đổ vào đúng chỗ của
+   * chúng ở ngoài <main>.
    */
   ensureMain(app);
   mountChrome(app);
   window.scrollTo({ top: 0, behavior: 'instant' });
+
+  /*
+   * ========================================================================
+   * TIÊU ĐỀ TRANG + THÔNG BÁO CHUYỂN TRANG (audit web, severity medium)
+   *
+   * LỖI CŨ: SPA KHÔNG BAO GIỜ cập nhật `document.title` (grep toàn bộ assets/
+   * không có kết quả nào) và KHÔNG quản lý focus khi đổi route.
+   *
+   * Hệ quả:
+   *   • Mọi route dùng chung tiêu đề của index.html → lịch sử trình duyệt,
+   *     bookmark và tab đều giống nhau; SEO kém; screen reader đọc sai tên
+   *     trang.
+   *   • Người dùng bàn phím/trình đọc màn hình bấm link xong KHÔNG biết đã
+   *     chuyển trang, vì focus vẫn nằm ở link vừa bấm trong DOM đã bị xoá.
+   *
+   * Nay: đặt `document.title` theo route và đưa focus vào <main> (WCAG 2.4.3
+   * Focus Order). Không cuộn thêm vì đã scrollTo ở trên.
+   * ========================================================================
+   */
+  applyRouteTitle(route, param, matched);
+  focusMainIfNavigating();
 
   /*
    * Nạp auth + danh mục SAU khi đã vẽ (không chặn lần vẽ đầu).
@@ -262,16 +492,29 @@ async function router() {
   if (seq !== navSeq) return; // khách đã chuyển trang trong lúc nạp auth
 
   /*
-   * Trang có thể trả về hàm dọn dẹp (vd checkout phải clear poll timer).
-   * Trước đây biến currentCleanup được khai báo và gọi nhưng KHÔNG trang nào
-   * gán, nên poll 4s tiếp tục chạy sau khi rời trang.
+   * Truyền `ctx` xuống trang qua tham số thứ ba của mount.
+   *
+   * Trang nào nhận `ctx` thì dùng `ctx.signal` cho mọi request và
+   * `ctx.setInterval()` / `ctx.listen()` cho mọi thứ cần dọn — router tự
+   * dispose khi rời trang nên không còn rò rỉ.
+   *
+   * Trang cũ chưa nhận `ctx` vẫn chạy bình thường (tham số thừa bị bỏ qua);
+   * hàm cleanup mà trang trả về vẫn được giữ như trước.
    */
   try {
     let cleanup;
-    if (matched.param) cleanup = await matched.mount(app, param, route.query || {});
-    else cleanup = await matched.mount(app, route.query || {});
+    if (matched.param) {
+      cleanup = await matched.mount(app, param, route.query || {}, ctx);
+    } else {
+      cleanup = await matched.mount(app, route.query || {}, ctx);
+    }
     if (typeof cleanup === 'function') currentCleanup = cleanup;
   } catch (e) {
+    /*
+     * Lỗi do HUỶ (khách vừa chuyển trang) không phải sự cố — không hiện
+     * thông báo lỗi trên trang mới.
+     */
+    if (isAborted(e) || seq !== navSeq) return;
     console.error('Mount error:', e);
     const contentHost = app.querySelector('.container') || app;
     if (app.querySelector('.empty-state') === null) {
@@ -279,6 +522,9 @@ async function router() {
         `<div class="alert alert-error"><span class="ico">${icon('alert', { size: 15 })}</span><span>${esc(e.message || 'Đã có lỗi xảy ra')}</span></div>`);
     }
   }
+
+  // Đã có điều hướng mới hơn trong lúc mount -> không gắn gì vào DOM cũ.
+  if (seq !== navSeq) return;
 
   /*
    * Gắn fallback ảnh sau khi trang render xong. CSP đặt `script-src 'self'`

@@ -1,10 +1,27 @@
-const CDP = 'http://127.0.0.1:9333';
-const BASE = 'https://xienhl.com';
+/**
+ * QA UI qua CDP — KHÔNG hardcode domain hay mật khẩu admin.
+ * Chạy: QA_BASE=http://127.0.0.1:8787 QA_ADMIN_USER=... QA_ADMIN_PASSWORD=... node qa/r4-ui.mjs
+ */
+import { target, assertWritable } from './qa-guard.mjs';
+
+const t = target();
+assertWritable(t, { writes: true });
+const CDP = process.env.QA_CDP || 'http://127.0.0.1:9333';
+const BASE = t.base;
 const fs = await import('node:fs');
+
+const ADMIN_USER = String(process.env.QA_ADMIN_USER || '').trim();
+const ADMIN_PASSWORD = String(process.env.QA_ADMIN_PASSWORD || '').trim();
+if (!ADMIN_USER || !ADMIN_PASSWORD) {
+  throw new Error(
+    'Thiếu QA_ADMIN_USER / QA_ADMIN_PASSWORD. Bản cũ nhúng cứng tài khoản admin ' +
+    'thật trong file được git theo dõi — không được lặp lại.'
+  );
+}
 
 const lg = await fetch(BASE + '/api/auth/login', {
   method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ username: 'namhbcf', password: 'namhbcf123' }),
+  body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASSWORD }),
 });
 const sess = ((lg.headers.getSetCookie?.() || []).join(';').match(/mbk_session=([^;]+)/) || [])[1];
 

@@ -189,12 +189,58 @@ export async function mountProducts(root, query) {
   });
 
   // Search
-  const searchInput = root.querySelector('#product-search');
-  searchInput.addEventListener('input', debounce((e) => {
-    current.q = e.target.value.trim();
+  /*
+   * ========================================================================
+   * LỖI ĐÃ SỬA (audit web, severity high): Ô TÌM KIẾM MẤT FOCUS KHI ĐANG GÕ
+   *
+   * Bản cũ:
+   *     searchInput.addEventListener('input', debounce((e) => {
+   *       current.q = e.target.value.trim();
+   *       navigate(buildQuery(current), { replace: true });
+   *     }, 450));
+   *
+   * `navigate()` đổi hash -> `hashchange` -> router() -> `app.innerHTML =
+   * matched.render(...)` (app.js) -> TOÀN BỘ DOM bị thay, kể cả chính
+   * <input> đang có focus. Trình duyệt đẩy focus về <body>.
+   *
+   * Hệ quả đo được: khách gõ "windows" thì sau 450ms con trỏ biến mất; gõ
+   * tiếp ký tự thứ 8 không vào đâu cả. Muốn tìm phải bấm lại vào ô — mỗi
+   * 450ms một lần. Ô tìm kiếm gần như không dùng được.
+   *
+   * NAY: KHÔNG điều hướng khi gõ. Chỉ lọc lại LƯỚI SẢN PHẨM (không đụng
+   * thanh công cụ), nên <input> và con trỏ được giữ nguyên. URL được cập nhật
+   * bằng `history.replaceState` (không phát `hashchange`, không re-render) để
+   * vẫn copy/share được đường dẫn.
+   *
+   * Chọn lọc (danh mục/sắp xếp/giá) thì vẫn điều hướng như cũ — những thao
+   * tác đó không cần giữ focus trong ô nhập.
+   * ========================================================================
+   */
+  const onSearch = debounce((value) => {
+    current.q = String(value || '').trim();
     current.page = '1';
-    navigate(buildQuery(current), { replace: true });
-  }, 450));
+    // Cập nhật URL KHÔNG re-render (replaceState không phát hashchange).
+    try {
+      const qs = buildQuery(current);
+      if (location.hash !== '#' + qs) history.replaceState(null, '', '#' + qs);
+    } catch { /* môi trường không cho replaceState -> bỏ qua, chỉ lọc */ }
+    loadPage(root, current);
+  }, 350);
+
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => onSearch(e.target.value));
+
+    /*
+     * Enter: áp dụng NGAY, không chờ debounce. Người dùng bàn phím bấm Enter
+     * xong phải thấy kết quả ngay, không phải chờ thêm 350ms.
+     */
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onSearch.cancel?.();
+        onSearch(searchInput.value);
+      }
+    });  }
 
   root.querySelector('#sort-select').onchange = (e) => {
     current.sort = e.target.value;

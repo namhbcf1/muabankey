@@ -1,14 +1,18 @@
 {
   "name": "muabankey",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "MuaBanKey - Nền tảng mua bán bản quyền số tự động trên Cloudflare Workers",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 execute muabankey-db --remote --file=./db/schema.sql",
+    "db:migrate": "node db/migrate.mjs --remote",
+    "db:migrate:check": "node db/migrate.mjs --check",
     "db:export": "wrangler d1 export muabankey-db --remote --output=backups/backup.sql",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "test": "node test/run.mjs",
+    "test:watch": "node --watch test/run.mjs",
+    "verify": "node test/run.mjs && node scripts/check-syntax.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

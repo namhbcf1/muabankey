@@ -16,7 +16,7 @@ const NAV = [
   ['orders', 'package', 'Đơn hàng'],
   ['topups', 'coins', 'Chờ thanh toán'],
   ['products', 'bag', 'Sản phẩm'],
-  ['licenses', 'ticket', 'License'],
+  ['accounts', 'ticket', 'Quyền tài khoản'],
   ['trial', 'gift', 'Dùng thử'],
   ['whitelist', 'star', 'Vô hạn'],
   ['users', 'users', 'Người dùng'],
@@ -24,14 +24,34 @@ const NAV = [
   ['logs', 'log', 'Nhật ký'],
 ];
 
-/** Nhãn hiển thị cho trạng thái đơn. Giá trị dữ liệu vẫn là khoá tiếng Anh. */
+/**
+ * Nhãn hiển thị cho trạng thái đơn. Giá trị dữ liệu vẫn là khoá tiếng Anh.
+ *
+ * PHẢI phủ HẾT các trạng thái backend thật sự ghi, nếu không cột trạng thái
+ * sẽ in nguyên chuỗi tiếng Anh cho admin đọc (ví dụ "refund_pending_transfer").
+ * Backend hiện dùng: pending, expired, processing, paid, delivered, cancelled,
+ * refunding, refund_pending_transfer, refund_stuck, refunded.
+ */
 const ORDER_LABEL = {
   pending: 'Chờ xử lý',
+  expired: 'Hết hạn',
+  processing: 'Đang giao',
   paid: 'Đã thanh toán',
   delivered: 'Đã giao',
   cancelled: 'Đã huỷ',
+  refunding: 'Đang hoàn',
+  // Đã quyết định hoàn + đã thu hồi quyền, nhưng CHƯA chuyển tiền cho khách.
+  refund_pending_transfer: 'Chờ chuyển tiền hoàn',
+  // Cron đẩy sang khi worker chết giữa lúc hoàn — admin phải đối soát tay.
+  refund_stuck: 'Hoàn bị kẹt',
   refunded: 'Đã hoàn',
 };
+
+/** Trạng thái đơn ĐÃ THANH TOÁN (có thể hoàn tiền). */
+const REFUNDABLE = ['paid', 'delivered', 'processing'];
+
+/** Trạng thái cần CHỐT chuyển tiền hoàn (tiền chưa rời tài khoản shop). */
+const AWAITING_TRANSFER = ['refund_pending_transfer', 'refunding', 'refund_stuck'];
 
 export function renderAdmin(query) {
   const tab = query.tab || 'dashboard';
@@ -80,7 +100,7 @@ export async function mountAdmin(root, query) {
     else if (tab === 'orders') await renderOrders(host);
     else if (tab === 'topups') await renderTopups(host);
     else if (tab === 'products') await renderProducts(host);
-    else if (tab === 'licenses') await renderLicenses(host);
+    else if (tab === 'accounts') await renderAccounts(host);
     else if (tab === 'trial') await renderTrial(host);
     else if (tab === 'whitelist') await renderWhitelist(host);
     else if (tab === 'users') await renderUsers(host);
@@ -201,8 +221,11 @@ async function renderOrders(host) {
                         ${o.status === 'paid'
                           ? `<button type="button" class="btn btn-ghost btn-sm" data-deliver="${esc(o.id)}">${icon('check', { size: 13 })} Giao</button>`
                           : ''}
-                        ${['paid', 'delivered'].includes(o.status)
+                        ${REFUNDABLE.includes(o.status)
                           ? `<button type="button" class="btn btn-danger btn-sm" data-refund="${esc(o.id)}">${icon('undo', { size: 13 })} Hoàn</button>`
+                          : ''}
+                        ${AWAITING_TRANSFER.includes(o.status)
+                          ? `<button type="button" class="btn btn-primary btn-sm" data-refund-done="${esc(o.id)}">${icon('bank', { size: 13 })} Đã chuyển tiền</button>`
                           : ''}
                       </div>
                     </td>
@@ -230,10 +253,68 @@ async function renderOrders(host) {
 
     host.querySelectorAll('[data-refund]').forEach((b) => {
       b.onclick = async () => {
-        if (!await confirmDialog('Hoàn tiền đơn hàng?', 'Hoàn tiền qua chuyển khoản tay cho khách.', 'Hoàn tiền')) return;
+        /*
+         * LỜI HỨA PHẢI KHỚP HÀNH VI.
+         *
+         * Backend giờ TÁCH hai bước: quyết định hoàn (thu hồi quyền) và
+         * chuyển tiền thật. Nút này chỉ làm bước MỘT. Nói rõ để admin không
+         * tưởng khách đã nhận tiền ngay sau khi bấm.
+         */
+        const yes = await confirmDialog(
+          'Hoàn tiền đơn hàng?',
+          'Bước 1: thu hồi quyền/license của đơn này. '
+          + 'TIỀN CHƯA được chuyển — sau khi chuyển khoản cho khách, '
+          + 'bấm "Đã chuyển tiền" để chốt sổ.',
+          'Thu hồi & ghi yêu cầu hoàn',
+        );
+        if (!yes) return;
         try {
-          await api(`/api/admin/orders/${b.dataset.refund}/refund`, { method: 'POST' });
-          toast('Đã hoàn tiền', 'success');
+          const r = await api(`/api/admin/orders/${b.dataset.refund}/refund`, {
+            method: 'POST',
+            body: {
+              reason: 'admin_adjust',
+              paidOut: false,
+            },
+          });
+          const feats = (r.revoked && r.revoked.features) || [];
+          toast(
+            `Đã ghi yêu cầu hoàn ${fmtVnd(r.amount)}`
+            + (feats.length ? ` · thu hồi: ${feats.join(', ')}` : '')
+            + '. Còn bước chuyển tiền.',
+            'success',
+          );
+          load();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+
+    /*
+     * CHỐT "ĐÃ CHUYỂN TIỀN" — bước còn thiếu khiến sổ không đối soát được.
+     *
+     * Trước đây bấm "Hoàn" là đơn thành 'refunded' ngay, dù tiền chưa hề rời
+     * tài khoản shop. Dashboard báo "đã hoàn" trong khi khách chưa nhận được
+     * đồng nào, và đơn đã ở 'refunded' thì không còn nút nào để quay lại.
+     *
+     * Nay phải nhập MÃ GIAO DỊCH NGÂN HÀNG — chứng từ thật — mới chốt được.
+     */
+    host.querySelectorAll('[data-refund-done]').forEach((b) => {
+      b.onclick = async () => {
+        const ref = window.prompt(
+          'Nhập MÃ GIAO DỊCH chuyển khoản hoàn tiền cho khách\n'
+          + '(ví dụ: FT26112... hoặc số bút toán trong app ngân hàng):',
+          '',
+        );
+        if (ref === null) return;
+        if (!String(ref).trim()) {
+          toast('Cần mã giao dịch thật để chốt sổ hoàn tiền', 'error');
+          return;
+        }
+        try {
+          await api(`/api/admin/orders/${b.dataset.refundDone}/refund/complete`, {
+            method: 'POST',
+            body: { bankRef: String(ref).trim() },
+          });
+          toast('Đã chốt: tiền hoàn đã chuyển cho khách', 'success');
           load();
         } catch (e) { toast(e.message, 'error'); }
       };
@@ -547,8 +628,10 @@ function openProductEditor(host, p) {
         </select></div>
       <div class="field"><label class="label" for="ed-licprefix">Tiền tố license</label>
         <input class="input" id="ed-licprefix" value="${esc(p && p.licensePrefix ? p.licensePrefix : 'AOE1')}" placeholder="AOE1"></div>
-      <div class="field"><label class="label" for="ed-licdays">Số ngày (0 = vĩnh viễn)</label>
-        <input class="input" id="ed-licdays" type="number" value="${p && p.licenseDays !== undefined ? p.licenseDays : 30}"></div>
+      <div class="field"><label class="label" for="ed-licdays">Số ngày (bắt buộc &ge; 1)</label>
+        <input class="input" id="ed-licdays" type="number" min="1" step="1"
+          value="${p && p.licenseDays !== undefined && p.licenseDays !== null ? p.licenseDays : 30}">
+        <span class="hint">Bỏ trống là LỖI. Muốn bán vĩnh viễn thì nhập đúng số <b>0</b>.</span></div>
     </div>
     <div class="adm-check-row">
       <label class="adm-check" for="ed-active">
@@ -582,7 +665,15 @@ function openProductEditor(host, p) {
           featured: overlay.querySelector('#ed-featured').checked,
           deliveryType: overlay.querySelector('#ed-delivery').value,
           licensePrefix: overlay.querySelector('#ed-licprefix').value.trim() || null,
-          licenseDays: Number(overlay.querySelector('#ed-licdays').value) || 0,
+          /*
+           * KHÔNG dùng `Number(...) || 0`: ô trống sẽ thành 0 và 0 = VĨNH VIỄN,
+           * khiến một sản phẩm 30 ngày bị bán thành vĩnh viễn. Ô trống -> gửi
+           * `undefined` để server trả lỗi rõ ràng (hoặc giữ nguyên giá trị cũ
+           * khi đang sửa sản phẩm).
+           */
+          licenseDays: overlay.querySelector('#ed-licdays').value.trim() === ''
+            ? undefined
+            : Number(overlay.querySelector('#ed-licdays').value),
         };
         if (!body.name) { toast('Vui lòng nhập tên sản phẩm', 'error'); return; }
         try {
@@ -598,36 +689,61 @@ function openProductEditor(host, p) {
 }
 
 
-/* ---------------- Licenses ---------------- */
-const LIC_STATUS = {
-  active: ['pill-green', 'Hoạt động'],
-  forever: ['pill-green', 'Vĩnh viễn'],
-  expiring: ['pill-yellow', 'Sắp hết hạn'],
-  unbound: ['pill-blue', 'Chưa kích hoạt'],
-  expired: ['pill-red', 'Hết hạn'],
-  revoked: ['pill-red', 'Thu hồi'],
-  unknown: ['pill-gray', 'Không rõ'],
+/* ---------------- QUYỀN THEO TÀI KHOẢN ---------------- */
+
+/*
+ * THAY THẾ HOÀN TOÀN TAB "LICENSE" CŨ.
+ *
+ * Tab cũ thao tác trên bảng `licenses` (mô hình key). Nhưng từ khi bỏ key,
+ * app đọc quyền từ `account_entitlements` — nên license tạo ở tab cũ
+ * KHÔNG có tác dụng gì với khách.
+ *
+ * Tab này làm đúng việc admin cần:
+ *   - Xem tài khoản nào đang có quyền gì, hạn bao lâu
+ *   - Cấp / gia hạn tay (bù lỗi, tặng khách)
+ *   - Thu hồi quyền
+ *   - Cấp lại lượt dùng thử 1 ngày
+ */
+
+/** Nhãn trạng thái quyền của một tính năng. */
+function entStatus(e) {
+  if (!e || !e.active) {
+    if (e && e.expires_at > 0) return ['pill-red', 'Hết hạn'];
+    return ['pill-gray', 'Chưa có'];
+  }
+  if (e.forever) return ['pill-green', 'Vĩnh viễn'];
+  if (e.daysLeft <= 3) return ['pill-yellow', `Còn ${e.daysLeft} ngày`];
+  return ['pill-green', `Còn ${e.daysLeft} ngày`];
+}
+
+/** Nguồn quyền -> nhãn dễ hiểu. */
+const ENT_SOURCE = {
+  purchase: 'Mua',
+  trial: 'Dùng thử',
+  admin: 'Admin cấp',
+  grant: 'Tặng',
 };
 
-async function renderLicenses(host) {
+async function renderAccounts(host) {
   let q = '';
+  let filter = 'all';
+
   const load = async () => {
-    const d = await api('/api/admin/licenses' + (q ? '?q=' + encodeURIComponent(q) : ''));
-    if (!d.available) {
-      host.innerHTML = `<div class="alert alert-warn"><span class="ico">${icon('alert', { size: 15 })}</span>
-        <span>Chưa cấu hình binding <code class="mono">LICENSE_DB</code>. Thêm D1 <code>xa_license</code> vào wrangler.toml rồi deploy lại.</span></div>`;
-      return;
-    }
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (filter && filter !== 'all') params.set('filter', filter);
+    const qs = params.toString();
+    const d = await api('/api/admin/accounts' + (qs ? '?' + qs : ''));
     const s = d.stats || {};
+
     host.innerHTML = `
       <div class="stat-grid">
         ${[
-          ['ticket', fmtNum(s.total || 0), 'Tổng license'],
-          ['check', fmtNum(s.active || 0), 'Đang hoạt động'],
-          ['unlock', fmtNum(s.unbound || 0), 'Chưa kích hoạt'],
-          ['infinity', fmtNum(s.forever || 0), 'Vĩnh viễn'],
-          ['ban', fmtNum(s.revoked || 0), 'Đã thu hồi'],
-          ['clock', fmtNum(s.expiring7d || 0), 'Hết hạn 7 ngày'],
+          ['users', fmtNum(s.total || 0), 'Tài khoản'],
+          ['check', fmtNum(s.active || 0), 'Đang có quyền'],
+          ['gift', fmtNum(s.trial || 0), 'Đang dùng thử'],
+          ['layers', fmtNum(s.nofog || 0), 'Có map sáng'],
+          ['coins', fmtNum(s.grant || 0), 'Có tài nguyên'],
         ].map(([ico, v, l]) => `
           <div class="stat-card">
             <div class="ico">${icon(ico, { size: 16 })}</div>
@@ -637,129 +753,203 @@ async function renderLicenses(host) {
       </div>
 
       <div class="panel mb-2">
-        <div class="panel-title adm-panel-title-sm">${icon('plus', { size: 14 })} Tạo license thủ công</div>
+        <div class="panel-title">${icon('plus', { size: 14 })} Cấp quyền thủ công</div>
+        <p class="page-desc">Dùng khi khách khiếu nại, cần bù lỗi hoặc tặng gói.
+          Nhập <strong>tên đăng nhập</strong> của khách.</p>
         <div class="adm-form-row">
-          <div class="field adm-field-narrow"><label class="label" for="lc-count">Số lượng</label>
-            <input class="input" id="lc-count" type="number" value="1"></div>
-          <div class="field adm-field-narrow"><label class="label" for="lc-days">Số ngày</label>
-            <input class="input" id="lc-days" type="number" value="30"></div>
-          <div class="field adm-field-narrow"><label class="label" for="lc-prefix">Tiền tố</label>
-            <input class="input" id="lc-prefix" value="AOE1"></div>
-          <div class="field adm-field-grow"><label class="label" for="lc-note">Ghi chú</label>
-            <input class="input" id="lc-note" placeholder="Tặng khách, bù lỗi..."></div>
+          <div class="field adm-field-grow">
+            <label class="label" for="ac-user">Tên đăng nhập</label>
+            <input class="input" id="ac-user" placeholder="vd: khachhang01">
+          </div>
+          <div class="field adm-field-narrow">
+            <label class="label" for="ac-feature">Tính năng</label>
+            <select class="select" id="ac-feature">
+              <option value="both">Cả hai</option>
+              <option value="nofog">Map sáng</option>
+              <option value="grant">Tài nguyên</option>
+            </select>
+          </div>
+          <div class="field adm-field-narrow">
+            <label class="label" for="ac-days">Số ngày</label>
+            <input class="input" id="ac-days" type="number" value="30" min="0">
+          </div>
           <div class="field adm-field-action">
-            <button type="button" class="btn btn-primary" id="lc-create">Tạo</button>
+            <button type="button" class="btn btn-primary" id="ac-grant">Cấp</button>
           </div>
         </div>
-        <pre id="lc-out" class="mono adm-pre"></pre>
+        <p class="note text-dim">Số ngày <code class="mono">0</code> = vĩnh viễn.
+          Nếu khách còn hạn thì cộng dồn.</p>
       </div>
 
       <div class="panel">
         <div class="adm-panel-head">
-          <div class="panel-title">${icon('ticket', { size: 15 })} Danh sách license (${d.licenses.length})</div>
-          <div class="search-mini adm-search">
-            ${icon('search', { size: 14 })}
-            <label class="sr-only" for="lc-q">Tìm license</label>
-            <input id="lc-q" placeholder="Tìm key / ghi chú / HWID" value="${esc(q)}">
+          <div class="panel-title">${icon('ticket', { size: 15 })} Quyền tài khoản (${(d.accounts || []).length})</div>
+          <div class="adm-toolbar">
+            <label class="sr-only" for="ac-q">Tìm tài khoản</label>
+            <input class="input adm-input-search" id="ac-q" placeholder="Tìm tên đăng nhập..."
+              value="${esc(q)}">
+            <select class="select adm-select-sm" id="ac-filter" aria-label="Lọc">
+              ${[['all', 'Tất cả'], ['active', 'Đang có quyền'],
+                 ['trial', 'Đang dùng thử'], ['expired', 'Đã hết hạn']]
+                .map(([v, t]) => `<option value="${v}"${filter === v ? ' selected' : ''}>${t}</option>`)
+                .join('')}
+            </select>
+            <button type="button" class="btn btn-ghost btn-sm" id="ac-reload"
+              aria-label="Tải lại" title="Tải lại">${icon('refresh', { size: 14 })}</button>
           </div>
         </div>
+
+        ${(d.accounts || []).length === 0 ? `
+          <div class="empty-state adm-empty-sm">
+            <div class="ico">${icon('inbox', { size: 26 })}</div>
+            <div class="t">Không có tài khoản nào</div>
+          </div>` : `
         <div class="table-wrap adm-table-wrap">
           <table class="adm-table">
-            <thead><tr>
-              <th scope="col">Key</th>
-              <th scope="col">Trạng thái</th>
-              <th scope="col">Hết hạn</th>
-              <th scope="col">Máy</th>
-              <th scope="col">Ghi chú</th>
-              <th scope="col">Thao tác</th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <th scope="col">Tài khoản</th>
+                <th scope="col">Map sáng</th>
+                <th scope="col">Tài nguyên</th>
+                <th scope="col">Dùng thử</th>
+                <th scope="col">Thao tác</th>
+              </tr>
+            </thead>
             <tbody>
-              ${d.licenses.length === 0
-                ? `<tr><td colspan="6" class="adm-empty">Chưa có license</td></tr>`
-                : d.licenses.map((l) => {
-                  const [cls, label] = LIC_STATUS[l.status] || LIC_STATUS.unknown;
-                  return `<tr>
-                    <td><span class="mono adm-mono-key">${esc(l.key)}</span></td>
-                    <td><span class="pill ${cls}">${esc(label)}</span></td>
-                    <td class="adm-cell-sub">${l.forever ? 'Vĩnh viễn' : l.expiresAt ? fmtDate(l.expiresAt * 1000) : '—'}</td>
-                    <td class="mono adm-mono-sm">${l.bound ? esc(l.hwidMasked) : '—'}</td>
-                    <td class="adm-note-cell">${esc(l.note || '')}</td>
-                    <td>
-                      <div class="adm-actions">
-                        <button type="button" class="btn btn-ghost btn-sm" data-act="reset-hwid" data-key="${esc(l.key)}">Reset máy</button>
-                        ${l.rebinds >= l.maxRebind
-                          ? `<button type="button" class="btn btn-ghost btn-sm" data-act="reset-rebinds" data-key="${esc(l.key)}">Cấp lại lượt đổi</button>`
-                          : ''}
-                        <button type="button" class="btn btn-ghost btn-sm" data-act="extend" data-key="${esc(l.key)}">+30d</button>
-                        <button type="button" class="btn ${l.status === 'revoked' ? 'btn-ghost' : 'btn-danger'} btn-sm" data-act="${l.status === 'revoked' ? 'unrevoke' : 'revoke'}" data-key="${esc(l.key)}">${l.status === 'revoked' ? 'Mở' : 'Thu hồi'}</button>
-                      </div>
-                      ${l.resetPending
-                        ? `<div class="adm-pending-note">${icon('clock', { size: 11 })} Đang chờ khách đổi máy</div>`
-                        : ''}
-                    </td>
-                  </tr>`;
-                }).join('')}
+              ${(d.accounts || []).map((a) => {
+                const [nCls, nTxt] = entStatus(a.nofog);
+                const [gCls, gTxt] = entStatus(a.grant);
+                let trialCell = '<span class="pill pill-gray">Chưa dùng</span>';
+                if (a.trial) {
+                  if (a.trial.state === 'active') {
+                    const h = Math.floor(a.trial.leftSec / 3600);
+                    const m = Math.floor((a.trial.leftSec % 3600) / 60);
+                    trialCell = `<span class="pill pill-blue">Còn ${h}h${m}m</span>`;
+                  } else {
+                    trialCell = `<span class="pill pill-gray">Đã hết</span>`;
+                  }
+                }
+                return `
+                <tr>
+                  <td>
+                    <div class="adm-cell-main mono">${esc(a.username || a.id.slice(0, 8))}</div>
+                    ${a.status !== 'active' ? `<span class="pill pill-red">${esc(a.status)}</span>` : ''}
+                  </td>
+                  <td>
+                    <span class="pill ${nCls}">${nTxt}</span>
+                    ${a.nofog.source ? `<div class="adm-cell-sub">${esc(ENT_SOURCE[a.nofog.source] || a.nofog.source)}</div>` : ''}
+                  </td>
+                  <td>
+                    <span class="pill ${gCls}">${gTxt}</span>
+                    ${a.grant.source ? `<div class="adm-cell-sub">${esc(ENT_SOURCE[a.grant.source] || a.grant.source)}</div>` : ''}
+                  </td>
+                  <td>${trialCell}</td>
+                  <td>
+                    <div class="adm-actions">
+                      <button type="button" class="btn btn-ghost btn-sm"
+                        data-grant="${esc(a.id)}" data-name="${esc(a.username || '')}"
+                        title="Cấp / gia hạn">${icon('plus', { size: 13 })} Cấp</button>
+                      ${(a.nofog.active || a.grant.active) ? `
+                      <button type="button" class="btn btn-danger btn-sm"
+                        data-revoke="${esc(a.id)}" data-name="${esc(a.username || '')}"
+                        title="Thu hồi quyền">${icon('ban', { size: 13 })} Thu hồi</button>` : ''}
+                    </div>
+                  </td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
-        </div>
+        </div>`}
       </div>`;
 
-    const qInput = host.querySelector('#lc-q');
-    // Lọc ngay khi gõ (debounce 400ms) — giống tab Dùng thử.
-  // Trước đây chỉ chạy khi nhấn Enter -> gõ chữ bảng không đổi, tưởng hỏng.
-  let qTimer = null;
-  qInput.oninput = () => {
-    clearTimeout(qTimer);
-    qTimer = setTimeout(() => {
-      q = qInput.value.trim();
-      load();
-    }, 400);
-  };
-  // Enter lọc ngay không cần chờ
-  qInput.onkeydown = (e) => {
-    if (e.key === 'Enter') {
-      clearTimeout(qTimer);
-      q = qInput.value.trim();
-      load();
-    }
-  };
-
-    host.querySelector('#lc-create').onclick = async () => {
-      const body = {
-        count: Number(host.querySelector('#lc-count').value) || 1,
-        days: Number(host.querySelector('#lc-days').value) || 0,
-        prefix: host.querySelector('#lc-prefix').value.trim() || 'AOE1',
-        note: host.querySelector('#lc-note').value.trim() || undefined,
+    // ---- Tìm / lọc ----
+    const qEl = host.querySelector('#ac-q');
+    if (qEl) {
+      let t;
+      qEl.oninput = () => {
+        clearTimeout(t);
+        t = setTimeout(() => { q = qEl.value.trim(); load(); }, 350);
       };
-      try {
-        const r = await api('/api/admin/licenses', { method: 'POST', body });
-        host.querySelector('#lc-out').textContent = 'Đã tạo:\n' + r.keys.join('\n');
-        toast(`Đã tạo ${r.count} license`, 'success');
-        q = '';
-        await load();
-      } catch (e) { toast(e.message, 'error'); }
-    };
+    }
+    const fEl = host.querySelector('#ac-filter');
+    if (fEl) fEl.onchange = () => { filter = fEl.value; load(); };
+    const rEl = host.querySelector('#ac-reload');
+    if (rEl) rEl.onclick = () => load();
 
-    host.querySelectorAll('[data-act]').forEach((b) => {
-      b.onclick = async () => {
-        const act = b.dataset.act;
-        if (act === 'revoke' && !await confirmDialog('Thu hồi license?', 'Client sẽ bị từ chối kích hoạt ngay lập tức.', 'Thu hồi')) return;
-        b.disabled = true;
-        try {
-          await api(`/api/admin/licenses/${encodeURIComponent(b.dataset.key)}/${act}`, { method: 'POST' });
-          toast('Đã thực hiện: ' + act, 'success');
-          await load();
-        } catch (e) {
-          toast(e.message, 'error');
-          b.disabled = false;
+    // ---- Cấp tay ----
+    const btn = host.querySelector('#ac-grant');
+    if (btn) {
+      btn.onclick = async () => {
+        const u = host.querySelector('#ac-user').value.trim();
+        const feature = host.querySelector('#ac-feature').value;
+        const days = Number(host.querySelector('#ac-days').value);
+        if (!u) { toast('Nhập tên đăng nhập', 'error'); return; }
+        if (!Number.isFinite(days) || days < 0) { toast('Số ngày không hợp lệ', 'error'); return; }
+
+        // Tìm id từ danh sách đã tải; nếu không có thì hỏi server
+        let target = (d.accounts || []).find((x) => (x.username || '').toLowerCase() === u.toLowerCase());
+        if (!target) {
+          try {
+            const found = await api('/api/admin/accounts?q=' + encodeURIComponent(u));
+            target = (found.accounts || []).find((x) => (x.username || '').toLowerCase() === u.toLowerCase());
+          } catch { /* bỏ qua */ }
         }
+        if (!target) { toast('Không tìm thấy tài khoản: ' + u, 'error'); return; }
+
+        try {
+          const r = await api('/api/admin/accounts/' + encodeURIComponent(target.id) + '/grant', {
+            method: 'POST', body: { feature, days, note: 'Cấp tay từ trang quản trị' },
+          });
+          const txt = (r.granted || []).map((g) => g.forever
+            ? `${g.feature}: vĩnh viễn`
+            : `${g.feature}: đến ${fmtDate(g.expires_at * 1000)}`).join(' · ');
+          toast('Đã cấp — ' + txt, 'success', 6000);
+          host.querySelector('#ac-user').value = '';
+          load();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    }
+
+    // ---- Cấp theo dòng ----
+    host.querySelectorAll('[data-grant]').forEach((b) => {
+      b.onclick = async () => {
+        const days = Number(prompt(`Cấp bao nhiêu ngày cho "${b.dataset.name}"?\n(0 = vĩnh viễn)`, '30'));
+        if (!Number.isFinite(days) || days < 0) return;
+        const feature = prompt('Tính năng: both / nofog / grant', 'both');
+        if (!['both', 'nofog', 'grant'].includes(feature)) return;
+        try {
+          const r = await api('/api/admin/accounts/' + encodeURIComponent(b.dataset.grant) + '/grant', {
+            method: 'POST', body: { feature, days },
+          });
+          const txt = (r.granted || []).map((g) => g.forever
+            ? `${g.feature}: vĩnh viễn`
+            : `${g.feature}: đến ${fmtDate(g.expires_at * 1000)}`).join(' · ');
+          toast('Đã cấp — ' + txt, 'success', 6000);
+          load();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+
+    // ---- Thu hồi ----
+    host.querySelectorAll('[data-revoke]').forEach((b) => {
+      b.onclick = async () => {
+        if (!await confirmDialog(
+          `Thu hồi toàn bộ quyền của "${b.dataset.name}"?`,
+          'Khách sẽ mất quyền dùng ngay lần mở app kế tiếp.',
+          'Thu hồi')) return;
+        try {
+          await api('/api/admin/accounts/' + encodeURIComponent(b.dataset.revoke) + '/revoke', {
+            method: 'POST', body: { feature: 'both' },
+          });
+          toast('Đã thu hồi', 'success');
+          load();
+        } catch (e) { toast(e.message, 'error'); }
       };
     });
   };
+
   await load();
 }
-
-
 
 /* ---------------- Whitelist: dùng thử vô hạn ---------------- */
 async function renderWhitelist(host) {
@@ -910,30 +1100,40 @@ async function renderWhitelist(host) {
   await load();
 }
 
-/* ---------------- Trial (dùng thử) ---------------- */
+/*
+ * Dùng thử — MỖI TÀI KHOẢN 1 NGÀY, CẢ MAP SÁNG + TÀI NGUYÊN.
+ *
+ * Tab cũ hiển thị mô hình đã chết: 1 giờ / 3 ngày / 10 lượt mỗi loại. Số liệu
+ * đó đọc từ bảng `trial_quota`, nay không còn dùng.
+ *
+ * Mô hình hiện hành (chủ shop chốt):
+ *   - Tài khoản mới: dùng thử ĐÚNG 1 NGÀY
+ *   - Trong 1 ngày đó bật CẢ map sáng và tài nguyên
+ *   - Đồng hồ chạy từ lần đầu MỞ APP, không phải lúc đăng ký
+ *   - Mỗi tài khoản 1 lần duy nhất; tối đa 3 tài khoản / máy
+ *
+ * Nguồn dữ liệu: /api/admin/trial/account-trials (bảng `trial_accounts`).
+ */
 async function renderTrial(host) {
   let filter = '';
 
   const load = async () => {
-    const d = await api('/api/admin/trial/accounts' + (filter ? '?q=' + encodeURIComponent(filter) : ''));
-    const cfg = d.cfg || {};
-    const accounts = d.accounts || [];
+    const d = await api('/api/admin/trial/account-trials' +
+      (filter ? '?q=' + encodeURIComponent(filter) : ''));
+    const trials = d.trials || [];
+    const now = Number(d.now || Math.floor(Date.now() / 1000));
 
-    const quota1h = cfg.t1h?.quota ?? 10;
-    const quota3d = cfg.t3d?.quota ?? 10;
-
-    // Thống kê
-    const totalAccounts = accounts.length;
-    const used1h = accounts.reduce((s, a) => s + (a.t1h?.used || 0), 0);
-    const used3d = accounts.reduce((s, a) => s + (a.t3d?.used || 0), 0);
+    const active = trials.filter((t) => t.state === 'active');
+    const ended = trials.filter((t) => t.state === 'ended');
+    const usedToday = trials.filter((t) => (now - t.startedAt) < 86400).length;
 
     host.innerHTML = `
       <div class="stat-grid">
         ${[
-          ['users', fmtNum(totalAccounts), 'Tài khoản đã dùng thử'],
-          ['timer', fmtNum(used1h), 'Lượt 1 giờ đã dùng'],
-          ['calendar', fmtNum(used3d), 'Lượt 3 ngày đã dùng'],
-          ['coins', `${quota1h} + ${quota3d}`, 'Lượt/tài khoản'],
+          ['gift', fmtNum(trials.length), 'Tổng lượt dùng thử'],
+          ['check', fmtNum(active.length), 'Đang dùng thử'],
+          ['clock', fmtNum(usedToday), 'Bắt đầu 24h qua'],
+          ['ban', fmtNum(ended.length), 'Đã kết thúc'],
         ].map(([ico, v, l]) => `
           <div class="stat-card">
             <div class="ico">${icon(ico, { size: 16 })}</div>
@@ -942,19 +1142,26 @@ async function renderTrial(host) {
           </div>`).join('')}
       </div>
 
+      <div class="alert alert-info mb-2">
+        <span class="ico">${icon('info', { size: 15 })}</span>
+        <span>Mỗi tài khoản mới được dùng thử <strong>1 NGÀY</strong>,
+          bật cả <strong>map sáng</strong> và <strong>tài nguyên</strong>.
+          Đồng hồ chạy từ lần đầu mở app. Tối đa 3 tài khoản / máy.</span>
+      </div>
+
       <div class="panel">
         <div class="adm-panel-head">
-          <div class="panel-title">${icon('gift', { size: 15 })} Dùng thử (${accounts.length})</div>
+          <div class="panel-title">${icon('gift', { size: 15 })} Lượt dùng thử (${trials.length})</div>
           <div class="adm-toolbar">
-            <label class="sr-only" for="tq-search">Tìm tài khoản dùng thử</label>
+            <label class="sr-only" for="tq-search">Tìm tài khoản</label>
             <input class="input adm-input-search" id="tq-search" placeholder="Tìm tài khoản..."
               value="${esc(filter)}">
             <button type="button" class="btn btn-ghost btn-sm" id="tq-reload"
-              aria-label="Tải lại danh sách" title="Tải lại">${icon('refresh', { size: 14 })}</button>
+              aria-label="Tải lại" title="Tải lại">${icon('refresh', { size: 14 })}</button>
           </div>
         </div>
 
-        ${accounts.length === 0 ? `
+        ${trials.length === 0 ? `
           <div class="empty-state adm-empty-sm">
             <div class="ico">${icon('inbox', { size: 26 })}</div>
             <div class="t">Chưa có ai dùng thử</div>
@@ -964,183 +1171,77 @@ async function renderTrial(host) {
             <thead>
               <tr>
                 <th scope="col">Tài khoản</th>
-                <th scope="col">${icon('timer', { size: 12 })} 1 giờ</th>
-                <th scope="col">${icon('calendar', { size: 12 })} 3 ngày</th>
-                <th scope="col" class="adm-num">Tổng lượt</th>
+                <th scope="col">Trạng thái</th>
+                <th scope="col">Bắt đầu</th>
+                <th scope="col">Còn lại</th>
                 <th scope="col">Thao tác</th>
               </tr>
             </thead>
             <tbody>
-              ${accounts.map((a) => `
+              ${trials.map((t) => {
+                const isActive = t.state === 'active';
+                const leftH = Math.floor((t.leftSec || 0) / 3600);
+                const leftM = Math.floor(((t.leftSec || 0) % 3600) / 60);
+                const stPill = isActive
+                  ? '<span class="pill pill-green">Đang dùng</span>'
+                  : `<span class="pill pill-gray">${esc(
+                      t.endReason === 'expired' ? 'Hết hạn'
+                      : t.endReason === 'reset' ? 'Đã đặt lại'
+                      : 'Đã kết thúc')}</span>`;
+                return `
                 <tr>
+                  <td class="adm-cell-main mono">${esc(t.username || t.userId.slice(0, 8))}</td>
+                  <td>${stPill}</td>
+                  <td class="adm-cell-sub">${t.startedAt ? fmtDate(t.startedAt * 1000) : '—'}</td>
+                  <td>${isActive
+                    ? `<span class="pill pill-blue">${leftH}h${leftM}m</span>`
+                    : '<span class="text-dim">—</span>'}</td>
                   <td>
-                    <div class="adm-cell-strong">${esc(a.username || a.email || a.userId.slice(0, 8))}</div>
-                    <div class="adm-cell-sub">${esc(a.fullName || '')}</div>
-                    ${a.status !== 'active' ? `<span class="pill pill-red adm-pill-sm">${esc(a.status)}</span>` : ''}
+                    <button type="button" class="btn btn-ghost btn-sm"
+                      data-reset="${esc(t.userId)}" data-name="${esc(t.username || '')}"
+                      title="Cấp lại 1 ngày">${icon('refresh', { size: 13 })} Cấp lại</button>
                   </td>
-                  <td>
-                    <div class="adm-count">
-                      <strong>${a.t1h.used}/${a.t1h.quota}</strong>
-                      ${a.t1h.left > 0
-                        ? `<span class="adm-count-left">(còn ${a.t1h.left})</span>`
-                        : `<span class="adm-count-out">(hết)</span>`}
-                    </div>
-                    ${a.t1h.banned ? '<span class="pill pill-red adm-pill-sm">Bị chặn</span>' : ''}
-                    ${a.t1h.resets > 0 ? `<div class="adm-reset-count">đã reset ${a.t1h.resets} lần</div>` : ''}
-                  </td>
-                  <td>
-                    <div class="adm-count">
-                      <strong>${a.t3d.used}/${a.t3d.quota}</strong>
-                      ${a.t3d.left > 0
-                        ? `<span class="adm-count-left">(còn ${a.t3d.left})</span>`
-                        : `<span class="adm-count-out">(hết)</span>`}
-                    </div>
-                    ${a.t3d.banned ? '<span class="pill pill-red adm-pill-sm">Bị chặn</span>' : ''}
-                    ${a.t3d.resets > 0 ? `<div class="adm-reset-count">đã reset ${a.t3d.resets} lần</div>` : ''}
-                  </td>
-                  <td class="num adm-cell-sub">${a.totalUses}</td>
-                  <td>
-                    <div class="adm-actions">
-                      ${(a.t1h.used > 0 || a.t3d.used > 0)
-                        ? `<button type="button" class="btn btn-primary btn-sm" data-reset="${esc(a.userId)}" data-name="${esc(a.username || a.email || '')}">${icon('refresh', { size: 13 })} Reset</button>`
-                        : ''}
-                      <button type="button" class="btn btn-ghost btn-sm" data-uses="${esc(a.userId)}">${icon('log', { size: 13 })} Lịch sử</button>
-                    </div>
-                  </td>
-                </tr>`).join('')}
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>`}
-      </div>
-    `;
+      </div>`;
 
-    const searchEl = host.querySelector('#tq-search');
-    let timer = null;
-    if (searchEl) {
-      searchEl.oninput = () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { filter = searchEl.value.trim(); load(); }, 400);
+    // ---- Tìm ----
+    const qEl = host.querySelector('#tq-search');
+    if (qEl) {
+      let t;
+      qEl.oninput = () => {
+        clearTimeout(t);
+        t = setTimeout(() => { filter = qEl.value.trim(); load(); }, 350);
       };
     }
-    host.querySelector('#tq-reload').onclick = load;
+    const rEl = host.querySelector('#tq-reload');
+    if (rEl) rEl.onclick = () => load();
 
-    // Reset trial
+    // ---- Cấp lại 1 ngày ----
     host.querySelectorAll('[data-reset]').forEach((b) => {
-      b.onclick = () => {
-        const uid = b.dataset.reset;
-        const name = b.dataset.name;
-        openModal(`
-          <div class="modal-title">${icon('refresh', { size: 16 })} Reset dùng thử</div>
-          <div class="modal-sub">Tài khoản: <strong>${esc(name)}</strong></div>
-
-          <div class="alert alert-warn">
-            <span class="ico">${icon('alert', { size: 15 })}</span>
-            <span>Reset sẽ đưa lượt đã dùng về <strong>0</strong> và
-            <strong>thu hồi</strong> license dùng thử đang chạy. Lịch sử vẫn được giữ.</span>
-          </div>
-
-          <div class="field">
-            <label class="label" for="rs-kinds">Reset loại nào?</label>
-            <select class="select adm-select-full" id="rs-kinds">
-              <option value="all">Cả hai (1 giờ + 3 ngày)</option>
-              <option value="1h">Chỉ 1 giờ</option>
-              <option value="3d">Chỉ 3 ngày</option>
-            </select>
-          </div>
-
-          <div class="field">
-            <label class="label" for="rs-reason">Lý do <span class="req">*</span></label>
-            <input class="input" id="rs-reason" placeholder="VD: Khách báo lỗi không dùng được, đã xác minh">
-            <div class="form-hint">Bắt buộc, lưu vào nhật ký để đối soát sau.</div>
-          </div>
-
-          <div class="field adm-check-field">
-            <label class="adm-check" for="rs-revoke">
-              <input type="checkbox" id="rs-revoke" checked>
-              <span>Thu hồi license dùng thử đang chạy</span>
-            </label>
-          </div>
-
-          <div class="adm-actions-end">
-            <button type="button" class="btn btn-ghost" data-cancel>Huỷ</button>
-            <button type="button" class="btn btn-primary" data-ok>Xác nhận reset</button>
-          </div>
-        `, {
-          onMount(overlay, close) {
-            overlay.querySelector('[data-cancel]').onclick = close;
-            overlay.querySelector('[data-ok]').onclick = async () => {
-              const reason = overlay.querySelector('#rs-reason').value.trim();
-              if (reason.length < 10) {
-                toast('Nhập lý do ít nhất 10 ký tự', 'error');
-                return;
-              }
-              const kindsVal = overlay.querySelector('#rs-kinds').value;
-              try {
-                const r = await api('/api/admin/trial/reset', {
-                  method: 'POST',
-                  body: {
-                    userId: uid,
-                    kinds: kindsVal === 'all' ? 'all' : [kindsVal],
-                    reason,
-                    revokeActive: overlay.querySelector('#rs-revoke').checked,
-                  },
-                });
-                toast(`Đã reset. Thu hồi ${(r.revokedKeys || []).length} license.`, 'success', 6000);
-                close();
-                load();
-              } catch (e) { toast(e.message, 'error', 7000); }
-            };
-          },
-        });
-      };
-    });
-
-    // Lịch sử
-    host.querySelectorAll('[data-uses]').forEach((b) => {
       b.onclick = async () => {
-        const uid = b.dataset.uses;
-        const d2 = await api('/api/admin/trial/uses?userId=' + encodeURIComponent(uid));
-        const uses = d2.uses || [];
-        const stateCls = { active: 'pill-green', expired: 'pill-gray', ended: 'pill-gray', hold: 'pill-yellow' };
-
-        openModal(`
-          <div class="modal-title">${icon('log', { size: 16 })} Lịch sử dùng thử</div>
-          <div class="modal-sub">${uses.length} lần</div>
-          <div class="table-wrap adm-table-wrap adm-scroll">
-            <table class="adm-table">
-              <thead><tr>
-                <th scope="col">Loại</th>
-                <th scope="col">Mã</th>
-                <th scope="col">Trạng thái</th>
-                <th scope="col">Bắt đầu</th>
-              </tr></thead>
-              <tbody>
-                ${uses.length === 0
-                  ? '<tr><td colspan="4" class="adm-empty">Chưa có</td></tr>'
-                  : uses.map((u) => `
-                    <tr>
-                      <td><strong>${esc(u.kind === '1h' ? '1 giờ' : '3 ngày')}</strong></td>
-                      <td class="mono adm-mono-sm">${esc(u.key)}</td>
-                      <td><span class="pill ${stateCls[u.state] || 'pill-gray'} adm-pill-sm">${esc(u.state)}</span></td>
-                      <td class="adm-cell-sub">${u.startedAt ? fmtDate(u.startedAt * 1000) : '—'}</td>
-                    </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-          <div class="adm-actions-end adm-actions-topgap">
-            <button type="button" class="btn btn-ghost" data-close>Đóng</button>
-          </div>
-        `, {
-          onMount(overlay, close) {
-            overlay.querySelector('[data-close]').onclick = close;
-          },
-        });
+        if (!await confirmDialog(
+          `Cấp lại 1 ngày dùng thử cho "${b.dataset.name}"?`,
+          'Đồng hồ sẽ tính lại từ bây giờ. Dùng khi khách khiếu nại hợp lệ.',
+          'Cấp lại')) return;
+        try {
+          const r = await api('/api/admin/trial/account-reset', {
+            method: 'POST',
+            body: { userId: b.dataset.reset, days: 1 },
+          });
+          toast(`Đã cấp lại ${r.days} ngày`, 'success');
+          load();
+        } catch (e) { toast(e.message, 'error'); }
       };
     });
   };
 
   await load();
 }
+
 
 /* ---------------- Users ---------------- */
 async function renderUsers(host) {

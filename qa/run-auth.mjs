@@ -1,5 +1,8 @@
 import { launch, connect, newPage, sleep, PROD } from './cdp.mjs';
 import { writeFileSync } from 'node:fs';
+import { adminCredentials } from './qa-guard.mjs';
+
+const ADMIN = (() => { const c = adminCredentials(); return { u: c.username, p: c.password }; })();
 
 const out = [];
 const log = (o) => { out.push(o); console.log(JSON.stringify(o)); };
@@ -88,7 +91,7 @@ const AUDIT = `(() => {
   /* ============ B. ADMIN TABS ============ */
   const ap = await newPage(browser, { width: 1600, height: 950 });
   ap.clearLogs();
-  const ame = await login(ap, 'namhbcf', 'namhbcf123');
+  const ame = await login(ap, ADMIN.u, ADMIN.p);
   log({ test: 'login-admin', role: ame.user?.role, hash: await ap.eval('location.hash') });
 
   const TABS = ['dashboard', 'orders', 'topups', 'products', 'keys', 'licenses', 'users', 'coupons', 'settings', 'logs'];

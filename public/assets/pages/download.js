@@ -32,12 +32,40 @@ const GUIDE_URL = '#/huong-dan';
 const BUY_URL = '#/products?category=license-xarena';
 
 /* Giá trị hiển thị tạm trong lúc chờ /api/app/version (bị ghi đè sau). */
+/*
+ * ============================================================================
+ * F13 — KHÔNG ĐƯỢC HIỆN HASH/VERSION CŨ NHƯ THỂ ĐÃ XÁC MINH
+ *
+ * Bản cũ hardcode:
+ *     version: '3.0.2.0'
+ *     sha256:  'D74DC26E…'
+ *
+ * trong khi source app và server đều 3.1.0.0, và hash đó là của một bản build
+ * khác. Hệ quả: khách tải file MỚI, đối chiếu với hash CŨ, thấy lệch -> tưởng
+ * file bị chèn mã độc -> mất đơn hàng và mất uy tín.
+ *
+ * Server nay trả `verified: true` kèm hash sinh từ chính bytes của file phát
+ * hành (xem src/routes/arena-installer.js). Trang này dùng đúng cờ đó:
+ *   verified  -> hiện hash + nút copy
+ *   chưa có   -> hiện "chưa xác minh", KHÔNG hiện một hash trông như thật
+ * ============================================================================
+ */
 const FALLBACK = {
-  version: '3.0.2.0',
-  sizeText: '22.2 MB',
-  sha256: 'D74DC26EB2C19E10FEA191D6A266EC3D778ED3DACA1C8112505AFD864E7E5584',
+  version: '',
+  sizeText: '',
+  /*
+   * KHÔNG có hash dự phòng.
+   *
+   * Một hash "trông đúng" mà không kiểm được còn tệ hơn không có hash: khách
+   * đối chiếu, thấy lệch, và kết luận sai rằng file bị can thiệp.
+   */
+  sha256: '',
   filename: EXE_FILE,
+  verified: false,
 };
+
+/** Câu hiện khi server chưa có manifest xác minh cho bản đang phát hành. */
+const UNVERIFIED_HASH_TEXT = 'Chưa xác minh — máy chủ chưa có manifest cho bản này';
 
 /** Ba bước bỏ qua SmartScreen — dùng lại ở cả khối cảnh báo và trang hướng dẫn. */
 const SMARTSCREEN_STEPS = `
@@ -258,6 +286,13 @@ export async function mountDownload(root) {
    */
   const src = info ? (info.arena || info) : null;
 
+  /*
+   * `verified` do server quyết định: true = số liệu đến từ manifest sinh ra
+   * từ bytes của file phát hành. Chỉ khi đó mới được hiện hash như thông tin
+   * đã kiểm; ngược lại hiện trạng thái "chưa xác minh".
+   */
+  const serverVerified = !!(src && src.verified === true && src.sha256);
+
   if (src) {
     if (src.version) {
       const v = String(src.version);
@@ -271,12 +306,6 @@ export async function mountDownload(root) {
         el.textContent = s;
       });
     }
-    if (src.sha256) {
-      // Ghi vào textContent, KHÔNG innerHTML: hash đến từ mạng, phải coi là dữ liệu.
-      const sha = String(src.sha256);
-      if (hashEl) hashEl.textContent = sha;
-      if (copyHashBtn) copyHashBtn.dataset.value = sha;
-    }
     // Đường dẫn tải: ưu tiên giá trị server trả về, nhưng chỉ nhận path nội bộ.
     if (dlLink && typeof src.url === 'string' && /^\/download\/[A-Za-z0-9._-]+$/.test(src.url)) {
       dlLink.setAttribute('href', src.url);
@@ -284,15 +313,60 @@ export async function mountDownload(root) {
     }
   }
 
-  /* Giá trị copy: ưu tiên dữ liệu server, không có thì lấy chữ đang hiển thị. */
-  const readHash = () =>
-    (copyHashBtn && copyHashBtn.dataset.value) ||
-    (hashEl && hashEl.textContent ? hashEl.textContent.trim() : '') ||
-    FALLBACK.sha256;
+  /* ---- Khối hash: chỉ hiện khi server xác minh được ---- */
+  if (hashEl) {
+    if (serverVerified) {
+      // Ghi vào textContent, KHÔNG innerHTML: hash đến từ mạng, phải coi là dữ liệu.
+      const sha = String(src.sha256).toUpperCase();
+      hashEl.textContent = sha;
+      hashEl.removeAttribute('data-unverified');
+      if (copyHashBtn) {
+        copyHashBtn.dataset.value = sha;
+        copyHashBtn.hidden = false;
+      }
+    } else {
+      /*
+       * Không có manifest -> KHÔNG bịa hash.
+       *
+       * Bản cũ hiện hash của một bản build cũ, khách đối chiếu thấy lệch và
+       * tưởng file bị chèn. Nói thẳng "chưa xác minh" là hành vi đúng.
+       */
+      hashEl.textContent = UNVERIFIED_HASH_TEXT;
+      hashEl.setAttribute('data-unverified', '1');
+      if (copyHashBtn) {
+        copyHashBtn.dataset.value = '';
+        copyHashBtn.hidden = true;
+      }
+    }
+  }
+
+  /* ---- Nhãn "đã ký số" chỉ hiện khi server nói có chữ ký ---- */
+  const signedEl = root.querySelector('[data-dl-signed]');
+  if (signedEl) {
+    const signer = src && src.signedBy ? String(src.signedBy) : '';
+    if (signer) {
+      signedEl.textContent = `Đã ký: ${signer}`;
+      signedEl.hidden = false;
+    } else {
+      signedEl.hidden = true;
+    }
+  }
+
+  /* Giá trị copy: chỉ lấy hash THẬT SỰ đã xác minh. */
+  const readHash = () => {
+    if (copyHashBtn && copyHashBtn.dataset.value) return copyHashBtn.dataset.value;
+    if (serverVerified && hashEl) return hashEl.textContent.trim();
+    return '';
+  };
 
   if (copyHashBtn) {
     copyHashBtn.addEventListener('click', async () => {
-      const okFlag = await copyText(readHash());
+      const value = readHash();
+      if (!value) {
+        toast('Chưa có mã băm đã xác minh để copy', 'error');
+        return;
+      }
+      const okFlag = await copyText(value);
       toast(okFlag ? 'Đã copy mã SHA-256' : 'Không copy được — chọn mã rồi Ctrl+C',
         okFlag ? 'success' : 'error');
     });

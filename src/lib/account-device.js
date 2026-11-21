@@ -86,8 +86,60 @@ export const MESSAGE_SESSION_MOVED =
  * Phạm vi khoá thiết bị.
  *   'product' (mặc định) — mỗi (tài khoản, sản phẩm) một máy. Xem đầu file.
  *   'user'               — mỗi tài khoản một máy, bất kể sản phẩm.
+ *
+ * Có thể đổi bằng biến môi trường DEVICE_SCOPE mà KHÔNG cần sửa code.
  */
 export const DEVICE_SCOPE = 'product';
+
+/**
+ * Có nên dùng MỘT ô thiết bị chung cho cả tài khoản không?
+ *
+ * ============================================================================
+ * F05 — VẤN ĐỀ GỐC CỦA VIỆC PHẢI CHỌN SCOPE THEO SẢN PHẨM
+ *
+ * Ghi chú cũ trong file nói: hai module tính HAI HWID khác nhau trên CÙNG một
+ * máy (xa_nofog_pro.compute_hwid() vs xa_grant._guard_safe_hwid()), nên gộp
+ * một ô chung sẽ khiến hai tính năng tự đá nhau.
+ *
+ * Nhưng đó KHÔNG phải lý do để mỗi sản phẩm một ô — đó là lý do để CLIENT gửi
+ * một mã máy CHUNG. Hai HWID khác nhau chỉ vì hai module băm các thành phần
+ * hơi khác nhau; chúng vẫn mô tả cùng một cái máy.
+ *
+ * Nay: `deviceScope()` trả 'all' khi tài khoản đang ở mô hình quyền (có dòng
+ * `trial_accounts`, tức có key nội bộ), vì với mô hình đó CLIENT đã gửi cùng
+ * một bộ `guid/bios/cpu/vol` cho cả hai đường cấp token (xem
+ * trial-account.js `idsFromBody` → `deriveIds` dùng chung cho cả hai).
+ *
+ * Với key cũ (khách bản cũ gửi HWID của từng module), giữ scope theo sản phẩm
+ * để không đá nhau — đúng như hành vi cũ, không phá khách đang chạy.
+ * ============================================================================
+ */
+export function deviceScope(product, opts = {}) {
+  if (DEVICE_SCOPE === 'user') return 'all';
+  if (opts.sharedDevice) return 'all';
+  return String(product || '').trim().toLowerCase() === 'xagrant'
+    ? 'xagrant'
+    : 'nofog';
+}
+
+/**
+ * Tài khoản này có dùng MỘT ô thiết bị chung cho cả hai tính năng không?
+ *
+ * Điều kiện: đã có dòng `trial_accounts` (tức đang ở mô hình quyền theo tài
+ * khoản, client gửi chung bộ định danh máy cho cả hai đường cấp token).
+ * Khách bản cũ (chưa có dòng đó) giữ scope theo sản phẩm như trước.
+ */
+export async function usesSharedDevice(env, userId) {
+  if (!userId) return false;
+  try {
+    const row = await env.DB.prepare(
+      'SELECT 1 AS x FROM trial_accounts WHERE user_id = ? LIMIT 1'
+    ).bind(String(userId)).first();
+    return !!row;
+  } catch {
+    return false;
+  }
+}
 
 /** Chuẩn hoá HWID để so sánh (client gửi chữ HOA/thường lẫn lộn). */
 export function normHwid(v) {
@@ -99,36 +151,58 @@ function nowSec() {
 }
 
 /**
- * Khoá phạm vi của một sản phẩm.
- * @param {string} product 'nofog' | 'xagrant'
- */
-export function deviceScope(product) {
-  if (DEVICE_SCOPE === 'user') return 'all';
-  return String(product || '').trim().toLowerCase() === 'xagrant'
-    ? 'xagrant'
-    : 'nofog';
-}
-
-/**
- * Tài khoản sở hữu một license key, đọc từ `license_issues`.
+ * Tài khoản sở hữu một license key.
  *
- * Trả null khi: key không có trong `license_issues` (key do admin tạo tay,
- * key dùng thử), hoặc CSDL cũ chưa có bảng. Null = KHÔNG áp luật 1 nick 1 máy
- * (không có "nick" nào để áp).
+ * ============================================================================
+ * F05 — PHẢI TRA CẢ `trial_accounts`, KHÔNG CHỈ `license_issues`
+ *
+ * Bản cũ CHỈ tra `license_issues` (bảng ghi việc BÁN key). Nhưng từ mô hình
+ * mới, mỗi tài khoản có hai key NỘI BỘ (map sáng + tài nguyên) lưu trong
+ * `trial_accounts.nofog_key` / `.grant_key`, và các key đó KHÔNG BAO GIỜ có
+ * dòng trong `license_issues` — vì khách không "mua key", shop cấp quyền.
+ *
+ * Hệ quả thật: `ownerUserId()` trả null cho MỌI key của mô hình mới, nên
+ * `guardAccountDevice()` thoát ngay ở nhánh `reason: 'anonymous'` và luật
+ * "một tài khoản = một máy tại một thời điểm" KHÔNG BAO GIỜ chạy cho khách
+ * mua/dùng thử theo mô hình hiện hành. Nghĩa là một nick chia sẻ được cho
+ * bao nhiêu máy tùy thích.
+ *
+ * Nay tra lần lượt: `license_issues` (đường cũ, còn khách bản cũ) rồi
+ * `trial_accounts` (đường mới).
+ * ============================================================================
  */
 export async function ownerUserId(env, key) {
   const k = String(key || '').trim().toUpperCase();
   if (!k) return null;
+
   try {
     const row = await env.DB.prepare(
       `SELECT user_id FROM license_issues
         WHERE license_key = ? ORDER BY created_at DESC LIMIT 1`
     ).bind(k).first();
     const uid = row && row.user_id ? String(row.user_id).trim() : '';
-    return uid || null;
-  } catch {
-    return null;
-  }
+    if (uid) return uid;
+  } catch { /* bảng chưa có -> thử đường dưới */ }
+
+  /*
+   * ĐƯỜNG MỚI: key nội bộ của mô hình quyền theo tài khoản.
+   *
+   * Key được lưu nguyên văn trong `trial_accounts`. So sánh bằng UPPER() vì
+   * client có thể gửi chữ thường; `normKey` phía route đã chuẩn hoá nhưng
+   * hàm này còn được gọi từ nơi khác.
+   */
+  try {
+    const row = await env.DB.prepare(
+      `SELECT user_id FROM trial_accounts
+        WHERE UPPER(COALESCE(nofog_key,'')) = ?
+           OR UPPER(COALESCE(grant_key,'')) = ?
+        LIMIT 1`
+    ).bind(k, k).first();
+    const uid = row && row.user_id ? String(row.user_id).trim() : '';
+    if (uid) return uid;
+  } catch { /* chưa migrate */ }
+
+  return null;
 }
 
 async function readDevice(env, userId, scope) {

@@ -1,8 +1,14 @@
 /**
  * Runtime verification of every INSERT-bearing endpoint.
  * Any INSERT arity bug surfaces as a 5xx / server_error here.
+ *
+ * Chạy: QA_BASE=http://127.0.0.1:8787 node qa/insert-paths.mjs
  */
-const BASE = 'https://xienhl.com';
+import { target, assertWritable, adminCredentials } from './qa-guard.mjs';
+
+const t = target();
+assertWritable(t, { writes: true });
+const BASE = t.base;
 const T = Math.random().toString(36).slice(2, 7).toUpperCase();
 const out = [];
 const rec = (n, ok, d) => { out.push({ n, ok, d }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}${d ? ' — ' + d : ''}`); };
@@ -28,7 +34,7 @@ class C {
 }
 
 const admin = new C();
-await admin.post('/api/auth/login', { username: 'namhbcf', password: 'namhbcf123' });
+await admin.post('/api/auth/login', adminCredentials());
 
 const user = new C();
 const uname = 'qr' + T.toLowerCase();

@@ -1,5 +1,8 @@
 /** Probe every GET endpoint as admin + user, flag any 5xx. */
-const BASE = 'https://xienhl.com';
+/* Chạy: QA_BASE=http://127.0.0.1:8787 node qa/probe500.mjs — chỉ ĐỌC. */
+import { target, adminCredentials } from './qa-guard.mjs';
+
+const BASE = target().base;
 
 class C {
   constructor() { this.cookie = ''; }
@@ -19,7 +22,7 @@ class C {
 }
 
 const admin = new C();
-await admin.post('/api/auth/login', { username: 'namhbcf', password: 'namhbcf123' });
+await admin.post('/api/auth/login', adminCredentials());
 
 const user = new C();
 const u = 'qp' + Math.random().toString(36).slice(2, 8);

@@ -439,9 +439,52 @@ export async function claimOrderPaid(env, request, orderId) {
 
  */
 
+/**
+ * Ghi một khoản tiền vào sổ khi đường đi KHÔNG phải webhook (admin bấm tay,
+ * Telegram xác nhận). Dùng chung `payment_inbox` để chỉ có MỘT nơi tra cứu
+ * "tiền đã vào chưa".
+ *
+ * Không ném lỗi: đường này đã có `payments` làm sổ cũ, hỏng hộp thư không
+ * được chặn thao tác của admin.
+ */
+async function journalManualInbound(env, {
+  order, amount, source, txnRef, content, raw, isTest, state = 'matched', note = null,
+}) {
+  try {
+    const { recordInbound, markProcessed } = await import('../lib/payment-inbox.js');
+    const provider = source === 'sepay' || source === 'payos' ? source : 'manual';
+    // Khoá chống trùng: ưu tiên txnRef thật; nếu không có thì sinh khoá nội
+    // bộ theo đơn + thời điểm để KHÔNG chặn nhầm các lần xác nhận khác nhau.
+    const txnId = String(txnRef || `manual-${order.id}-${Date.now()}`);
+    const r = await recordInbound(env, {
+      provider, transactionId: txnId,
+      amount: Math.floor(Number(amount) || 0),
+      content: content || `manual confirm ${order.code}`,
+      transferType: 'in', isTest, raw,
+    });
+    if (r.recorded && !r.duplicated) {
+      await markProcessed(env, r.inboxId, {
+        state, orderId: order.id, orderCode: order.code,
+        deliverState: 'none', note,
+      });
+    }
+    return r;
+  } catch (e) {
+    console.error('journalManualInbound:', e && e.message);
+    return null;
+  }
+}
+
 export async function confirmOrderPaid(env, opts = {}) {
   const { orderId, amount, source, txnRef, adminId, content, raw } = opts;
   let { isTest } = opts;
+  /*
+   * `journaled: true` = bên gọi (webhook) ĐÃ ghi chứng từ bền vững vào
+   * `payment_inbox` trước khi tới đây. Khi đó hàm này KHÔNG được return sớm
+   * vì lý do "đơn đã giao" mà bỏ qua phần ghi nhận tiền — chứng từ đã có,
+   * việc còn lại chỉ là quyết định giao.
+   */
+  const journaled = opts.journaled === true;
 
   /*
    * isTest có thể undefined khi admin duyệt tay (không qua webhook).
@@ -459,18 +502,36 @@ export async function confirmOrderPaid(env, opts = {}) {
 
   if (!order) return { ok: false, reason: 'ORDER_NOT_FOUND' };
 
-  // Đã giao rồi -> không làm gì
-
+  /*
+   * ========================================================================
+   * F07 — TRƯỚC ĐÂY RETURN Ở ĐÂY LÀ MẤT CHỨNG TỪ TIỀN
+   *
+   * Bản cũ:
+   *     if (order.status === 'delivered') return { duplicated: true, ... };
+   *
+   * Hàm này trả về TRƯỚC khi ghi `payments`/hộp thư. Với webhook, điều đó
+   * nghĩa là: khách chuyển thêm một khoản cho đơn đã giao -> tiền vào ngân
+   * hàng, webhook trả 200, và KHÔNG có dòng nào trong sổ. Admin không biết
+   * khoản tiền đó tồn tại.
+   *
+   * NAY: vẫn không giao hàng lần hai (đúng), nhưng KHÔNG được im lặng. Nếu
+   * chưa có chứng từ (`journaled` false — đường admin bấm tay hoặc Telegram)
+   * thì phải ghi nhận khoản tiền dư vào sổ trước khi trả lời.
+   * ========================================================================
+   */
   if (order.status === 'delivered') {
-
+    if (!journaled && Number(amount) > 0) {
+      await journalManualInbound(env, {
+        order, amount, source, txnRef, content, raw, isTest,
+        state: 'matched', note: 'excess payment on already-delivered order',
+      });
+    }
     return { ok: true, duplicated: true, reason: 'ALREADY_DELIVERED', order };
-
   }
 
   if (order.status === 'paid') {
 
     // Đã xác nhận tiền, đang chờ giao tay -> thử giao lại
-
     return await deliverAndFinish(env, order, { amount, source, adminId, now, txnRef });
 
   }
@@ -556,7 +617,22 @@ export async function confirmOrderPaid(env, opts = {}) {
    */
   const ratify = opts.ratify === true && prevPaid > 0;
 
-  const paid = ratify ? 0 : Math.floor(Number(amount) || expected);
+  /*
+   * ===== P0 — KHÔNG được suy số tiền từ `expected` khi đã có con số =====
+   *
+   * Bản cũ: `Math.floor(Number(amount) || expected)`.
+   *
+   * Toán tử `||` coi 0 / NaN / '' là "không có giá trị" rồi thay bằng
+   * `expected`. Với webhook PayOS thiếu `amount`, hoặc amount = 0, dòng này
+   * biến "0 đồng" thành "đúng bằng giá đơn" -> state = 'matched' -> giành đơn
+   * -> GIAO HÀNG ĐẦY ĐỦ mà không có đồng nào vào.
+   *
+   * Nay: chỉ dùng con số bên gọi truyền vào; không hợp lệ thì là 0. `expected`
+   * chỉ dùng để SO SÁNH, không bao giờ dùng để THAY THẾ số tiền đã nhận.
+   */
+  const amountNum = Number(amount);
+  const paid = ratify ? 0
+    : (Number.isFinite(amountNum) && amountNum > 0 ? Math.floor(amountNum) : 0);
 
   const totalPaid = prevPaid + paid;
 
@@ -919,10 +995,76 @@ export async function sepayWebhook(env, request) {
 
   const ttype = String(body.transferType || 'in').toLowerCase();
 
+  const accountNumber = String(body.accountNumber ?? '').trim();
+  const amount = Math.floor(Number(body.transferAmount) || 0);
+  /*
+   * NHẬN DIỆN GIAO DỊCH TEST để KHÔNG tính vào hạn mức 50 GD/tháng.
+   * Chủ shop: "hạn chế test bằng sepay". Test tự động dùng mã
+   * referenceCode bắt đầu bằng các tiền tố dưới đây.
+   */
+  const txnRefRaw = String(body.referenceCode || body.id || '');
+  const isTest = /^(TEST|PROBE|SHORT|TOPUP|OVER|TWICE|MULTI|OUT|WRONGACC|NOMATCH|SAME|TWO|AGAIN|EXP|CAN|OOS|APPROVE|E2E)/i.test(txnRefRaw);
+
+  const content = String(body.content || body.description || '');
+
+  const txnRef = String(body.referenceCode || body.id || '');
+
+  /* ================================================================== */
+  /* B1 — GHI SỔ BỀN VỮNG *TRƯỚC MỌI NHÁNH RETURN* (F07)                */
+  /* ================================================================== */
+  /*
+   * PHẢI nằm ở đây, ngay sau khi xác thực và đọc payload, TRƯỚC mọi `return`
+   * (tiền ra, sai tài khoản, số tiền <= 0, không khớp đơn, ngoài cửa sổ giờ).
+   *
+   * Vì sao: webhook trả 200 thì provider KHÔNG gửi lại. Bản cũ có 4 nhánh
+   * return trước khi ghi `payments`, và cả 4 đều trả 200 -> tiền vào ngân
+   * hàng mà sổ trống, admin không có dấu vết nào để đối soát.
+   *
+   * recordInbound() NÉM LỖI khi không ghi được -> lỗi lan tới fetch() của
+   * Worker -> trả 500 -> provider gửi lại. Đó là hành vi đúng: thà provider
+   * retry còn hơn mất chứng từ tiền.
+   *
+   * Ngoại lệ: giao dịch RA (transferType='out') và mã test không có
+   * `referenceCode` thì vẫn ghi (để có audit) nhưng trạng thái 'ignored'.
+   */
+  const { recordInbound, markProcessed } = await import('../lib/payment-inbox.js');
+
+  const inbox = await recordInbound(env, {
+    provider: 'sepay',
+    transactionId: txnRef,
+    amount,
+    content,
+    accountNumber,
+    transferType: ttype,
+    isTest,
+    raw: body,
+  });
+
+  if (!inbox.recorded) {
+    /*
+     * Không có mã giao dịch -> không thể chống trùng, nhưng KHÔNG được im
+     * lặng: trả 400 kèm lý do để provider/lỗi cấu hình lộ ra, và vẫn không
+     * ghi sổ (không có khoá chống trùng thì ghi là mở đường cộng trùng).
+     */
+    return ok({ matched: false, reason: 'MISSING_TXN_ID' });
+  }
+
+  if (inbox.duplicated) {
+    // Provider gửi lại cùng giao dịch — không báo Telegram lần nữa.
+    return ok({
+      matched: false, duplicated: true, reason: 'WEBHOOK_REPLAY',
+      inbox_state: inbox.state,
+    });
+  }
+
   if (ttype !== 'in') {
-
+    await markProcessed(env, inbox.inboxId, { state: 'ignored', note: 'transferType != in' });
     return ok({ matched: false, reason: 'NOT_INBOUND' });
+  }
 
+  if (amount <= 0) {
+    await markProcessed(env, inbox.inboxId, { state: 'ignored', note: 'amount <= 0' });
+    return ok({ matched: false, reason: 'ZERO_AMOUNT' });
   }
 
   // Đúng tài khoản nhận
@@ -939,43 +1081,31 @@ export async function sepayWebhook(env, request) {
    * -> coi như SAI tài khoản (không giao hàng). Muốn nới, admin bật cấu hình
    * `sepay_allow_missing_account=1` (dùng khi nhà cung cấp đổi payload).
    *
-   * Tiền vào sai tài khoản KHÔNG bị mất dấu: webhook trả matched:false và
-   * SePay vẫn nhận 200 (không retry vô ích); admin đối soát tay bằng
-   * /api/admin/sepay/reconcile như đường cứu sẵn có.
+   * Tiền vào sai tài khoản KHÔNG bị mất dấu: đã ghi vào payment_inbox ở B1,
+   * webhook trả 200 (không retry vô ích) và admin đối soát được.
    */
   if (cfg.bankAccount) {
-    const gotAcc = String(body.accountNumber ?? '').trim();
-    if (!gotAcc) {
-      if (!cfg.allowMissingAccount) {
-        return ok({ matched: false, reason: 'WRONG_ACCOUNT', detail: 'missing_accountNumber' });
-      }
-    } else if (gotAcc !== String(cfg.bankAccount)) {
-
-      return ok({ matched: false, reason: 'WRONG_ACCOUNT' });
-
+    let wrongAccount = false;
+    if (!accountNumber) {
+      wrongAccount = !cfg.allowMissingAccount;
+    } else if (accountNumber !== String(cfg.bankAccount)) {
+      wrongAccount = true;
+    }
+    if (wrongAccount) {
+      await markProcessed(env, inbox.inboxId, {
+        state: 'wrong_account',
+        note: accountNumber ? 'account mismatch' : 'missing accountNumber',
+      });
+      return ok({ matched: false, reason: 'WRONG_ACCOUNT', detail: 'missing_accountNumber' });
     }
   }
-
-  const amount = Math.floor(Number(body.transferAmount) || 0);
-  /*
-   * NHẬN DIỆN GIAO DỊCH TEST để KHÔNG tính vào hạn mức 50 GD/tháng.
-   * Chủ shop: "hạn chế test bằng sepay". Test tự động dùng mã
-   * referenceCode bắt đầu bằng các tiền tố dưới đây.
-   */
-  const txnRefRaw = String(body.referenceCode || body.id || '');
-  const isTest = /^(TEST|PROBE|SHORT|TOPUP|OVER|TWICE|MULTI|OUT|WRONGACC|NOMATCH|SAME|TWO|AGAIN|EXP|CAN|OOS|APPROVE|E2E)/i.test(txnRefRaw);
-
-  if (amount <= 0) return ok({ matched: false, reason: 'ZERO_AMOUNT' });
-
-  const content = String(body.content || body.description || '');
-
-  const txnRef = String(body.referenceCode || body.id || '');
 
   const order = await findOrderByMemo(env, content, cfg.prefix);
 
   if (!order) {
 
-    // Tiền vào nhưng không khớp đơn -> ghi lại để admin xử lý
+    // Tiền vào nhưng không khớp đơn -> đã có chứng từ ở payment_inbox (B1).
+    // Vẫn ghi thêm vào `payments` để trang Sổ tiền vào cũ hiển thị liên tục.
 
     try {
 
@@ -997,18 +1127,18 @@ export async function sepayWebhook(env, request) {
 
     } catch (e) {
       /*
-       * KHÔNG được im lặng ở đây. Đây chính là chỗ đã nuốt lỗi "13 values for
-       * 12 columns" suốt thời gian qua: tiền vào ngân hàng mà sổ trống, admin
-       * không thấy gì. Chỉ bỏ qua trường hợp trùng txn_ref (Webhook replay).
+       * Trùng txn_ref = webhook replay -> bỏ qua. Lỗi khác phải LOG, nhưng
+       * KHÔNG còn làm mất dấu tiền: chứng từ đã nằm ở payment_inbox.
        */
       const msg = String(e?.message || e);
-      if (msg.includes('UNIQUE')) {
-        // Giao dịch đã ghi ở lần gửi trước -> không báo Telegram lần nữa,
-        // nếu không admin nhận 1 tin cho mỗi lần SePay retry.
-        return ok({ matched: false, duplicated: true, reason: 'NO_ORDER_MATCH' });
+      if (!msg.includes('UNIQUE')) {
+        console.error('webhook unmatched INSERT:', msg);
       }
-      console.error('webhook unmatched INSERT:', msg);
     }
+
+    await markProcessed(env, inbox.inboxId, {
+      state: 'unmatched', note: 'no order matched memo',
+    });
 
     try {
       const { notifyUnmatchedPayment } = await import('../lib/telegram-pay.js');
@@ -1104,6 +1234,13 @@ export async function sepayWebhook(env, request) {
       } catch { /* bỏ qua */ }
     }
 
+    await markProcessed(env, inbox.inboxId, {
+      state: amount >= expected ? 'matched' : 'wrong_amount',
+      orderId: order.id, orderCode: order.code,
+      deliverState: 'none',
+      note: 'awaiting admin approval (outside auto window)',
+    });
+
     return ok({
       matched: true,
       order: order.code,
@@ -1128,6 +1265,24 @@ export async function sepayWebhook(env, request) {
 
     raw: body,
 
+    /* Đã có chứng từ bền vững ở B1 -> confirmOrderPaid không phải ghi lại. */
+    journaled: true,
+
+  });
+
+  /*
+   * Ghi kết quả xử lý vào hộp thư. `deliverState` là thứ admin dùng để biết
+   * khoản tiền này đã thành hàng chưa — trước đây thông tin đó chỉ suy ra
+   * được từ `orders.status`, mà status có thể bị cron đổi.
+   */
+  await markProcessed(env, inbox.inboxId, {
+    state: r.underpaid ? 'wrong_amount' : (r.ok ? 'matched' : 'received'),
+    orderId: order.id,
+    orderCode: order.code,
+    deliverState: r.delivered ? 'delivered'
+      : r.pendingManual ? 'pending_manual'
+        : r.ok ? 'none' : 'failed',
+    note: r.reason || r.error || null,
   });
 
   return ok({
@@ -1182,18 +1337,84 @@ export async function payosWebhook(env, request) {
 
   const txnRef = String(d.reference || d.paymentLinkId || '');
 
+  /* ================================================================== */
+  /* B1 — GHI SỔ BỀN VỮNG TRƯỚC MỌI NHÁNH RETURN (F07)                  */
+  /* ================================================================== */
+  /*
+   * payOS cũng có nhánh `return ok({matched:false, reason:'NO_ORDER_MATCH'})`
+   * trước khi ghi bất cứ thứ gì -> tiền vào mà không có chứng từ. Nay dùng
+   * chung hộp thư với SePay, khoá chống trùng là (provider, transaction_id).
+   */
+  const { recordInbound, markProcessed } = await import('../lib/payment-inbox.js');
+
+  const inbox = await recordInbound(env, {
+    provider: 'payos',
+    transactionId: txnRef || String(d.orderCode ?? ''),
+    amount,
+    content,
+    accountNumber: d.accountNumber ? String(d.accountNumber) : '',
+    transferType: 'in',
+    raw: d,
+  });
+
+  if (!inbox.recorded) {
+    return ok({ matched: false, reason: 'MISSING_TXN_ID' });
+  }
+  if (inbox.duplicated) {
+    return ok({ matched: false, duplicated: true, reason: 'WEBHOOK_REPLAY' });
+  }
+
+  if (amount <= 0) {
+    await markProcessed(env, inbox.inboxId, { state: 'ignored', note: 'amount <= 0' });
+    return ok({ matched: false, reason: 'ZERO_AMOUNT' });
+  }
+
+  /*
+   * ===== P0 — PHẢI kiểm mã kết quả của payOS =====
+   *
+   * payOS trả `code` cho BIẾT giao dịch thành công hay không. Bản cũ không
+   * kiểm: webhook của một payment link đã HUỶ hoặc THẤT BẠI nhưng
+   * `description` vẫn chứa mã đơn sẽ bị coi là đã thanh toán -> giao hàng
+   * miễn phí. Bản `payosWebhook` cũ trong wallet.js CÓ kiểm điều này, nhưng
+   * bản được route là bản ở đây.
+   *
+   * '00' là mã thành công của payOS. Chấp nhận chuỗi rỗng khi provider không
+   * gửi `code`, nhưng TUYỆT ĐỐI từ chối mọi mã khác.
+   */
+  const resultCode = d.code !== undefined && d.code !== null ? String(d.code) : '';
+  if (resultCode !== '' && resultCode !== '00') {
+    await markProcessed(env, inbox.inboxId, {
+      state: 'ignored',
+      note: `payos code=${resultCode} (khong phai giao dich thanh cong)`,
+    });
+    return ok({ matched: false, reason: 'NOT_SUCCESS', code: resultCode });
+  }
+
   const order = await findOrderByMemo(env, content, cfg.prefix);
 
   if (!order) {
-
+    await markProcessed(env, inbox.inboxId, {
+      state: 'unmatched', note: 'no order matched memo',
+    });
     return ok({ matched: false, reason: 'NO_ORDER_MATCH' });
-
   }
 
   const r = await confirmOrderPaid(env, {
 
     orderId: order.id, amount, source: 'payos', txnRef, content, raw: d,
 
+    journaled: true,
+
+  });
+
+  await markProcessed(env, inbox.inboxId, {
+    state: r.underpaid ? 'wrong_amount' : (r.ok ? 'matched' : 'received'),
+    orderId: order.id,
+    orderCode: order.code,
+    deliverState: r.delivered ? 'delivered'
+      : r.pendingManual ? 'pending_manual'
+        : r.ok ? 'none' : 'failed',
+    note: r.reason || r.error || null,
   });
 
   return ok({

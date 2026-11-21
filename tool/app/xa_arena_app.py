@@ -47,7 +47,14 @@ for _p in (_HERE,
         sys.path.insert(0, _p)
 
 APP_NAME = 'XA ARENA'
-APP_VERSION = '3.0.2.0'
+# PHIÊN BẢN — PHẢI TĂNG MỖI LẦN BUILD.
+#
+# App ép cập nhật bằng cách so số này với EXE_VERSION của server. Bằng nhau
+# thì app KHÔNG cập nhật, nên quên tăng = không ai nhận được bản mới.
+#
+# 3.1.0.0 — BỎ HOÀN TOÀN KEY: quyền theo TÀI KHOẢN, đăng ký ngay trong app,
+#           dùng thử 1 ngày cho cả map sáng + tài nguyên.
+APP_VERSION = '3.1.0.0'
 
 MUTEX_NAME = 'XArena_AllInOne_v1'
 

@@ -249,7 +249,7 @@ export async function deliverOrderItems(env, order) {
    * Chỉ ghi những gì REQUEST NÀY tạo ra — KHÔNG đụng dòng đã giao ở lần
    * trước (kind === 'already'), vì đó là hàng khách đã trả tiền từ trước.
    */
-  const made = { licenses: [], items: [], soldCount: [] };
+  const made = { licenses: [], items: [], soldCount: [], entitlements: [] };
 
   try {
     for (const p of planned) {
@@ -289,15 +289,35 @@ export async function deliverOrderItems(env, order) {
           await import('../lib/account-entitlement.js');
         const { deliverLicenseLine } = await import('./license.js');
 
-        const days = Number(product.license_days || 0);
+        /*
+         * ==================================================================
+         * F02 — SỐ NGÀY PHẢI NHÂN VỚI QUANTITY
+         *
+         * LỖI CŨ: grantFeature(days) được gọi MỘT lần với số ngày của một đơn
+         * vị, trong khi API vẫn nhận `quantity` tới 20 và `deliverLicenseLine`
+         * sinh đúng `quantity` license. Khách mua 2 gói 30 ngày chỉ nhận 30
+         * ngày quyền tài khoản — mất một nửa số tiền đã trả (bằng chứng:
+         * orders.js:78 cho quantity tới 20, grantFeature không hề nhận qty).
+         *
+         * Nay: số ngày cấp = license_days × quantity. Sản phẩm bán gia hạn
+         * thì quantity chính là số kỳ khách mua, nên đây là cách hiểu đúng.
+         * ==================================================================
+         */
+        const unitDays = Number(product.license_days || 0);
+        // unitDays = 0 nghĩa là vĩnh viễn -> nhân quantity vẫn là vĩnh viễn.
+        const days = unitDays === 0 ? 0 : unitDays * Math.max(1, Number(qty) || 1);
         const feats = featuresOfProduct(product);
 
-        // 1. Cộng hạn vào tài khoản (cộng dồn nếu đang còn hạn)
+        // 1. Cộng hạn vào tài khoản (cộng dồn nếu đang còn hạn).
+        //
+        // `orderId` được truyền xuống làm khoá chống cấp trùng: mỗi đơn chỉ
+        // cộng một lần cho mỗi tính năng, kể cả khi hàm này bị gọi lại (retry
+        // sau lỗi mạng, admin bấm "giao bù", worker chết rồi chạy lại).
         for (const f of feats) {
           await grantFeature(env, {
             userId: order.user_id, feature: f, days,
             source: 'purchase', orderId,
-            note: `${product.name} (${qty}×)`,
+            note: `${product.name} (${qty}×${unitDays ? ` ${unitDays} ngày` : ' vĩnh viễn'})`,
           });
         }
 
@@ -733,138 +753,97 @@ export async function adminDeliverManual(env, request, orderId) {
   });
 }
 
+/**
+ * POST /api/admin/orders/:id/refund — hoàn tiền (admin web).
+ *
+ * ==========================================================================
+ * F04 — CHỈ CÒN MỘT BẢN CÀI ĐẶT HOÀN TIỀN
+ *
+ * Toàn bộ nghiệp vụ hoàn tiền nằm trong `src/lib/refund-service.js`. Hàm này
+ * chỉ làm ba việc của tầng HTTP: xác thực admin, đọc body, dịch kết quả sang
+ * response. Đường Telegram (wallet.js) gọi CÙNG hàm đó với channel khác.
+ *
+ * Nhờ vậy web và Telegram không thể lệch nhau nữa — trước đây web ghi
+ * admin_note còn Telegram cộng `users.balance` (ví đã bỏ).
+ * ==========================================================================
+ */
 export async function adminRefund(env, request, orderId) {
   /*
    * CHỈ admin thật: hoàn tiền = quyết định mất tiền thật (chuyển khoản tay
-   * cho khách) + thu hồi license/key. Ghi vào refund_ledger nên KHÔNG hoàn
-   * tác được. `staff` không được có quyền này.
+   * cho khách) + thu hồi license/quyền. `staff` không được có quyền này.
    */
   const admin = await requireAdminStrict(env, request);
-  const o = await env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
-  if (!o) throw new ApiError(404, 'Đơn hàng không tồn tại', 'NOT_FOUND');
-  if (o.status === 'refunded') throw new ApiError(409, 'Đơn đã được hoàn tiền', 'BAD_STATE');
+  const body = await readJson(request).catch(() => ({}));
 
-  // ===== CHỈ HOÀN TIỀN ĐƠN ĐÃ THANH TOÁN =====
-  // Trước đây refund được cả đơn 'pending' (chưa trừ đồng nào) -> cộng tiền khống.
-  if (!['paid', 'delivered'].includes(o.status)) {
-    throw new ApiError(409,
-      `Chỉ hoàn tiền đơn đã thanh toán. Đơn này đang ở trạng thái "${o.status}".`, 'BAD_STATE');
+  const { refundOrder } = await import('../lib/refund-service.js');
+  const r = await refundOrder(env, {
+    orderId,
+    channel: 'web',
+    actor: admin.username || admin.id,
+    reason: body.reason || 'admin_adjust',
+    amount: body.amount,
+    /*
+     * `markPaidOut` chỉ bật khi admin xác nhận ĐÃ chuyển tiền và có mã giao
+     * dịch ngân hàng. Mặc định là CHƯA: sổ ghi 'pending', đơn chuyển sang
+     * 'refund_pending_transfer', và dashboard đối soát sẽ nhắc cho tới khi
+     * có chứng từ. Đây là chỗ sửa lỗi "ghi yêu cầu = đã trả tiền".
+     */
+    markPaidOut: body.paidOut === true,
+    bankRef: body.bankRef || '',
+    note: body.note || '',
+  });
+
+  if (!r.ok) {
+    const status = r.code === 'NOT_FOUND' ? 404
+      : r.code === 'BAD_REQUEST' ? 400
+        : 409;
+    throw new ApiError(status, r.message || 'Không hoàn được đơn này', r.code || 'REFUND_FAILED');
   }
 
-  // ===== GIÀNH ĐƠN NGUYÊN TỬ =====
-  // Nhiều request refund đồng thời đều pass kiểm tra và cộng tiền nhiều lần.
-  const claim = await env.DB.prepare(
-    `UPDATE orders SET status = 'refunding', refund_started_at = ?
-     WHERE id = ? AND status IN ('paid','delivered')`
-  ).bind(Date.now(), orderId).run();
-  if (!claim.meta || claim.meta.changes !== 1) {
-    throw new ApiError(409, 'Đơn đã được hoàn tiền', 'BAD_STATE');
+  await audit(env, admin.id, 'order.refund', orderId, {
+    amount: r.amount, revoked: r.revoked, state: r.state, reason: r.reason,
+  });
+
+  return ok({
+    id: orderId,
+    amount: r.amount,
+    state: r.state,
+    status: r.status,
+    revoked: r.revoked,
+    /** true = đã chốt "đã chuyển tiền"; false = mới ghi yêu cầu hoàn */
+    paidOut: r.state === 'done',
+  });
+}
+
+/**
+ * POST /api/admin/orders/:id/refund/complete — chốt đã chuyển tiền hoàn.
+ *
+ * Body: { bankRef, amount? }
+ * Đây là bước còn thiếu khiến sổ sách không đối soát được: trước đây bấm
+ * "Hoàn" là đơn thành 'refunded' ngay, dù tiền chưa hề rời tài khoản shop.
+ */
+export async function adminCompleteRefund(env, request, orderId) {
+  const admin = await requireAdminStrict(env, request);
+  const body = await readJson(request).catch(() => ({}));
+
+  const { completeRefundTransfer } = await import('../lib/refund-service.js');
+  const r = await completeRefundTransfer(env, {
+    orderId,
+    bankRef: body.bankRef,
+    amount: body.amount,
+    actor: admin.username || admin.id,
+  });
+
+  if (!r.ok) {
+    const status = r.code === 'NOT_FOUND' ? 404 : 409;
+    throw new ApiError(status, r.message || 'Không chốt được khoản hoàn', r.code);
   }
 
-  /*
-   * ===== CHỐT SỔ HOÀN TIỀN (chống hoàn trùng ở tầng DB) =====
-   *
-   * Trạng thái đơn KHÔNG đủ tin cậy: worker có thể chết sau khi cộng tiền mà
-   * trước khi đặt 'refunded', và cron cũ đưa đơn kẹt về 'paid' → admin bấm
-   * Hoàn lần nữa. Đã xảy ra thật (MBK-L5W87H hoàn 70.000đ hai lần).
-   *
-   * refund_ledger.order_id là PRIMARY KEY nên mỗi đơn chỉ có tối đa MỘT dòng,
-   * mãi mãi. INSERT thành công = lượt này được phép cộng tiền. INSERT trùng =
-   * đã có lượt khác cộng rồi → dừng, không cộng nữa.
-   */
-  const claimToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  let ledgerOk = false;
-  try {
-    const led = await env.DB.prepare(
-      `INSERT INTO refund_ledger
-         (order_id, amount, user_id, order_code, state, claim_token, source, actor, at)
-       VALUES (?, ?, ?, ?, 'pending', ?, 'web', ?, ?)`
-    ).bind(orderId, o.total, o.user_id, o.code, claimToken, admin.id, Date.now()).run();
-    ledgerOk = led.meta && led.meta.changes === 1;
-  } catch {
-    // Trùng PRIMARY KEY = đơn này đã có lượt hoàn tiền khác. Không cộng nữa.
-    ledgerOk = false;
-  }
-  if (!ledgerOk) {
-    throw new ApiError(
-      409,
-      'Đơn này đã được ghi sổ hoàn tiền. Kiểm tra lại lịch sử trước khi thao tác.',
-      'ALREADY_REFUNDED',
-    );
-  }
+  await audit(env, admin.id, 'order.refund_complete', orderId, {
+    amount: r.amount, bankRef: r.bankRef,
+  });
 
-  const now = Date.now();
-
-  // ===== THU HỒI HÀNG ĐÃ GIAO =====
-  // Hoàn tiền mà giữ key thì khách được cả tiền lẫn hàng.
-  const revoked = { licenses: 0 };
-  try {
-    // 1. Thu hồi license đã phát hành cho đơn này
-    const { results: issues } = await env.DB.prepare(
-      'SELECT license_key FROM license_issues WHERE order_id = ?'
-    ).bind(orderId).all();
-    for (const row of issues || []) {
-      await env.DB.prepare('UPDATE licenses SET revoked = 1 WHERE key = ?')
-        .bind(row.license_key).run();
-      await env.DB.prepare(
-        'INSERT INTO lic_events (key, hwid, kind, detail, ip, at) VALUES (?,?,?,?,?,?)'
-      ).bind(row.license_key, null, 'revoke', `refund ${o.code}`, '', Math.floor(now / 1000)).run();
-      revoked.licenses++;
-    }
-
-    // 2. (ĐÃ BỎ) Thu hồi key kho — bảng `product_keys` không còn.
-    //    Shop chỉ bán license sinh động, thu hồi ở bước 1.
-
-    // 3. Giảm sold_count tương ứng
-    const { results: items } = await env.DB.prepare(
-      'SELECT product_id, quantity FROM order_items WHERE order_id = ?'
-    ).bind(orderId).all();
-    for (const it of items || []) {
-      await env.DB.prepare(
-        'UPDATE products SET sold_count = MAX(0, sold_count - ?) WHERE id = ?'
-      ).bind(it.quantity, it.product_id).run();
-    }
-  } catch (e) {
-    console.error('Refund revoke error:', e && e.message);
-  }
-
-  /*
-   * ===== CỘNG TIỀN + CHỐT SỔ TRONG MỘT TRANSACTION =====
-   *
-   * Bốn việc dưới đây PHẢI cùng thành công hoặc cùng không:
-   *   1. cộng lại số dư ví khách
-   *   2. ghi dòng 'refund' vào sổ cái (để SUM(wallet_transactions) = balance)
-   *   3. đánh dấu refund_ledger.state = 'done'  <- DẤU HIỆU "ĐÃ CỘNG TIỀN"
-   *   4. đặt đơn thành 'refunded'
-   *
-   * Vì sao state='done' là mấu chốt: worker chết giữa chừng là chuyện có
-   * thật (CPU limit 30s, phía trên đã await hàng loạt lệnh thu hồi
-   * key/license). Sổ ghi 'pending' = CHƯA cộng tiền, 'done' = ĐÃ cộng.
-   * Không có cột này thì cron và admin không thể phân biệt "đơn kẹt trước
-   * khi cộng" với "đơn kẹt sau khi cộng" — đoán sai một trong hai là mất
-   * tiền thật (hoàn thiếu hoặc hoàn hai lần).
-   *
-   * env.DB.batch chạy như một transaction của D1 nên không có cửa sổ nào
-   * để tiền đã cộng mà sổ vẫn 'pending'.
-   */
-  // KHÔNG cộng vào ví nữa: không còn trang nạp/tiêu số dư.
-  // Hoàn tiền = chuyển khoản tay cho khách, ghi admin_note để đối soát.
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE refund_ledger SET state = 'done', revoked = ?,
-       claim_token = NULL, at = ?
-       WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
-    ).bind(revoked.licenses, now, orderId, claimToken),
-    env.DB.prepare(
-      `UPDATE orders SET status = 'refunded',
-              admin_note = ? WHERE id = ?`
-    ).bind(`Hoàn tiền tay ${o.total}đ — chuyển khoản cho khách`, orderId),
-  ]);
-
-  await releaseCoupon(env, o.coupon_code, orderId);
-
-  await audit(env, admin.id, 'order.refund', orderId, { total: o.total, revoked });
-  return ok({ id: orderId, revoked });
+  return ok({ id: orderId, amount: r.amount, state: 'done' });
 }
 
 /**

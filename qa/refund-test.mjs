@@ -1,5 +1,10 @@
 /** QA: refund path (money-critical) — refund, then double-refund must be blocked. */
-const BASE = 'https://xienhl.com';
+/* Chạy: QA_BASE=http://127.0.0.1:8787 node qa/refund-test.mjs <orderId> */
+import { target, assertWritable, adminCredentials } from './qa-guard.mjs';
+
+const t = target();
+assertWritable(t, { writes: true });
+const BASE = t.base;
 const ORDER = process.argv[2];
 
 class C {
@@ -19,7 +24,7 @@ class C {
 }
 
 const a = new C();
-await a.post('/api/auth/login', { username: 'namhbcf', password: 'namhbcf123' });
+await a.post('/api/auth/login', adminCredentials());
 
 console.log('refund 1 ->', (await a.post(`/api/admin/orders/${ORDER}/refund`, {})).text.slice(0, 300));
 console.log('refund 2 ->', (await a.post(`/api/admin/orders/${ORDER}/refund`, {})).text.slice(0, 300));

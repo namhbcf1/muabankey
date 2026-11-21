@@ -2469,8 +2469,29 @@ class ArenaWindow(QWidget):
                 if not has_sess and not has_key:
                     need_login = True
                 else:
-                    # Đã đăng nhập mà chưa có token -> bắt đầu lượt dùng thử
-                    need_free = (not has_tok) and has_sess
+                    # ------------------------------------------------------------------
+                    # F06 — ĐÃ ĐĂNG NHẬP MÀ CHƯA CÓ TOKEN: PHẢI THỬ QUYỀN ĐÃ MUA TRƯỚC
+                    #
+                    # Bản cũ đặt `need_free = (not has_tok) and has_sess` rồi đi
+                    # THẲNG vào _start_free_trial(). Nghĩa là khách ĐÃ TRẢ TIỀN
+                    # nhưng token trên máy đã hết hạn (hoặc vừa cài lại Windows)
+                    # sẽ bị đẩy sang xin DÙNG THỬ thay vì lấy lại quyền đã mua.
+                    #
+                    # Hệ quả thật:
+                    #   • tài khoản đã dùng thử trước đây -> server trả
+                    #     `trial_used_before` -> app báo lỗi dù quyền mua còn;
+                    #   • tài khoản chưa dùng thử -> đồng hồ dùng thử bị BẬT
+                    #     OAN, tiêu mất lượt thử mà khách không cần;
+                    #   • khách chỉ mua gói tài nguyên -> không có token map
+                    #     sáng nên rơi đúng vào nhánh này.
+                    #
+                    # Nay: chỉ coi là "cần dùng thử" khi server nói thẳng là
+                    # KHÔNG CÓ QUYỀN NÀO. Việc kiểm đó do EntitlementWorker
+                    # làm (nó gọi /api/entitlement + /api/account/token, đường
+                    # CHỈ ĐỌC quyền). Nếu sau đó vẫn trống, `_on_entitlement`
+                    # mới bật dùng thử.
+                    # ------------------------------------------------------------------
+                    need_free = False
             except Exception:
                 need_free = False
 
@@ -2892,6 +2913,24 @@ class ArenaWindow(QWidget):
           · không nằm trong lần hỏi "được phép xin" (_allow_free)
           · đã có gói ĐÃ MUA còn dùng được, hoặc máy đã có token tốt
           · server đã từ chối dùng thử (hết lượt/bị chặn) — không hỏi lại
+
+        ==================================================================
+        F06 — ĐIỀU KIỆN THỨ TƯ: SERVER ĐÃ TRẢ TOKEN CHO TÀI KHOẢN THÌ KHÔNG
+        XIN DÙNG THỬ NỮA.
+
+        Bản cũ chỉ xét `API.has_paid_licence(d)` — hàm đó đọc danh sách
+        `licenses` (mô hình key cũ). Với mô hình mới, quyền nằm ở
+        `account_entitlements` và app nhận token qua /api/account/token, nên
+        `has_paid_licence()` trả False dù khách đã trả tiền.
+
+        Hệ quả: khách mua xong, mở app -> `_on_entitlement` thấy có quyền
+        nhưng `has_paid_licence()` vẫn False -> gọi `_start_free_trial()` ->
+        server BẬT/tiêu lượt dùng thử cho một khách đã trả tiền, và với tài
+        khoản đã dùng thử rồi thì nhận `trial_used_before` (lỗi đỏ oan).
+
+        Nay: `hasNofog`/`hasGrant` (đọc từ snapshot quyền của server) cũng là
+        bằng chứng "đã có quyền" — có quyền thì không xin dùng thử.
+        ==================================================================
         """
         if not getattr(self, '_allow_free', False):
             return False
@@ -2902,6 +2941,9 @@ class ArenaWindow(QWidget):
                 return False
             # Máy đã có KEY trong tay -> đi đường kích hoạt, đừng tiêu lượt.
             if API.local_token_key() or API.load_manual_key():
+                return False
+            # Tài khoản ĐÃ có quyền (mô hình mới) -> không xin dùng thử.
+            if bool(d.get('hasNofog')) or bool(d.get('hasGrant')):
                 return False
         except Exception:
             return False
@@ -3437,14 +3479,28 @@ class ArenaWindow(QWidget):
             # Cho khách thử lại, không đóng app ngay
             QTimer.singleShot(200, self._require_login)
             return
-        self._say('Tạo tài khoản thành công. Đang bật dùng thử 1 ngày…'
+        self._say('Tạo tài khoản thành công. Đang kiểm tra quyền…'
                   if getattr(self, '_login_is_register', False)
-                  else 'Đăng nhập thành công.')
+                  else 'Đăng nhập thành công. Đang kiểm tra quyền…')
         self._kicked = False
         self._free_state = ''
-        # Có tài khoản rồi -> xin lượt dùng thử 1 ngày ngay
-        self._state('Đang bật dùng thử cho tài khoản…', 'warn')
-        self._start_free_trial()
+        # ------------------------------------------------------------------
+        # F06 — ĐỌC QUYỀN TRƯỚC, CHỈ XIN DÙNG THỬ KHI THẬT SỰ TRỐNG
+        #
+        # Bản cũ đặt cứng `_state('Đang bật dùng thử…')` rồi gọi
+        # `_start_free_trial()` NGAY sau khi đăng nhập. Nghĩa là MỌI lần đăng
+        # nhập — kể cả khách vừa mua gói — đều đi qua đường dùng thử trước.
+        #
+        # Với khách đã trả tiền, điều đó làm:
+        #   • đồng hồ dùng thử bị bật oan (tiêu lượt không cần);
+        #   • nếu tài khoản đã dùng thử trước đây -> nhận `trial_used_before`
+        #     và app hiện lỗi đỏ ngay sau khi đăng nhập thành công.
+        #
+        # Nay: `_refresh_entitlement()` đọc quyền từ server (đường CHỈ ĐỌC).
+        # Nếu tài khoản có quyền -> vào thẳng giao diện. Nếu trống ->
+        # `_on_entitlement` → `_maybe_free_trial` mới bật dùng thử.
+        # ------------------------------------------------------------------
+        self._refresh_entitlement()
 
     def _do_login(self):
         """Mở hộp thoại đăng nhập / tạo tài khoản."""

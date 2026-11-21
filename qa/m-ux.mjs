@@ -1,7 +1,8 @@
 import { Client, q, q1, BASE } from './q.mjs';
+import { adminCredentials } from './qa-guard.mjs';
 
 const adm = new Client();
-await adm.req('/api/auth/login', { method: 'POST', body: { username: 'namhbcf', password: 'namhbcf123' } });
+await adm.req('/api/auth/login', { method: 'POST', body: adminCredentials() });
 
 const pend = await adm.req('/api/admin/orders?status=pending');
 console.log('=== Tab "Chờ thanh toán" — cột Khách ===');

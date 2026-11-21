@@ -1,10 +1,11 @@
 /** Trang chủ. */
 import {
   api, esc, fmtVnd, fmtNum, skeletonCards, navigate, toast, openModal,
-  emptyBlock, closeAllModals,
+  emptyBlock, closeAllModals, fmtDate,
 } from '../lib.js';
 import { state } from '../state.js';
 import { icon, iconBox } from '../icons.js';
+import { TRIAL, TRIAL_BADGE, TRIAL_START_NOTE } from '../policy.js';
 
 export function productCard(p) {
   const isLicense = p.deliveryType === 'license';
@@ -70,7 +71,7 @@ export function renderHome() {
     <div class="container hero-inner">
       <div class="hero-pill">
         <span class="pulse"></span>
-        Dùng thử miễn phí 1 giờ · Không cần đăng ký
+        ${TRIAL_BADGE}
       </div>
       <h1>Bỏ sương mù &amp; thêm tài nguyên<br>cho AoE XArena</h1>
       <p class="hero-sub">
@@ -96,34 +97,35 @@ export function renderHome() {
     </div>
   </section>
 
-  <!-- ===== KHỐI DÙNG THỬ: GÓI 1 GIỜ ===== -->
+  <!-- ===== KHỐI DÙNG THỬ: THEO CHÍNH SÁCH policy.js ===== -->
   <section class="section-sm" id="trial-section">
     <div class="container">
       <div class="sec-head">
         <div>
           <h2 class="sec-title">Dùng thử miễn phí</h2>
-          <p class="sec-desc">Dùng thử <strong>1 giờ</strong> cùng tool bán trong shop.
-            Hạn mức do shop đặt: <strong data-trial-quota>nhiều lượt</strong> cho mỗi thiết bị.</p>
+          <p class="sec-desc">Mỗi tài khoản được dùng thử <strong>${TRIAL.days} ngày</strong>
+            cho cả hai tính năng. Hạn mức do shop đặt:
+            <strong data-trial-quota>nhiều lượt</strong> cho mỗi thiết bị.</p>
         </div>
       </div>
 
       <div class="trial-grid trial-grid-one">
-        <!-- ===== GÓI 1 GIỜ — MỘT NÚT, KHÔNG CHỌN GÌ ===== -->
+        <!-- ===== GÓI DÙNG THỬ — MỘT NÚT, KHÔNG CHỌN GÌ ===== -->
         <div class="card trial-card trial-card-accent">
           <div class="trial-head">
             <span class="pill pill-yellow">${icon('bolt', { size: 11 })} Dùng thử nhanh</span>
           </div>
-          <h3 class="trial-name">Dùng thử <span class="trial-hl warn">1 giờ</span></h3>
+          <h3 class="trial-name">Dùng thử <span class="trial-hl warn">${TRIAL.days} ngày</span></h3>
           <div class="trial-price">0đ</div>
           <ul class="feature-list trial-feats">
-            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Đủ chơi 1–2 trận để thử</span></li>
+            <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Bật cả <strong>map sáng</strong> và <strong>tài nguyên</strong></span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span><strong data-trial-quota>nhiều lượt</strong> / thiết bị</span></li>
             <li><span class="tick">${icon('check', { size: 10, stroke: 2.4 })}</span><span>Tự bật khi mở app — không nhập gì</span></li>
           </ul>
           <div id="trial-1h-status" class="trial-status"></div>
           <div class="trial-pick">
             <button class="btn btn-gold btn-block" data-trial-kind="1h" data-trial-product="nofog">
-              ${icon('bolt', { size: 14 })} Bật dùng thử 1 giờ
+              ${icon('bolt', { size: 14 })} Bật dùng thử ${TRIAL.days} ngày
             </button>
           </div>
         </div>
@@ -131,7 +133,8 @@ export function renderHome() {
 
       <div class="alert alert-info" style="margin-top:16px">
         <span class="ico">${icon('info', { size: 15 })}</span>
-        <span>Không cần đăng ký, không nhập gì. Tải app rồi bấm đúp — dùng thử tự bật.</span>
+        <span>Cần tạo tài khoản miễn phí (làm ngay trong app). ${TRIAL_START_NOTE},
+          nên đăng ký hôm nay rồi mai mới cài vẫn còn đủ ${TRIAL.days} ngày.</span>
       </div>
 
       <div class="alert alert-warn" style="margin-top:10px">
@@ -246,7 +249,7 @@ function trialDeviceId() {
  * chủ chỉ còn lựa chọn 1 giờ. Quảng cáo một gói không tồn tại là lỗi đã sửa.
  */
 async function startTrialFlow(kind, onDone, product = 'nofog') {
-  const label = '1 giờ';
+  const label = `${TRIAL.days} ngày`;
 
   /*
    * Đóng modal cũ bằng CHÍNH hàm close() của nó.
@@ -376,65 +379,145 @@ export async function mountHome(root) {
     };
   }
 
-  // ===== NÚT DÙNG THỬ: chỉ còn gói 1 giờ =====
-  const loadTrialQuota = async () => {
-    const setText = (txt) => {
-      const el = root.querySelector('#trial-1h-status');
-      if (el) el.innerHTML = txt;
-    };
+  /*
+   * ========================================================================
+   * LỖI ĐÃ SỬA (audit web, severity high): TRANG CHỦ GỌI 4 API TUẦN TỰ
+   *
+   * Bản cũ gọi lần lượt:
+   *     await loadTrialQuota()   -> /api/trial/status
+   *     api('/api/stats')        -> /api/stats
+   *     await loadFeatured()     -> /api/products/featured
+   *     (+ /api/auth/me, /api/categories từ hydrateState)
+   *
+   * Trong đó `await loadTrialQuota()` CHẶN `loadFeatured()` — một waterfall
+   * thật: khách phải chờ /api/trial/status xong mới bắt đầu tải sản phẩm.
+   * Cộng lại khoảng 1,6 giây trên mạng thường.
+   *
+   * Trong khi đó backend ĐÃ CÓ `/api/home` từ lâu: src/index.js:67 đăng ký
+   * route, src/routes/products.js:266 gộp 12 câu lệnh vào MỘT env.DB.batch()
+   * = một round-trip, kèm comment giải thích đúng mục tiêu này. Nhưng
+   * `grep '/api/home'` trong toàn bộ public/ = 0 kết quả — frontend chưa bao
+   * giờ nối vào. Tối ưu backend đã xong mà không ai dùng.
+   *
+   * NAY: MỘT request `/api/home` trả {categories, products, stats, trial}.
+   * Không waterfall, không 4 round-trip.
+   * ========================================================================
+   */
+  let bundle = null;
+  try {
+    bundle = await api('/api/home');
+  } catch (e) {
     /*
-     * Hạn mức do server cấu hình (kindCfg().quota), KHÔNG hardcode.
-     * Trang chỉ hiện "nhiều lượt" cho tới khi /api/trial/status trả số thật.
+     * Bundle lỗi -> KHÔNG để trang trống. Hiện lỗi + nút thử lại ở khối sản
+     * phẩm, và các khối khác giữ dấu gạch thay vì số sai.
      */
-    const setQuota = (n) => {
-      const q = Number(n);
-      if (!Number.isFinite(q) || q <= 0) return;
-      root.querySelectorAll('[data-trial-quota]').forEach((el) => {
-        el.textContent = `${q} lượt`;
-      });
-    };
+    console.warn('home bundle:', e && e.message);
+  }
 
-    if (!state.user) {
-      setText('<span class="trial-state dim">Không cần đăng ký</span>');
-      return;
-    }
-
-    try {
-      const s = await api('/api/trial/status');
-      const k = s.kinds?.['1h'];
-      if (!k) { setText(''); return; }
-      setQuota(k.quota);
-      if (k.active) {
-        // expires_at lúc CHƯA kích hoạt là "hold" (7 ngày), không phải hạn thật.
-        // Chỉ hiện thời gian khi tool đã chạy lần đầu (activated_at > 0).
-        const activated = (k.active.activated_at || 0) > 0;
-        if (!activated) {
-          setText(`<span class="trial-state warn">${icon('clock', { size: 12 })} Đã tạo — chạy tool để bắt đầu tính giờ</span>`);
-        } else {
-          const left = Math.max(0, (k.active.time_left_sec || 0));
-          const txt = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
-          setText(`<span class="trial-state ok">${icon('timer', { size: 12 })} Đang dùng — còn ${txt}</span>`);
-        }
-      } else if (k.left > 0) {
-        setText(`Còn <strong>${k.left}/${k.quota}</strong> lượt`);
-      } else {
-        setText(`<span class="trial-state bad">Đã hết ${k.quota} lượt</span>`);
-      }
-    } catch {
-      setText('');
-    }
-  };
-
+  /* ---- 1. Dùng thử ---- */
+  renderTrialState(root, bundle);
   root.querySelectorAll('[data-trial-kind]').forEach((b) => {
-    b.onclick = () => startTrialFlow(b.dataset.trialKind, loadTrialQuota,
-      b.dataset.trialProduct || 'nofog');
+    b.onclick = () => startTrialFlow(b.dataset.trialKind,
+      () => refreshTrialState(root), b.dataset.trialProduct || 'nofog');
   });
 
-  await loadTrialQuota();
+  /* ---- 2. Số liệu ---- */
+  applyStats(root, bundle && bundle.stats);
 
-  // ===== SỐ LIỆU THẬT =====
-  // Trước đây là số bịa (12.480 đơn / 215 sản phẩm / 99% / 30 giây)
-  // trong khi DB thật chỉ có vài đơn — rủi ro mất uy tín nếu khách kiểm tra.
+  /* ---- 3. Danh mục ---- */
+  applyCategories(root, (bundle && bundle.categories) || state.categories);
+
+  /* ---- 4. Sản phẩm nổi bật ---- */
+  await applyFeatured(root, bundle && bundle.products, bundle === null);
+}
+
+/**
+ * Trạng thái dùng thử — đọc từ bundle của /api/home, KHÔNG gọi thêm.
+ *
+ * Server đã trả `trial` trong bundle nên khối này không cần request riêng.
+ */
+function renderTrialState(root, bundle) {
+  const setText = (txt) => {
+    const el = root.querySelector('#trial-1h-status');
+    if (el) el.textContent = txt;
+  };
+  const setHtml = (html) => {
+    const el = root.querySelector('#trial-1h-status');
+    if (el) el.innerHTML = html;
+  };
+
+  const trialBlock = bundle && bundle.trial;
+
+  // Chưa đăng nhập -> nói đúng điều kiện, không hứa "không cần đăng ký".
+  if (!trialBlock) {
+    setText(TRIAL.requiresAccount ? 'Cần đăng nhập để dùng thử' : '');
+    return;
+  }
+
+  if (trialBlock.ok === false) {
+    setText(trialBlock.msg || 'Dùng thử đang tạm đóng');
+    return;
+  }
+
+  // Mô hình hiện hành trả `trial.state` + số giây còn lại.
+  const stateName = String(trialBlock.state || '');
+  if (stateName === 'active') {
+    const left = Math.max(0, Number(trialBlock.left_sec || 0));
+    const h = Math.floor(left / 3600);
+    const m = Math.floor((left % 3600) / 60);
+    setHtml(`<span class="trial-state ok">${icon('timer', { size: 12 })} `
+      + `Đang dùng — còn ${h > 0 ? `${h} giờ ` : ''}${m} phút</span>`);
+    return;
+  }
+  if (stateName === 'ended') {
+    setHtml(`<span class="trial-state bad">Lượt dùng thử đã kết thúc</span>`);
+    return;
+  }
+  if (stateName === 'available') {
+    setHtml(`<span class="trial-state ok">${icon('check', { size: 12 })} `
+      + `Sẵn sàng ${TRIAL.days} ngày — mở app để bắt đầu</span>`);
+    return;
+  }
+
+  // Đường cũ: kinds['1h']
+  const k = trialBlock.kinds?.['1h'];
+  if (!k) { setText(''); return; }
+  const q = Number(k.quota);
+  if (Number.isFinite(q) && q > 0) {
+    root.querySelectorAll('[data-trial-quota]').forEach((el) => {
+      el.textContent = `${q} lượt`;
+    });
+  }
+  if (k.active) {
+    const activated = (k.active.activated_at || 0) > 0;
+    if (!activated) {
+      setHtml(`<span class="trial-state warn">${icon('clock', { size: 12 })} `
+        + `Đã tạo — ${TRIAL_START_NOTE.toLowerCase()}</span>`);
+    } else {
+      const left = Math.max(0, (k.active.time_left_sec || 0));
+      const txt = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+      setHtml(`<span class="trial-state ok">${icon('timer', { size: 12 })} `
+        + `Đang dùng — còn ${txt}</span>`);
+    }
+    return;
+  }
+  if (Number(k.left) > 0) {
+    setHtml(`Còn <strong>${Number(k.left)}/${Number(k.quota)}</strong> lượt`);
+  } else {
+    setHtml(`<span class="trial-state bad">Đã hết ${Number(k.quota)} lượt</span>`);
+  }
+}
+
+/** Làm mới riêng trạng thái dùng thử (sau khi khách bấm nút). */
+async function refreshTrialState(root) {
+  try {
+    const s = await api('/api/trial/session');
+    renderTrialState(root, { trial: { ...s, ok: s.ok !== false } });
+  } catch { /* giữ trạng thái cũ */ }
+}
+
+/** Số liệu thật — KHÔNG bịa số. */
+function applyStats(root, stats) {
   const animateCount = (el, target) => {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduced || target === 0) { el.textContent = fmtNum(target); return; }
@@ -449,87 +532,96 @@ export async function mountHome(root) {
     requestAnimationFrame(tick);
   };
 
-  api('/api/stats').then((s) => {
-    const set = (name, val) => {
-      const el = root.querySelector(`[data-stat="${name}"]`);
-      if (el) animateCount(el, Number(val) || 0);
-    };
-    set('orders', s.orders);
-    set('products', s.products);
-    set('licenses', s.licenses);
-    set('customers', s.customers);
-  }).catch(() => {
-    // Không lấy được số -> để dấu gạch thay vì con số sai
+  if (!stats) {
     root.querySelectorAll('[data-stat]').forEach((el) => { el.textContent = '—'; });
-  });
-
-  // Categories — chỉ chip của danh mục CÓ sản phẩm (không dẫn khách vào trang rỗng)
-  const catHost = root.querySelector('#home-cats');
-  if (catHost) {
-    const live = (state.categories || []).filter((c) => Number(c.productCount) > 0);
-    catHost.innerHTML = live.length
-      ? `<a href="#/products" class="cat-chip active">Tất cả</a>` +
-        live.map((c) => `
-        <a href="#/products?category=${esc(c.slug)}" class="cat-chip">
-          ${esc(c.name)}
-          <span class="cnt">${fmtNum(c.productCount)}</span>
-        </a>`).join('')
-      : '';
-    catHost.closest('section')?.style.setProperty('display', live.length ? '' : 'none');
+    return;
   }
+  const set = (name, val) => {
+    const el = root.querySelector(`[data-stat="${name}"]`);
+    if (el) animateCount(el, Number(val) || 0);
+  };
+  set('orders', stats.orders);
+  set('products', stats.products);
+  set('licenses', stats.licenses);
+  set('customers', stats.customers);
+}
 
-  // ===== SẢN PHẨM NỔI BẬT =====
-  /*
-   * LỖI ĐÃ SỬA: trước đây lỗi mạng chỉ hiện toast, còn 8 thẻ skeleton nằm lại
-   * vĩnh viễn trên trang. Nay lỗi thì thay hẳn bằng thông báo + nút Thử lại.
-   */
+/**
+ * Chip danh mục — chỉ danh mục CÓ sản phẩm (không dẫn khách vào trang rỗng).
+ * Bỏ hẳn khối nếu không có danh mục nào thay vì để lại khoảng trắng.
+ */
+function applyCategories(root, categories) {
+  const catHost = root.querySelector('#home-cats');
+  if (!catHost) return;
+  const live = (categories || []).filter((c) => Number(c.productCount) > 0);
+  catHost.innerHTML = live.length
+    ? `<a href="#/products" class="cat-chip active">Tất cả</a>` +
+      live.map((c) => `
+      <a href="#/products?category=${esc(c.slug)}" class="cat-chip">
+        ${esc(c.name)}
+        <span class="cnt">${fmtNum(c.productCount)}</span>
+      </a>`).join('')
+    : '';
+  const sec = catHost.closest('section');
+  if (sec) sec.style.display = live.length ? '' : 'none';
+}
+
+/**
+ * Sản phẩm nổi bật + top bán chạy — dùng `products` từ bundle.
+ *
+ * Lỗi mạng thì thay hẳn skeleton bằng thông báo + nút Thử lại (trước đây
+ * lỗi chỉ hiện toast và 8 thẻ skeleton nằm lại vĩnh viễn).
+ */
+async function applyFeatured(root, products, bundleFailed) {
   const featuredHost = root.querySelector('#home-featured');
-  const loadFeatured = async () => {
-    const data = await api('/api/products/featured');
-    if (data.products.length === 0) {
+  if (!featuredHost) return;
+
+  const paint = (list) => {
+    if (!list.length) {
       featuredHost.innerHTML = emptyBlock({
         ico: 'package',
         title: 'Chưa có sản phẩm',
         desc: 'Danh mục đang được cập nhật. Vui lòng quay lại sau.',
       });
     } else {
-      featuredHost.innerHTML = `<div class="grid-products">${data.products.map(productCard).join('')}</div>`;
-      bindProductCards(featuredHost, data.products);
+      featuredHost.innerHTML = `<div class="grid-products">${list.map(productCard).join('')}</div>`;
+      bindProductCards(featuredHost, list);
     }
 
-    const popular = data.products.filter((p) => p.sold > 0).slice(0, 4);
     const popHost = root.querySelector('#home-popular');
+    if (!popHost) return;
+    const popular = list.filter((p) => p.sold > 0).slice(0, 4);
     if (popular.length) {
       popHost.innerHTML = `<div class="grid-products">${popular.map(productCard).join('')}</div>`;
       bindProductCards(popHost, popular);
     } else {
-      // Không có dữ liệu bán -> ẩn cả khối thay vì hiện lưới rỗng
       const sec = popHost.closest('section');
       if (sec) sec.style.display = 'none';
     }
   };
 
-  const showFeaturedError = (msg, title = 'Không tải được sản phẩm nổi bật') => {
-    if (!featuredHost) return;
+  const showError = (msg, title = 'Không tải được sản phẩm nổi bật') => {
     featuredHost.innerHTML = emptyBlock({
       ico: 'alert',
       title,
       desc: msg || 'Kiểm tra kết nối mạng rồi thử lại.',
       action: '<button class="btn btn-primary btn-sm" data-retry-featured>Thử lại</button>',
     });
-    featuredHost.querySelector('[data-retry-featured]')?.addEventListener('click', () => {
+    featuredHost.querySelector('[data-retry-featured]')?.addEventListener('click', async () => {
       featuredHost.innerHTML = skeletonCards(8);
-      loadFeatured().catch((err) => {
+      try {
+        const d = await api('/api/products/featured');
+        paint(d.products || []);
+      } catch (err) {
         toast(err.message, 'error');
-        showFeaturedError(err.message, 'Vẫn không tải được sản phẩm');
-      });
+        showError(err.message, 'Vẫn không tải được sản phẩm');
+      }
     });
   };
 
-  try {
-    await loadFeatured();
-  } catch (e) {
-    showFeaturedError(e.message);
-    toast(e.message, 'error');
+  if (bundleFailed) {
+    showError('Không kết nối được máy chủ.');
+    return;
   }
+  paint(products || []);
 }

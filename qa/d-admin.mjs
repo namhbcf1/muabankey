@@ -1,9 +1,10 @@
 import { Client, q, q1, BASE } from './q.mjs';
+import { adminCredentials } from './qa-guard.mjs';
 import { rec, dump } from './lib.mjs';
 import fs from 'node:fs';
 
 const adm = new Client();
-const lg = await adm.req('/api/auth/login', { method: 'POST', body: { username: 'namhbcf', password: 'namhbcf123' } });
+const lg = await adm.req('/api/auth/login', { method: 'POST', body: adminCredentials() });
 console.log('login:', lg.status, JSON.stringify(lg.json)?.slice(0, 200));
 rec(19, 'Đăng nhập admin namhbcf',
   lg.status === 200 && lg.json?.user?.role === 'admin',

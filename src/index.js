@@ -22,6 +22,7 @@ import * as arenaInstaller from './routes/arena-installer.js';
 import * as licenseServer from './routes/license-server.js';
 import * as trial from './routes/trial.js';
 import * as trialAccount from './routes/trial-account.js';
+import * as accountAdmin from './routes/account-admin.js';
 import * as trialAdmin from './routes/trial-admin.js';
 import * as trialCmd from './routes/trial-command.js';
 import * as twl from './routes/trial-whitelist-admin.js';
@@ -120,6 +121,11 @@ r.post('/api/account/token', (env, req) => trialAccount.issueAccountToken(env, r
 r.get('/api/admin/trial/account-trials', (env, req) => trialAccount.adminListAccountTrials(env, req));
 r.post('/api/admin/trial/account-reset', (env, req) => trialAccount.adminResetAccountTrial(env, req));
 
+/* ---------- Admin: QUYỀN THEO TÀI KHOẢN (thay tab License cũ) ---------- */
+r.get('/api/admin/accounts', (env, req) => accountAdmin.listAccounts(env, req));
+r.post('/api/admin/accounts/:id/grant', (env, req, p) => accountAdmin.grantAccount(env, req, p.id));
+r.post('/api/admin/accounts/:id/revoke', (env, req, p) => accountAdmin.revokeAccount(env, req, p.id));
+
 /*
  * ĐƯỜNG CŨ (mã TR-) — GIỮ LẠI CHO BẢN EXE ĐÃ PHÁT HÀNH.
  *
@@ -166,7 +172,36 @@ r.delete('/api/admin/products/:id', (env, req, p) => products.adminDeleteProduct
 
 r.get('/api/admin/orders', orders.adminListOrders);
 r.post('/api/admin/orders/:id/deliver', (env, req, p) => orders.adminDeliverManual(env, req, p.id));
+/*
+ * HOÀN TIỀN — HAI BƯỚC, KHÔNG PHẢI MỘT.
+ *
+ *   POST /refund           -> quyết định hoàn + thu hồi quyền/license.
+ *                             Tiền CHƯA chuyển; đơn sang 'refund_pending_transfer'.
+ *   POST /refund/complete  -> chốt đã chuyển tiền thật, BẮT BUỘC mã giao dịch
+ *                             ngân hàng; đơn sang 'refunded'.
+ *
+ * Vì sao tách: trước đây bấm "Hoàn" là đơn thành 'refunded' ngay, dù tiền
+ * chưa rời tài khoản shop. Dashboard báo "đã hoàn" trong khi khách chưa nhận
+ * đồng nào, và đơn đã 'refunded' thì không còn đường quay lại.
+ */
 r.post('/api/admin/orders/:id/refund', (env, req, p) => orders.adminRefund(env, req, p.id));
+r.post('/api/admin/orders/:id/refund/complete', (env, req, p) => orders.adminCompleteRefund(env, req, p.id));
+/* Các khoản đã hứa hoàn nhưng CHƯA chuyển tiền — dashboard đối soát. */
+r.get('/api/admin/refunds/pending', async (env, req) => {
+  const { requireAdmin } = await import('./lib/auth.js');
+  await requireAdmin(env, req);
+  const { listPendingRefunds } = await import('./lib/refund-service.js');
+  const rows = await listPendingRefunds(env, 200);
+  return Response.json({ ok: true, count: rows.length, refunds: rows });
+});
+/* Hộp thư tiền vào chưa xử lý xong — tiền vào mà chưa thành hàng. */
+r.get('/api/admin/payments/unresolved', async (env, req) => {
+  const { requireAdmin } = await import('./lib/auth.js');
+  await requireAdmin(env, req);
+  const { listUnresolved } = await import('./lib/payment-inbox.js');
+  const rows = await listUnresolved(env, 200);
+  return Response.json({ ok: true, count: rows.length, payments: rows });
+});
   // Xác nhận đã thấy tiền -> giao key. Đường CỨU khi webhook trượt.
   r.post('/api/admin/orders/:id/confirm-payment', (env, req, p) => payments.adminConfirmPayment(env, req, p.id));
   // Sổ tiền vào: matched / unmatched / wrong_amount / claimed
@@ -388,21 +423,33 @@ export default {
         } catch { /* chưa migrate */ }
         try {
           /*
-           * `rate_limits.window_at` là CHỈ SỐ KHUNG, không phải mốc thời gian:
-           * ratelimit.js ghi `Math.floor(now / windowSec)`. Với window 60s giá
-           * trị hiện tại ~29.907.000, trong khi mốc so sánh là Unix giây
-           * ~1.794.400.000. Phép "<" vì thế LUÔN đúng -> mỗi lần cron chạy
-           * (10 phút) xoá SẠCH bảng, làm bộ đếm fallback khi KV lỗi mất tác
-           * dụng hoàn toàn (reset rate limit trước hạn).
+           * ===== DỌN BỘ ĐẾM RATE LIMIT (P0 — đã sửa 21/11) =====
            *
-           * Giữ lại 24 giờ gần nhất: mốc = (now - 86400) chia cho window.
-           * windowSec nhỏ nhất dùng trong hệ thống là 60 (rateLimit ... , 60).
-           * Dùng 60 làm mẫu số an toàn: nếu window lớn hơn thì ngưỡng chỉ bảo
-           * thủ hơn (giữ lâu hơn), không bao giờ xoá sớm.
+           * LỖI CŨ (rất nặng, kéo dài âm thầm): câu lệnh cũ là
+           *     DELETE FROM rate_limits WHERE window_at < floor((now-86400)/60)
+           *
+           * `window_at` = floor(unix_giây / windowSec) là CHỈ SỐ KHUNG, không
+           * phải mốc thời gian. Với window 60s nó ~29.907.000; nhưng với
+           * window 900s (đăng nhập) nó chỉ ~1.994.000 và với 3600s ~498.000.
+           * Ngưỡng xoá tính theo 60s là ~2.987.000 — LỚN HƠN mọi chỉ số khung
+           * của window dài. Hệ quả: mỗi lần cron chạy (10 phút) xoá SẠCH bộ
+           * đếm của:
+           *   - login:<ip>       500 req / 900s  (auth.js)
+           *   - lf:<username>    10 lần sai / 900s — bộ đếm chống dò mật khẩu
+           *   - reg:<ip>         300 req / 3600s
+           * tức là kẻ tấn công được cấp lại hạn mức mới mỗi 10 phút.
+           *
+           * Nay bảng có cột `expires_at` = mốc hết hạn TUYỆT ĐỐI của khung
+           * (xem db/migrations/0004-rate-limit-expiry.sql), nên so sánh trực
+           * tiếp với thời điểm hiện tại là đúng cho MỌI window.
+           *
+           * Dòng cũ chưa có expires_at (NULL) được dọn luôn: bảng này chỉ là
+           * bộ đếm tạm, xoá sớm không mất dữ liệu nghiệp vụ nào.
            */
-          await env.DB.prepare('DELETE FROM rate_limits WHERE window_at < ?')
-            .bind(Math.floor((nowS - 86400) / 60)).run();
-        } catch { /* chưa có bảng */ }
+          await env.DB.prepare(
+            'DELETE FROM rate_limits WHERE expires_at IS NULL OR expires_at < ?'
+          ).bind(nowS).run();
+        } catch { /* chưa chạy migration 0004 -> giữ bảng, không chặn cron */ }
         // trial_quota mồ côi: user_id không còn trong users (user test đã xoá)
         try {
           await env.DB.prepare(

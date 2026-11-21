@@ -12,12 +12,32 @@ export function bold(text) {
   return `<strong>${esc(text)}</strong>`;
 }
 
-export async function api(path, { method = 'GET', body = null, silent = false } = {}) {
+/**
+ * Gọi API JSON.
+ *
+ * ============================================================================
+ * F12 — REQUEST PHẢI HUỶ ĐƯỢC KHI RỜI TRANG
+ *
+ * Bản cũ không hỗ trợ `signal`, nên mọi `await api(...)` trong `mount` của
+ * trang vẫn chạy tiếp sau khi khách đã chuyển route. Hệ quả:
+ *   • phản hồi về muộn ghi đè DOM của trang MỚI;
+ *   • poll 4 giây của trang thanh toán tiếp tục chạy vô hạn;
+ *   • mỗi lần bấm qua lại giữa hai trang là thêm một chuỗi request song song.
+ *
+ * Nay nhận `signal`. Bên gọi truyền `ctx.signal` (xem `routeContext()`).
+ * Khi bị huỷ, ném `ApiClientError` với code `ABORTED` để trang phân biệt với
+ * lỗi mạng thật (không hiện toast "kiểm tra mạng" khi khách chỉ vừa rời trang).
+ * ============================================================================
+ */
+export async function api(path, {
+  method = 'GET', body = null, silent = false, signal = null,
+} = {}) {
   const opts = {
     method,
     credentials: 'same-origin',
     headers: { Accept: 'application/json' },
   };
+  if (signal) opts.signal = signal;
   if (body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -25,7 +45,11 @@ export async function api(path, { method = 'GET', body = null, silent = false } 
   let res;
   try {
     res = await fetch(path, opts);
-  } catch {
+  } catch (e) {
+    // Huỷ chủ động KHÔNG phải lỗi mạng — trang đã đóng, không cần báo khách.
+    if (e && (e.name === 'AbortError' || e.code === 20)) {
+      throw new ApiClientError('Đã huỷ yêu cầu', 0, 'ABORTED');
+    }
     throw new ApiClientError('Không kết nối được máy chủ. Kiểm tra mạng của bạn.', 0, 'NETWORK');
   }
   let data = null;
@@ -38,6 +62,67 @@ export async function api(path, { method = 'GET', body = null, silent = false } 
     throw new ApiClientError(msg, res.status, data && data.code, data && data.details);
   }
   return data;
+}
+
+/** Lỗi này có phải do khách rời trang giữa lúc gọi không? */
+export function isAborted(err) {
+  return !!err && (err.code === 'ABORTED' || err.name === 'AbortError');
+}
+
+/**
+ * Ngữ cảnh sống theo một lần render route.
+ *
+ * Trang dùng `ctx.signal` cho mọi request, và `ctx.onCleanup()` cho mọi thứ
+ * cần dọn (interval, listener trên window/document). Router gọi `dispose()`
+ * ngay khi bắt đầu điều hướng mới.
+ */
+export function routeContext() {
+  const controller = new AbortController();
+  const cleanups = [];
+  let disposed = false;
+
+  return {
+    signal: controller.signal,
+    get disposed() { return disposed; },
+
+    /** Đăng ký hàm dọn. Trả về chính nó để nối chuỗi. */
+    onCleanup(fn) {
+      if (typeof fn === 'function') cleanups.push(fn);
+      return this;
+    },
+
+    /** setTimeout có thể huỷ. */
+    setTimeout(fn, ms) {
+      const id = setTimeout(() => { if (!disposed) fn(); }, ms);
+      cleanups.push(() => clearTimeout(id));
+      return id;
+    },
+
+    /** setInterval tự huỷ theo route — dùng cho poll trạng thái đơn. */
+    setInterval(fn, ms) {
+      const id = setInterval(() => { if (!disposed) fn(); }, ms);
+      cleanups.push(() => clearInterval(id));
+      return id;
+    },
+
+    /** addEventListener có thể gỡ. */
+    listen(target, type, handler, options) {
+      if (!target || typeof target.addEventListener !== 'function') return;
+      target.addEventListener(type, handler, options);
+      cleanups.push(() => target.removeEventListener(type, handler, options));
+    },
+
+    /** Dọn mọi thứ. Idempotent. */
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      try { controller.abort(); } catch { /* bỏ qua */ }
+      for (const fn of cleanups) {
+        try { fn(); } catch { /* một hàm lỗi không chặn phần còn lại */ }
+      }
+      cleanups.length = 0;
+    },
+  };
 }
 
 export class ApiClientError extends Error {
@@ -147,7 +232,18 @@ export function closeAllModals() {
   }
 }
 
-export function openModal(html, { onMount, labelledBy = null } = {}) {
+/**
+ * Mở một hộp thoại.
+ *
+ * @param {string} html
+ * @param {object} [opts]
+ * @param {(overlay:Element, close:Function)=>void} [opts.onMount]
+ * @param {string} [opts.labelledBy]
+ * @param {()=>void} [opts.onClose]  chạy khi modal đóng bằng BẤT KỲ đường nào
+ *   (nút, Escape, click nền, closeAllModals). Cần cho các Promise phải luôn
+ *   được giải quyết — xem confirmDialog.
+ */
+export function openModal(html, { onMount, labelledBy = null, onClose } = {}) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.setAttribute('role', 'dialog');
@@ -221,6 +317,14 @@ export function openModal(html, { onMount, labelledBy = null } = {}) {
     overlay.removeEventListener('keydown', trapTab);
     overlay.classList.remove('open');
     setTimeout(() => overlay.remove(), 260);
+    /*
+     * Báo cho bên gọi TRƯỚC khi trả focus: callback này có thể cần biết modal
+     * đã đóng để giải quyết Promise (xem confirmDialog). Đặt trong try/catch
+     * để một callback lỗi không chặn việc trả focus.
+     */
+    if (typeof onClose === 'function') {
+      try { onClose(); } catch { /* không chặn dọn dẹp */ }
+    }
     // Trả focus về nơi mở modal — bắt buộc cho người dùng bàn phím.
     if (prevFocus && typeof prevFocus.focus === 'function' && document.contains(prevFocus)) {
       prevFocus.focus();
@@ -242,9 +346,40 @@ export function openModal(html, { onMount, labelledBy = null } = {}) {
   return { el: overlay, close };
 }
 
+/**
+ * Hộp thoại xác nhận hai lựa chọn, trả Promise<boolean>.
+ *
+ * ============================================================================
+ * F12 — PROMISE PHẢI ĐƯỢC GIẢI QUYẾT Ở MỌI ĐƯỜNG ĐÓNG
+ *
+ * Bản cũ chỉ `resolve` trong hai handler onclick của nút Huỷ / Xác nhận:
+ *
+ *     overlay.querySelector('[data-no]').onclick  = () => { closeFn(); resolve(false); };
+ *     overlay.querySelector('[data-yes]').onclick = () => { closeFn(); resolve(true);  };
+ *
+ * Nhưng `openModal` còn ĐÓNG được bằng hai đường khác: phím Escape và bấm ra
+ * vùng nền. Cả hai gọi `close()` mà KHÔNG resolve.
+ *
+ * Hệ quả thật: `await confirmDialog(...)` treo vĩnh viễn. Mọi chỗ dùng đều
+ * hỏng theo kiểu im lặng — nút Hoàn tiền, nút Đổi máy, nút Xoá sản phẩm đều
+ * `await` rồi mới làm việc tiếp, nên khách bấm Escape là thao tác đứng luôn,
+ * không có phản hồi nào và không có lỗi nào trong console.
+ *
+ * NAY: đăng ký một callback `onClose` trên chính `close()`, nên mọi đường
+ * đóng (nút, Escape, click nền, `closeAllModals()` khi chuyển route) đều giải
+ * quyết Promise đúng một lần.
+ * ============================================================================
+ */
 export function confirmDialog(title, message, confirmLabel = 'Xác nhận') {
   return new Promise((resolve) => {
-    const { el, close } = openModal(`
+    let settled = false;
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const { close } = openModal(`
       <div class="modal-title">${esc(title)}</div>
       <div class="modal-sub">${esc(message)}</div>
       <div class="flex gap-1" style="justify-content:flex-end">
@@ -253,11 +388,17 @@ export function confirmDialog(title, message, confirmLabel = 'Xác nhận') {
       </div>
     `, {
       onMount(overlay, closeFn) {
-        overlay.querySelector('[data-no]').onclick = () => { closeFn(); resolve(false); };
-        overlay.querySelector('[data-yes]').onclick = () => { closeFn(); resolve(true); };
+        overlay.querySelector('[data-no]').onclick = () => { settle(false); closeFn(); };
+        overlay.querySelector('[data-yes]').onclick = () => { settle(true); closeFn(); };
       },
+      /*
+       * Mọi đường đóng khác (Escape, click nền, chuyển route) -> coi như Huỷ.
+       * An toàn: đóng mà không xác nhận KHÔNG được hiểu là đồng ý.
+       */
+      onClose: () => settle(false),
     });
-    void el;
+
+    void close;
   });
 }
 
@@ -378,12 +519,47 @@ export function emptyBlock({ ico = 'inbox', title, desc = '', action = '' }) {
 }
 
 /* ---------- Debounce ---------- */
+/**
+ * Gộp nhiều lần gọi liên tiếp thành một lần chạy sau `ms`.
+ *
+ * Trả về hàm có thêm hai phương thức:
+ *   .cancel()  — huỷ lần chờ hiện tại (dùng khi bấm Enter để không chạy 2 lần)
+ *   .flush()   — chạy NGAY lần chờ hiện tại (nếu có) rồi xoá hẹn giờ
+ */
 export function debounce(fn, ms = 300) {
-  let t;
-  return (...args) => {
+  let t = null;
+  let lastArgs = null;
+
+  const wrapped = (...args) => {
+    lastArgs = args;
     clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
+    t = setTimeout(() => {
+      t = null;
+      const a = lastArgs;
+      lastArgs = null;
+      fn(...a);
+    }, ms);
   };
+
+  wrapped.cancel = () => {
+    clearTimeout(t);
+    t = null;
+    lastArgs = null;
+  };
+
+  wrapped.flush = () => {
+    if (t === null) return;
+    clearTimeout(t);
+    t = null;
+    const a = lastArgs || [];
+    lastArgs = null;
+    fn(...a);
+  };
+
+  /** Đang có lần chờ chưa chạy? */
+  wrapped.pending = () => t !== null;
+
+  return wrapped;
 }
 
 /* ---------- Copy to clipboard ---------- */

@@ -404,9 +404,48 @@ export async function adminSaveProduct(env, request, productId = null) {
   const licensePrefix = body.licensePrefix
     ? str(body.licensePrefix, 'licensePrefix', { max: 8 }).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'AOE1'
     : (deliveryType === 'license' ? 'AOE1' : null);
-  const licenseDays = body.licenseDays !== undefined
-    ? int(body.licenseDays, 'licenseDays', { min: 0, max: 3650 })
-    : 0;
+  /*
+   * ===== license_days: KHÔNG ĐƯỢC MẶC ĐỊNH 0 (P0 — sửa 21/11) =====
+   *
+   * `0` mang nghĩa VĨNH VIỄN (quy ước giữ từ bảng `licenses`). Bản cũ:
+   *     const licenseDays = body.licenseDays !== undefined ? int(...) : 0;
+   * nên mọi lần admin LƯU sản phẩm mà không gửi field này đều biến sản phẩm
+   * thành bán quyền vĩnh viễn. Form admin còn gửi `Number(...) || 0`
+   * (public/assets/pages/admin.js), tức ô "số ngày" để trống = 0 = vĩnh viễn.
+   * Hệ quả thật: khách trả tiền một gói 30 ngày và nhận quyền vĩnh viễn.
+   *
+   * Nay:
+   *   - Sản phẩm giao bằng license BẮT BUỘC có số ngày >= 1.
+   *   - Khi CẬP NHẬT mà client không gửi `licenseDays`, GIỮ NGUYÊN giá trị
+   *     đang có trong CSDL (không ghi đè bằng 0).
+   *   - Muốn bán vĩnh viễn thì phải nói rõ bằng `licenseDays: 0` — vẫn được
+   *     phép, nhưng là hành động có chủ đích chứ không phải do bỏ trống.
+   */
+  let licenseDays;
+  if (body.licenseDays !== undefined && body.licenseDays !== null && body.licenseDays !== '') {
+    licenseDays = int(body.licenseDays, 'licenseDays', { min: 0, max: 3650 });
+  } else if (productId) {
+    // Cập nhật mà không gửi số ngày -> giữ nguyên giá trị hiện có.
+    const cur = await env.DB.prepare(
+      'SELECT license_days FROM products WHERE id = ?'
+    ).bind(productId).first();
+    licenseDays = cur && cur.license_days !== null && cur.license_days !== undefined
+      ? Number(cur.license_days)
+      : 0;
+  } else {
+    // Tạo mới mà bỏ trống -> không có giá trị cũ để giữ.
+    licenseDays = deliveryType === 'license' ? null : 0;
+  }
+
+  if (deliveryType === 'license' && !(Number(licenseDays) >= 1)) {
+    throw new ApiError(
+      400,
+      'Sản phẩm bán theo kỳ hạn phải có số ngày >= 1. ' +
+      'Để trống sẽ bị hiểu là vĩnh viễn — hãy nhập số ngày cụ thể.',
+      'LICENSE_DAYS_REQUIRED',
+      { licenseDays: licenseDays === null ? 'missing' : licenseDays }
+    );
+  }
 
   if (productId) {
     const exists = await env.DB.prepare('SELECT id FROM products WHERE id = ?').bind(productId).first();

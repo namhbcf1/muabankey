@@ -312,7 +312,7 @@ export async function apiTrialCommand(env, request) {
       return json({
         ok: false, code: 'trial_device_limit',
         msg: 'Máy này đã dùng thử cho nhiều tài khoản khác. '
-          + 'Mua key để dùng không giới hạn.',
+          + 'Mua gói để dùng không giới hạn.',
       }, 403);
     }
   }
@@ -369,7 +369,7 @@ export async function apiTrialCommand(env, request) {
     if (!quota.ok) {
       return json({
         ok: false, code: 'trial_quota_exhausted',
-        msg: `Máy này đã dùng hết ${quota.quota} lượt ${label}. Mua key để tiếp tục.`,
+        msg: `Máy này đã dùng hết ${quota.quota} lượt ${label}. Mua gói để tiếp tục.`,
         used: quota.used, quota: quota.quota, left: 0,
       }, 403);
     }

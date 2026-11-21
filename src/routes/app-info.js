@@ -40,6 +40,6 @@ export async function appVersion(env, request) {
      * bị trỏ về xa_nofog_pro.exe như trước.
      * Field `arena` giữ lại để client mới đọc rõ ràng.
      */
-    const arena = arenaVersionData(request);
+    const arena = arenaVersionData(request, env);
     return ok({ ...arena, arena });
 }

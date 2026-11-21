@@ -1,5 +1,8 @@
 import { launch, connect, newPage, sleep, PROD } from './cdp.mjs';
 import { writeFileSync } from 'node:fs';
+import { adminCredentials } from './qa-guard.mjs';
+
+const ADMIN = (() => { const c = adminCredentials(); return { u: c.username, p: c.password }; })();
 
 const out = [];
 const log = (o) => { out.push(o); console.log(JSON.stringify(o)); };
@@ -27,7 +30,7 @@ async function login(page, account, password) {
 
   /* ---------- 1. XSS via admin users tab (DB has <script>alert(1)</script> names) ---------- */
   const p = await newPage(browser, { width: 1600, height: 950 });
-  await login(p, 'namhbcf', 'namhbcf123');
+  await login(p, ADMIN.u, ADMIN.p);
   await hardGoto(p, '/admin?tab=users');
   await sleep(1500);
   const xss = await p.eval(`(()=>{
@@ -112,7 +115,7 @@ async function login(page, account, password) {
   /* ---------- 7. mobile admin table horizontal scroll ---------- */
   await up.close();
   const mp = await newPage(browser, { width: 375, height: 812, mobile: true });
-  await login(mp, 'namhbcf', 'namhbcf123');
+  await login(mp, ADMIN.u, ADMIN.p);
   for (const tab of ['orders', 'licenses', 'users', 'logs', 'dashboard', 'settings']) {
     await hardGoto(mp, '/admin?tab=' + tab);
     await sleep(1400);

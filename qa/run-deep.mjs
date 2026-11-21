@@ -1,5 +1,8 @@
 import { launch, connect, newPage, sleep, PROD } from './cdp.mjs';
 import { writeFileSync } from 'node:fs';
+import { adminCredentials } from './qa-guard.mjs';
+
+const ADMIN = (() => { const c = adminCredentials(); return { u: c.username, p: c.password }; })();
 
 const out = [];
 const log = (o) => { out.push(o); console.log(JSON.stringify(o)); };
@@ -171,7 +174,7 @@ const STATE = `(()=>{
   /* ================= 5. admin keys tab without product & with product ================= */
   await bp.close();
   const ap = await newPage(browser, { width: 1600, height: 950 });
-  await login(ap, 'namhbcf', 'namhbcf123');
+  await login(ap, ADMIN.u, ADMIN.p);
   await hardGoto(ap, '/admin?tab=keys'); await sleep(1200);
   log({ test: 'A-admin-keys-empty', ...(await ap.eval(STATE)) });
   await hardGoto(ap, '/admin?tab=keys&product=p-win11'); await sleep(1800);

@@ -56,13 +56,24 @@ function dropExpired(now) {
  * Đếm NGUYÊN TỬ bằng D1: MỘT câu upsert + RETURNING -> 1 thao tác, đúng
  * toàn cục. Ngưỡng: cho qua đúng `limit` request đầu của khung.
  */
-async function d1Bump(env, key, windowAt, limit) {
+async function d1Bump(env, key, windowAt, limit, expiresAt) {
+  /*
+   * `expires_at` là mốc hết hạn TUYỆT ĐỐI của khung, khác hẳn `window_at`
+   * (chỉ số khung = floor(unix_giây / windowSec)).
+   *
+   * Vì sao cần: cron dọn bảng cũ so `window_at` với ngưỡng tính theo window
+   * 60s. Với window 900s/3600s, chỉ số khung LUÔN nhỏ hơn ngưỡng đó, nên mỗi
+   * lần cron chạy (10 phút) là xoá sạch bộ đếm — bộ đếm chống dò mật khẩu
+   * theo tài khoản (lf:) và theo IP (login:) mất tác dụng hoàn toàn.
+   *
+   * Nay cron chỉ cần `DELETE WHERE expires_at < NOW`.
+   */
   const row = await env.DB.prepare(
-    `INSERT INTO rate_limits (key, window_at, count) VALUES (?,?,1)
+    `INSERT INTO rate_limits (key, window_at, count, expires_at) VALUES (?,?,1,?)
      ON CONFLICT(key, window_at) DO UPDATE SET count = count + 1
      RETURNING count`
   )
-    .bind(key, windowAt)
+    .bind(key, windowAt, expiresAt)
     .first();
   const count = Number(row && row.count) || 1;
   if (count > limit) throw new ApiError(429, MSG_RATE, 'RATE_LIMITED');
@@ -70,9 +81,9 @@ async function d1Bump(env, key, windowAt, limit) {
 }
 
 /** Đường nhạy cảm: D1 nguyên tử, KV là lớp dự phòng, cuối cùng mới chặn. */
-async function strictLimit(env, key, windowAt, cacheKey, ttl, limit) {
+async function strictLimit(env, key, windowAt, cacheKey, ttl, limit, expiresAt) {
   try {
-    return await d1Bump(env, key, windowAt, limit);
+    return await d1Bump(env, key, windowAt, limit, expiresAt);
   } catch (e) {
     if (e instanceof ApiError) throw e;
     // D1 lỗi -> lớp hai: KV (đọc rồi ghi) như trước đây.
@@ -105,10 +116,16 @@ export async function rateLimit(env, key, limit, windowSec, opts = {}) {
   const failClosed = opts.failClosed === true;
   const nowS = Math.floor(Date.now() / 1000);
   const windowAt = Math.floor(nowS / windowSec);
+  /*
+   * Mốc hết hạn tuyệt đối của khung. Khung `windowAt` kết thúc ở giây
+   * (windowAt + 1) * windowSec, nên hết hạn đúng mốc đó — sau đó bộ đếm
+   * không còn ý nghĩa và cron được phép xoá.
+   */
+  const expiresAt = (windowAt + 1) * windowSec;
   const cacheKey = `rl:${key}:${windowAt}`;
   const ttl = Math.max(windowSec, 60);
 
-  if (failClosed) return strictLimit(env, key, windowAt, cacheKey, ttl, limit);
+  if (failClosed) return strictLimit(env, key, windowAt, cacheKey, ttl, limit, expiresAt);
 
   /* ---------- Đường thường: bộ đếm trong isolate ---------- */
   const now = Date.now();
@@ -122,7 +139,7 @@ export async function rateLimit(env, key, limit, windowSec, opts = {}) {
        * Thay vào đó request này đi đường D1 nguyên tử.
        */
       try {
-        return await d1Bump(env, key, windowAt, limit);
+        return await d1Bump(env, key, windowAt, limit, expiresAt);
       } catch (e) {
         if (e instanceof ApiError) throw e;
         return { count: 0, remaining: limit, degraded: true };
@@ -162,7 +179,7 @@ export async function rateLimit(env, key, limit, windowSec, opts = {}) {
       // KV ghi lỗi -> D1 (nguyên tử) giữ mốc toàn cục; nếu D1 cũng lỗi thì
       // fail-open: không chặn khách vì hạ tầng đếm hỏng.
       try {
-        const r = await d1Bump(env, key, windowAt, limit);
+        const r = await d1Bump(env, key, windowAt, limit, expiresAt);
         if (r.count > b.count) b.count = r.count;
       } catch (e) {
         if (e instanceof ApiError) throw e;

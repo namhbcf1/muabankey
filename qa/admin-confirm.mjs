@@ -1,8 +1,12 @@
 /**
  * QA: admin login + confirm-payment on a stuck order (rescue path).
- * Usage: node qa/admin-confirm.mjs <orderId>
+ * Usage: QA_BASE=http://127.0.0.1:8787 QA_ADMIN_PASSWORD=<pw> node qa/admin-confirm.mjs <orderId>
  */
-const BASE = 'https://xienhl.com';
+import { target, assertWritable, adminCredentials } from './qa-guard.mjs';
+
+const t = target();
+assertWritable(t, { writes: true });
+const BASE = t.base;
 
 class Client {
   constructor() { this.cookie = ''; }
@@ -28,7 +32,7 @@ const orderId = process.argv[2];
 if (!orderId) { console.error('need orderId'); process.exit(1); }
 
 const a = new Client();
-const login = await a.post('/api/auth/login', { username: 'namhbcf', password: 'namhbcf123' });
+const login = await a.post('/api/auth/login', adminCredentials());
 console.log('admin login ->', login.status, login.text.slice(0, 200));
 
 const dash = await a.get('/api/admin/dashboard');

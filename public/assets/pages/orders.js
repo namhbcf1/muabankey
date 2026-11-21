@@ -16,6 +16,14 @@ import { icon } from '../icons.js';
 import { state } from '../state.js';
 
 // tone + nhãn + icon cho từng trạng thái đơn.
+/*
+ * PHẢI phủ HẾT trạng thái backend ghi, nếu không `statusPill` rơi vào
+ * fallback và in nguyên chuỗi tiếng Anh cho khách đọc.
+ *
+ * Đặc biệt `refund_pending_transfer`: backend TÁCH "quyết định hoàn" khỏi
+ * "đã chuyển tiền". Đơn ở trạng thái này nghĩa là quyền đã thu hồi nhưng tiền
+ * CHƯA tới tay khách — câu chữ phải nói đúng như vậy, không được ghi "đã hoàn".
+ */
 const STATUS_MAP = {
   pending: ['pill-yellow', 'Chờ chuyển khoản', 'clock'],
   expired: ['pill-gray', 'Hết hạn', 'clock'],
@@ -23,14 +31,15 @@ const STATUS_MAP = {
   paid: ['pill-blue', 'Đã thanh toán', 'card'],
   delivered: ['pill-green', 'Đã giao', 'checkCircle'],
   cancelled: ['pill-gray', 'Đã huỷ', 'ban'],
-  refunding: ['pill-yellow', 'Đang hoàn tiền', 'undo'],
+  refunding: ['pill-yellow', 'Đang xử lý hoàn', 'undo'],
+  refund_pending_transfer: ['pill-yellow', 'Chờ chuyển tiền hoàn', 'clock'],
   refunded: ['pill-red', 'Đã hoàn tiền', 'undo'],
   /*
    * `refund_stuck` do cron ghi khi đơn hoàn tiền bị treo giữa chừng. Thiếu
    * nhãn thì statusPill rơi vào fallback và in nguyên chuỗi tiếng Anh
    * "refund_stuck" cho khách đọc.
    */
-  refund_stuck: ['pill-yellow', 'Hoàn tiền chờ xử lý', 'clock'],
+  refund_stuck: ['pill-yellow', 'Hoàn tiền chờ đối soát', 'clock'],
 };
 
 /**

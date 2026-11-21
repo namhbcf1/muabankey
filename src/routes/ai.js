@@ -88,21 +88,68 @@ async function buildSuggestions(env, q) {
   return (results || []).map((p) => ({ slug: p.slug, name: p.name, price: p.price }));
 }
 
+/**
+ * Trả lời theo từ khoá khi AI không dùng được.
+ *
+ * ============================================================================
+ * F09 — BẢN CŨ HƯỚNG DẪN SAI HOÀN TOÀN
+ *
+ * Bản trước trả về:
+ *   "Bạn nạp tiền bằng cách vào mục Nạp tiền, quét mã VietQR… Tiền vào ví tự
+ *    động… sau đó bạn có thể mua key ngay."
+ *
+ * Cả ba thứ đó đều KHÔNG CÒN tồn tại:
+ *   • Không có trang "Nạp tiền" và không có ví — chủ shop bỏ mô hình ví.
+ *   • Không có "key" để mua — quyền cộng thẳng vào tài khoản.
+ *   • Thanh toán là QR THEO ĐƠN, không phải nạp trước.
+ *
+ * Khách làm đúng theo câu trả lời này sẽ đi tìm một trang không tồn tại.
+ * Đây là dạng lỗi tệ nhất của bot: tự tin và sai.
+ *
+ * Nay câu trả lời lấy từ chính sách đang bán (src/lib/policy.js), nên khi
+ * chính sách đổi thì câu trả lời đổi theo.
+ * ============================================================================
+ */
 async function keywordAdvice(env, q) {
   const lower = q.toLowerCase();
+  const { trialPolicySentence, FEATURE_LABEL } = await import('../lib/policy.js');
+
   const { results } = await env.DB.prepare(
     `SELECT name, price, duration_label FROM products WHERE active = 1 ORDER BY featured DESC, sold_count DESC LIMIT 5`
   ).all();
 
-  if (/giá|bao nhiêu|price/.test(lower)) {
-    const list = (results || []).map((p) => `• ${p.name}: ${p.price.toLocaleString('vi-VN')}đ`).join('\n');
-    return `Dưới đây là một số sản phẩm bán chạy:\n${list}\n\nBạn cần mình tư vấn cụ thể sản phẩm nào không?`;
+  if (/giá|bao nhiêu|price|gói/.test(lower)) {
+    const list = (results || [])
+      .map((p) => `• ${p.name}: ${p.price.toLocaleString('vi-VN')}đ`)
+      .join('\n');
+    return `Dưới đây là các gói đang bán:\n${list}\n\n`
+      + `Shop bán hai tính năng: ${FEATURE_LABEL.nofog} và ${FEATURE_LABEL.grant}, `
+      + 'gộp trong cùng một app. Bạn cần mình tư vấn gói nào không?';
   }
-  if (/thanh toán|nạp tiền|chuyển khoản|ví/.test(lower)) {
-    return 'Bạn nạp tiền bằng cách vào mục "Nạp tiền", quét mã VietQR và chuyển khoản đúng nội dung. Tiền vào ví tự động trong 1-2 phút, sau đó bạn có thể mua key ngay.';
+
+  if (/thanh toán|chuyển khoản|qr|mua/.test(lower)) {
+    return 'Thanh toán theo TỪNG ĐƠN: vào trang sản phẩm, bấm "Mua ngay", '
+      + 'hệ thống hiện mã QR VietQR đã điền sẵn số tiền và nội dung. '
+      + 'Quét mã bằng app ngân hàng là xong — không cần nạp trước, không có ví. '
+      + 'Tiền vào là quyền được cộng thẳng vào tài khoản của bạn.';
   }
+
+  if (/dùng thử|trial|miễn phí/.test(lower)) {
+    return trialPolicySentence();
+  }
+
   if (/bảo hành|hoàn tiền|lỗi/.test(lower)) {
-    return 'Tất cả sản phẩm đều có bảo hành: Windows/Office 365 ngày, AI tools 30 ngày, streaming đổi mới nếu lỗi. Nếu key không dùng được, bạn liên hệ hỗ trợ và được đổi mới hoặc hoàn tiền 100%.';
+    return 'Có bảo hành 1 đổi 1 và hoàn tiền theo quy trình có chứng từ chuyển khoản. '
+      + 'Nếu app báo lỗi, bạn gửi mã đơn và ảnh chụp màn hình cho hỗ trợ.';
   }
-  return 'Mình có thể tư vấn Windows/Office, công cụ AI (ChatGPT, Claude), thiết kế (Adobe, Canva), streaming (Netflix, Spotify) và bảo mật (VPN, antivirus). Bạn đang tìm sản phẩm nào ạ?';
+
+  if (/mấy máy|thiết bị|đổi máy/.test(lower)) {
+    return 'Một tài khoản dùng trên MỘT máy tại một thời điểm. '
+      + 'Đổi máy thì mở app và đăng nhập lại trên máy mới — máy cũ sẽ bị ngắt '
+      + 'ở lần kiểm tra kế tiếp.';
+  }
+
+  return `Shop bán một app duy nhất với hai tính năng: ${FEATURE_LABEL.nofog} `
+    + `và ${FEATURE_LABEL.grant}, quyền gắn với tài khoản (không phải mã key). `
+    + 'Bạn muốn hỏi về giá, thanh toán, dùng thử hay đổi máy?';
 }

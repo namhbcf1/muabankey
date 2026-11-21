@@ -1,6 +1,7 @@
 /** Trang hỗ trợ: FAQ, chính sách, hướng dẫn. */
 import { esc } from '../lib.js';
 import { icon } from '../icons.js';
+import { TRIAL_FAQ, PURCHASE_TERMS } from '../policy.js';
 
 /*
  * Toàn bộ nội dung trang này nói về SẢN PHẨM THẬT của shop: tool Windows cho
@@ -11,26 +12,25 @@ import { icon } from '../icons.js';
 
 const FAQS = [
   ['Tool này làm gì?',
-   'Hai tool cho AoE1 / XArena: (1) MAP SÁNG — xoá sương mù toàn bản đồ và cả minimap; '
-   + '(2) THÊM TÀI NGUYÊN — cộng vàng, gỗ, thịt trong trận đang chơi. Mua theo gói, '
-   + 'licence gắn với máy.'],
+   'Một app duy nhất cho AoE1 / XArena gồm hai tính năng: (1) MAP SÁNG — xoá sương mù '
+   + 'toàn bản đồ và cả minimap; (2) TÀI NGUYÊN — cộng vàng, gỗ, thịt trong trận đang chơi. '
+   + 'Quyền gắn với TÀI KHOẢN, không có mã key nào phải nhập.'],
   ['Mua xong dùng thế nào?',
-   'Mua trên web (cần đăng nhập), rồi mở XA ARENA và bấm Đăng nhập — licence tự gắn vào tài khoản. '
+   'Mua trên web (cần đăng nhập), rồi mở XA ARENA và bấm Đăng nhập — quyền tự cộng vào tài khoản. '
    + 'Không có mã nào phải nhập hay copy.'],
   ['Tải và chạy ra sao?',
    'Một file duy nhất, không cần cài đặt: bấm "Tải XA ARENA" ở trang Tải về, mở xa_arena.exe, '
-   + 'chọn Yes khi Windows hỏi quyền. Chưa mua thì bản dùng thử tự bật.'],
+   + 'chọn Yes khi Windows hỏi quyền. Chưa mua thì bản dùng thử tự bật sau khi đăng nhập.'],
   ['Máy tôi cần cấu hình gì?',
    'Windows 10 hoặc Windows 11 bản 64-bit, chạy bằng quyền Administrator, '
    + 'và PHẢI có internet mỗi lần chạy — tool không có chế độ offline.'],
-  ['Licence dùng được mấy máy?',
-   'Một máy. Đổi máy thì mở app bấm "Gắn máy khác" (hoặc vào "Licence của tôi" trên web). '
-   + 'Số lượt đổi máy có hạn, xem ngay trong thẻ licence.'],
+  ['Quyền dùng được mấy máy?',
+   'Một tài khoản dùng trên MỘT máy tại một thời điểm. Đổi máy thì mở app đăng nhập lại trên máy mới; '
+   + 'máy cũ sẽ bị ngắt ở lần kiểm tra kế tiếp.'],
   ['Dùng thử thế nào?',
-   'Mở XA ARENA là dùng thử miễn phí, không cần tài khoản — đồng hồ gắn theo máy (HWID). '
-   + 'Hết giờ, app hiện nút "Mua" để mở shop.'],
+   TRIAL_FAQ.a],
   ['Đã dùng được rồi có được hoàn tiền?',
-   'Không. Licence đã kích hoạt (tool chạy được trên máy bạn) thì không hoàn tiền — '
+   'Quyền đã cấp và tool đã chạy được trên máy bạn thì không hoàn tiền — '
    + 'kể cả khi bạn đổi ý hoặc không còn chơi. Xem mục "Chính sách hoàn tiền" bên dưới để biết '
    + 'trường hợp nào được hoàn.'],
 ];
@@ -88,7 +88,7 @@ export function renderSupport() {
   <div id="site-header"></div>
   <section class="section-sm">
     <div class="container">
-      <div class="pd-breadcrumb"><a href="#/">Trang chủ</a><span>/</span><span>Hỗ trợ</span></div>
+      <nav class="pd-breadcrumb" aria-label="Đường dẫn"><a href="#/">Trang chủ</a>${icon('chevronRight', { size: 12, cls: 'crumb-sep' })}<span>Hỗ trợ</span></nav>
       <div class="sec-head">
         <div>
           <h1 class="sec-title">Trung tâm hỗ trợ</h1>

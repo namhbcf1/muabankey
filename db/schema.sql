@@ -5,6 +5,28 @@
 --
 -- Dung lai tu dau:
 --   npx wrangler d1 execute muabankey-db --remote --file=db/schema.sql --yes
+--
+-- ===========================================================================
+-- QUAN TRONG — DOC TRUOC KHI DUNG
+--
+-- File nay la ANH CHUP schema NEN (legacy baseline) va CO Y bo trong ba bang
+-- cua mo hinh hien hanh:
+--
+--     account_entitlements      quyen theo tai khoan (nguon su that)
+--     trial_accounts            luot dung thu theo tai khoan
+--     entitlement_grants        so cap quyen bat bien
+--     payment_inbox             chung tu tien vao ben vung
+--     schema_migrations         phien ban da chay
+--
+-- Chung nam trong db/migrations/*.sql va PHAI chay kem:
+--
+--     node db/migrate.mjs --sqlite <duong-dan>     (kiem thu / SQLite)
+--     npx wrangler d1 execute muabankey-db --remote --file=db/migrations/NNNN-*.sql
+--
+-- Hoac dung script `npm run db:setup` (xem package.json) de chay dung thu tu.
+-- Neu chi chay file nay, CSDL moi se THIEU cac bang tren: moi truy van quyen
+-- deu loi va bi `catch {}` nuot -> app bao "khach khong co quyen" cho ca khach
+-- da tra tien, ma log khong co loi nao.
 -- ===========================================================================
 
 PRAGMA foreign_keys = OFF;

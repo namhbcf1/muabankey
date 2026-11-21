@@ -67,14 +67,18 @@ if (-not $signtool) {
 Write-Host "  [OK] signtool: $signtool" -ForegroundColor Green
 
 # ---- File can ky ----
+#
+# P0: ban cu chi ky 3 file DA KHONG CON TON TAI (dist-setup/xa_setup.exe,
+# dist-grant/xa_grant.exe, dist-nuitka/xa_nofog_pro.exe) va KHONG he ky file
+# dang duoc phat hanh la `tool\dist-arena\xa_arena.exe`. Ket qua: script nay
+# chay xong bao "XONG" trong khi EXE khach tai ve van NotSigned.
 $targets = @(
-    (Join-Path $root 'tool\dist-setup\xa_setup.exe'),
-    (Join-Path $root 'tool\dist-grant\xa_grant.exe'),
-    (Join-Path $root 'tool\dist-nuitka\xa_nofog_pro.exe')
+    (Join-Path $root 'tool\dist-arena\xa_arena.exe')
 ) | Where-Object { Test-Path $_ }
 
 if ($targets.Count -eq 0) {
-    Write-Host '  [X] Khong co file .exe nao de ky. Build truoc.' -ForegroundColor Red
+    Write-Host '  [X] Khong co file .exe nao de ky. Build truoc:' -ForegroundColor Red
+    Write-Host '      powershell -ExecutionPolicy Bypass -File tool\build-arena.ps1 -SkipSign'
     exit 1
 }
 
@@ -182,14 +186,13 @@ if ($failed -gt 0) {
     exit 1
 }
 
-Write-Host '=== XONG. Nho cap nhat SHA-256 vao code va upload lai R2 ===' -ForegroundColor Green
+Write-Host '=== XONG ===' -ForegroundColor Green
 Write-Host ''
-Write-Host '  Cap nhat hash:'
-Write-Host '    src/routes/install-info.js    -> SETUP_SHA256, SETUP_SIZE'
-Write-Host '    src/routes/xa-grant-installer.js -> EXE_SHA256, EXE_SIZE'
-Write-Host '    src/routes/installer.js       -> EXE_SHA256, EXE_SIZE'
+Write-Host '  QUAN TRONG: hash phai duoc tinh SAU khi ky (ky lam doi bytes file).'
+Write-Host '  Cach dung: build-arena.ps1 da tu ky VA tu cap nhat hash — hay dung script do'
+Write-Host '  thay vi chay rieng file nay. Neu van chay rieng, cap nhat hash theo:'
+Write-Host ''
+Write-Host '    src/routes/arena-installer.js -> EXE_SHA256, EXE_SIZE'
 Write-Host ''
 Write-Host '  Upload R2:'
-Write-Host '    npx wrangler r2 object put "muabankey-assets/files/xa_setup.exe" --file=tool\dist-setup\xa_setup.exe --content-type=application/octet-stream --remote'
-Write-Host '    npx wrangler r2 object put "muabankey-assets/files/xa_grant.exe" --file=tool\dist-grant\xa_grant.exe --content-type=application/octet-stream --remote'
-Write-Host '    npx wrangler r2 object put "muabankey-assets/files/xa_nofog_pro.exe" --file=tool\dist-nuitka\xa_nofog_pro.exe --content-type=application/octet-stream --remote'
+Write-Host '    npx wrangler r2 object put "muabankey-assets/files/xa_arena.exe" --file=tool\dist-arena\xa_arena.exe --content-type=application/octet-stream --remote'

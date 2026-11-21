@@ -1,8 +1,9 @@
 import { Client, q, q1, BASE } from './q.mjs';
+import { adminCredentials } from './qa-guard.mjs';
 import { rec, newUser, hook, dump } from './lib.mjs';
 
 const adm = new Client();
-await adm.req('/api/auth/login', { method: 'POST', body: { username: 'namhbcf', password: 'namhbcf123' } });
+await adm.req('/api/auth/login', { method: 'POST', body: adminCredentials() });
 
 async function scenario(label, transferAmount) {
   const u = await newUser('FV');

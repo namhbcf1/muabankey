@@ -2983,18 +2983,59 @@ def ensure_grant_token(d, on_step=None):
     key = grant_key_of(d)
     if not key:
         # MÔ HÌNH MỚI: không còn key. Quyền tài nguyên nằm ở TÀI KHOẢN.
-        # Lấy token bằng cách gọi lại /api/trial/session — đã mua hay dùng
-        # thử đều đi qua cùng một đường, server biết tài khoản có gì.
+        #
+        # ==================================================================
+        # F06 — LỖI ĐÃ SỬA: ĐÂY TỪNG GỌI start_account_trial()
+        #
+        # Bản cũ gọi THẲNG `start_account_trial()` — tức endpoint DÙNG THỬ
+        # (POST /api/trial/session). Endpoint đó KHÔNG phải đường đọc quyền đã
+        # mua: nó chạy đồng hồ dùng thử, kiểm "tài khoản đã dùng thử chưa",
+        # chặn khi đã dùng rồi, và trả lỗi `trial_expired` / `trial_used_before`.
+        #
+        # Hệ quả thật với khách ĐÃ TRẢ TIỀN cho gói tài nguyên:
+        #   • tài khoản đã dùng thử trước đây  -> nhận `trial_used_before` và
+        #     KHÔNG lấy được token dù quyền mua còn nguyên;
+        #   • tài khoản đã dùng thử hết 1 ngày -> nhận `trial_expired`;
+        #   • khách chỉ mua grant (không có nofog) -> hàm ensure_tokens() ở
+        #     trên thoát sớm ở `if not d.get('hasNofog')`, nên đây là ĐƯỜNG
+        #     DUY NHẤT lấy token tài nguyên, và nó hỏng đúng với khách đó.
+        #
+        # Nay: `/api/account/token` trước (CHỈ ĐỌC quyền tài khoản, không chạy
+        # đồng hồ, không kiểm lượt thử). Chỉ khi server nói thẳng
+        # `no_entitlement` — nghĩa là tài khoản thật sự chưa có quyền nào —
+        # mới xin dùng thử.
+        #
+        # Đây đúng là state machine mà kế hoạch yêu cầu:
+        #   session -> snapshot quyền -> token cho tính năng ĐÃ CÓ
+        #           -> chỉ start trial nếu chưa có và đủ điều kiện.
+        # ==================================================================
         say('Đang lấy quyền tài nguyên từ tài khoản…')
-        r = start_account_trial()
+        try:
+            r = fetch_account_token()
+        except Exception as e:
+            set_last_code('network')
+            return False, 'không lấy được quyền tài nguyên: %s' % str(e)[:100]
+
+        if not r.get('ok') and r.get('state') == 'no_entitlement':
+            # Chưa mua gì -> mới xin dùng thử
+            say('Chưa có quyền — đang bật dùng thử…')
+            try:
+                r = start_account_trial()
+            except Exception as e:
+                set_last_code('network')
+                return False, 'không bật được dùng thử: %s' % str(e)[:100]
+
         if not r.get('ok'):
+            set_last_code(r.get('state') or 'error')
             return False, r.get('msg') or 'không lấy được quyền tài nguyên'
+
         try:
             okE3, msgE3 = XG.ensure_engine(None)
         except Exception as e:
             return False, str(e)[:100]
         if not okE3:
             return False, msgE3 or 'token tài nguyên mới vẫn không dùng được'
+        set_last_code('')
         say('Đã có quyền tài nguyên.')
         return True, ''
 

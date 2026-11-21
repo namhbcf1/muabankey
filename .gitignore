@@ -37,6 +37,38 @@ scripts/gen-credentials.mjs
 scripts/check-sepay-token.mjs
 
 # ===========================================================================
+# QA — KHÔNG COMMIT PHẦN CHỨA CREDENTIAL / OUTPUT PHIÊN CHẠY (P0, 21/11)
+#
+# Sự cố: `qa/e2e.mjs` và `qa/e2e-auto.mjs` từng chứa WEBHOOK SECRET THẬT, và
+# 15 file QA khác hardcode tài khoản admin thật — tất cả đều được git theo dõi.
+# Ai có repo là tự ký được webhook SePay (tự tạo tiền) và đăng nhập được trang
+# quản trị.
+#
+# Nay: mã đã chuyển sang đọc biến môi trường (qa/qa-guard.mjs), và các file
+# từng chứa secret bị đưa ra khỏi git. Script QA không chứa credential vẫn
+# tiếp tục được theo dõi.
+# ===========================================================================
+qa/e2e.mjs
+qa/e2e-auto.mjs
+
+# Output phiên chạy — không phải mã nguồn
+qa/*.png
+qa/results-*.json
+qa/ui-*.json
+qa/ledger-backup.json
+qa/payos-forge.json
+
+# Cấu hình có credential thật
+*.audit.toml
+*.iso.toml
+/wrangler.audit.toml
+security-audit/
+
+# Rác do gõ lệnh shell sai
+/script
+/strftime
+
+# ===========================================================================
 # BUILD / BYTECODE
 # ===========================================================================
 node_modules/

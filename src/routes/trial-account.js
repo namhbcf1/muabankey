@@ -475,24 +475,39 @@ export async function startSession(env, request) {
   const leftSec = Math.max(0, expiresAt - now);
 
   /*
-   * GHI QUYỀN VÀO TÀI KHOẢN.
+   * GHI QUYỀN VÀO TÀI KHOẢN — ĐẶT MỐC TUYỆT ĐỐI, KHÔNG CỘNG DỒN.
    *
    * Chủ shop chốt: "đăng nhập sẽ nhận trial cả map sáng cả tài nguyên vào
    * TÀI KHOẢN luôn". Nên lượt dùng thử không chỉ nằm ở `trial_accounts`
    * (bảng kỹ thuật) mà còn ghi thẳng vào `account_entitlements` — nguồn
    * sự thật mà app và web cùng đọc.
    *
-   * Ghi bằng `source='trial'` để phân biệt với gói mua: nếu khách mua sau
-   * đó, grantFeature() sẽ cộng dồn đè lên đúng dòng này.
+   * ==========================================================================
+   * F01 — LỖI ĐÃ SỬA: RESUME TỪNG CỘNG THÊM THỜI GIAN
+   *
+   * Bản trước gọi grantFeature(days = daysLeft) ở MỖI lần start/resume. Mà
+   * grantFeature thì cộng dồn, nên mở app lần hai là hạn dùng thử dài thêm.
+   * Đo được: resume sau 60 giây làm hạn tăng thêm 86.340 giây (~1 ngày).
+   * Khách mở app vài lần là "dùng thử 1 ngày" thành nhiều ngày.
+   *
+   * Nay dùng applyTrialEntitlement(): ĐẶT mốc `expires_at` tuyệt đối của
+   * trial_accounts. Gọi 1 lần hay 100 lần đều cho cùng một hạn, và không bao
+   * giờ rút ngắn quyền khách đã mua.
+   * ==========================================================================
    */
   try {
-    const { grantFeature, FEATURE_NOFOG, FEATURE_GRANT } =
+    const { applyTrialEntitlement, FEATURE_NOFOG, FEATURE_GRANT } =
       await import('../lib/account-entitlement.js');
-    const daysLeft = Math.max(0, (expiresAt - now) / 86400);
+    // Khoá idempotent = mốc bắt đầu của lượt thử. Mỗi lượt thử chỉ ghi MỘT
+    // dòng sổ, dù khách mở app bao nhiêu lần.
+    const trialToken = `${user.id}:${Number(row.started_at || now)}`;
     for (const f of [FEATURE_NOFOG, FEATURE_GRANT]) {
-      await grantFeature(env, {
-        userId: user.id, feature: f, days: daysLeft,
-        source: 'trial', note: 'Dùng thử 1 ngày',
+      await applyTrialEntitlement(env, {
+        userId: user.id, feature: f,
+        expiresAt,
+        trialToken,
+        note: 'Dùng thử theo tài khoản',
+        now,
       });
     }
   } catch (e) {
@@ -545,6 +560,44 @@ async function currentFeatures(env, userId, now) {
     return s.features;
   } catch {
     return ['nofog', 'grant'];
+  }
+}
+
+/**
+ * Hàng rào "một tài khoản = một máy tại một thời điểm" cho đường cấp token
+ * theo tài khoản (F05).
+ *
+ * VÌ SAO TÁCH THÀNH HÀM RIÊNG: hai đường cấp token của mô hình mới
+ * (`POST /api/trial/session` và `POST /api/account/token`) phải dùng CÙNG một
+ * hàng rào. Nếu mỗi nơi tự gọi guard với mode khác nhau thì luật lại bị hở
+ * đúng chỗ này.
+ *
+ * FAIL-OPEN có chủ ý: mọi lỗi (bảng chưa migrate, CSDL lỗi) đều trả `ok:true`
+ * để không khoá oan khách đã trả tiền — nhưng có ghi log để vận hành thấy.
+ */
+async function checkAccountDevice(env, { userId, hwid, ip, now }) {
+  try {
+    const { guardAccountDevice, usesSharedDevice, deviceScope } =
+      await import('../lib/account-device.js');
+
+    // Tài khoản ở mô hình quyền -> một ô thiết bị chung cho cả hai tính năng
+    // (client gửi cùng bộ guid/bios/cpu/vol cho cả hai).
+    const shared = await usesSharedDevice(env, userId);
+    const scope = deviceScope('nofog', { sharedDevice: shared });
+
+    const g = await guardAccountDevice(env, {
+      userId, scope, hwid, ip, mode: 'login', now,
+    });
+    if (!g || g.ok) return { ok: true, enforced: !!g?.enforced, moved: !!g?.moved };
+    return {
+      ok: false,
+      code: g.code || 'session_moved',
+      msg: g.msg || 'Tài khoản đang được dùng ở máy khác. '
+        + 'Bấm đăng nhập lại trên máy bạn muốn dùng.',
+    };
+  } catch (e) {
+    console.error('acct token: device guard', e && e.message);
+    return { ok: true, enforced: false, reason: 'guard_error' };
   }
 }
 
@@ -604,6 +657,38 @@ export async function issueAccountToken(env, request) {
       ok: false, code: 'no_entitlement',
       msg: 'Tài khoản chưa có quyền. Dùng thử 1 ngày hoặc mua license.',
       features: [], trial: acc.trial, now,
+    }, 403);
+  }
+
+  /*
+   * ========================================================================
+   * F05 — HÀNG RÀO THIẾT BỊ PHẢI ÁP Ở ĐƯỜNG CẤP TOKEN NÀY
+   *
+   * LỖI CŨ: hàm này ký token trực tiếp (buildToken / issueSession) mà KHÔNG
+   * gọi `guardAccountDevice`. Luật "một tài khoản = một máy tại một thời điểm"
+   * chỉ được áp ở `/api/activate` và `/api/check` — tức đường của khách bản
+   * cũ. Khách mô hình mới lấy token qua đây nên luật hoàn toàn bị bỏ qua:
+   * một nick chia sẻ được cho bao nhiêu máy cũng xong.
+   *
+   * Nay: kiểm thiết bị TRƯỚC khi ký bất kỳ token nào. `mode='login'` vì khách
+   * vừa đăng nhập trên máy này — đó là hành động chủ động, được chiếm quyền
+   * ngay (xem giải thích trong account-device.js). Nếu họ chỉ đang mở app lại
+   * trên máy khác mà máy cũ vẫn đang chạy, request bị từ chối `session_moved`.
+   *
+   * Mọi thứ nằm trong try/catch: nếu bảng `account_devices` chưa migrate, lớp
+   * này FAIL-OPEN (không khoá oan khách đã trả tiền) và chỉ ghi log. Đây đúng
+   * chính sách fail-open đã ghi trong account-device.js.
+   * ========================================================================
+   */
+  const deviceGate = await checkAccountDevice(env, {
+    userId: user.id, hwid: ids.hwid, ip, now,
+  });
+  if (!deviceGate.ok) {
+    return json({
+      ok: false,
+      code: deviceGate.code || 'session_moved',
+      msg: deviceGate.msg || 'Tài khoản đang được dùng ở máy khác.',
+      now,
     }, 403);
   }
 

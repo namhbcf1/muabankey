@@ -562,99 +562,52 @@ export async function telegramWebhook(env, request) {
         }
       },
       refundOrder: async (o) => {
-        // Hoàn tiền: cộng lại ví + thu hồi license/key, giống adminRefund.
+        /*
+         * ==================================================================
+         * F04 — TELEGRAM PHẢI ĐI CÙNG MỘT DỊCH VỤ VỚI WEB
+         *
+         * Bản cũ ở đây là một BẢN CÀI ĐẶT HOÀN TIỀN RIÊNG: cộng
+         * `users.balance`, ghi `wallet_transactions`, rồi mới đặt 'refunded'.
+         * Trong khi đó đường web (adminRefund) thì ghi admin_note và KHÔNG
+         * cộng ví. Hai đường cho hai kết quả sổ sách khác nhau:
+         *
+         *   • Telegram "hoàn" bằng số dư ví — thứ đã bị bỏ cùng mô hình ví,
+         *     khách không có chỗ tiêu. Tiền thật trong ngân hàng shop không
+         *     được đối soát.
+         *   • Cả hai đường đều có thể chốt 'refunded' mà chưa chứng minh đã
+         *     chuyển tiền cho khách.
+         *
+         * Nay chỉ còn MỘT lõi nghiệp vụ: `refundOrder()` trong
+         * src/lib/refund-service.js. Hàm này chỉ truyền `channel: 'telegram'`
+         * để sổ ghi đúng nguồn thao tác.
+         *
+         * Hoàn tiền ở đây mặc định là CHƯA chuyển tiền (state='pending',
+         * đơn sang 'refund_pending_transfer'). Admin chốt chuyển tiền bằng
+         * /api/admin/orders/:id/refund/complete kèm mã giao dịch ngân hàng.
+         * ==================================================================
+         */
         try {
-          if (!['paid', 'delivered'].includes(o.status)) {
-            return { ok: false, error: `Đơn đang "${o.status}", không hoàn được` };
-          }
+          const { refundOrder: doRefund } = await import('../lib/refund-service.js');
+          const r = await doRefund(env, {
+            orderId: o.id,
+            channel: 'telegram',
+            actor: 'telegram',
+            reason: 'admin_adjust',
+            /*
+             * KHÔNG đánh dấu đã chuyển tiền từ nút bấm trong chat: một cú
+             * bấm trên Telegram không phải là chứng từ ngân hàng. Tiền thật
+             * phải được xác nhận riêng bằng mã giao dịch.
+             */
+            markPaidOut: false,
+          });
 
-          const claim = await env.DB.prepare(
-            "UPDATE orders SET status='refunding', refund_started_at = ? WHERE id = ? AND status IN ('paid','delivered')"
-          ).bind(Date.now(), o.id).run();
-          if (!claim.meta || claim.meta.changes !== 1) {
-            return { ok: false, error: 'Đơn đã được xử lý bởi người khác' };
-          }
-
-          const now = Date.now();
-          const amount = o.total;
-
-          /*
-           * ===== CHỐT SỔ HOÀN TIỀN — ĐƯỜNG TELEGRAM CŨNG PHẢI ĐI QUA ĐÂY =====
-           *
-           * VÌ SAO KHÔNG ĐƯỢC BỎ: đây chính là đường đã bị bỏ sót trước đây.
-           * C2 (race hoàn tiền) từng được vá ở đường web (adminRefund) nhưng
-           * bỏ quên nút bấm Telegram -> cùng một lỗ hổng vẫn khai thác được
-           * từ chat. Nếu thêm guard ở web mà không thêm ở đây thì bug tái
-           * diễn y nguyên.
-           *
-           * refund_ledger.order_id là PRIMARY KEY nên mỗi đơn chỉ có tối đa
-           * MỘT dòng, mãi mãi. INSERT thành công = lượt này được phép cộng
-           * tiền. INSERT trùng = đã cộng rồi (bởi web hoặc Telegram) -> dừng.
-           * Kiểm tra ở TẦNG DB, không dựa vào orders.status vì status có thể
-           * bị cron/sửa tay làm sai.
-           */
-          const claimToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-          let ledgerOk = false;
-          try {
-            const led = await env.DB.prepare(
-              `INSERT INTO refund_ledger
-                 (order_id, amount, user_id, order_code, state, claim_token, source, actor, at)
-               VALUES (?, ?, ?, ?, 'pending', ?, 'telegram', ?, ?)`
-            ).bind(o.id, amount, o.user_id, o.code, claimToken, 'telegram', now).run();
-            ledgerOk = led.meta && led.meta.changes === 1;
-          } catch {
-            ledgerOk = false;
-          }
-          if (!ledgerOk) {
-            // Nhả đơn để admin còn thao tác được trên web nếu cần.
-            await env.DB.prepare(
-              "UPDATE orders SET status = ?, refund_started_at = NULL WHERE id = ? AND status = 'refunding'"
-            ).bind(o.status, o.id).run();
-            return {
-              ok: false,
-              error: 'Đơn này đã được ghi sổ hoàn tiền trước đó. Kiểm tra lại lịch sử.',
-            };
-          }
-
-          // ===== THU HỒI HÀNG ĐÃ GIAO (trước khi cộng tiền) =====
-          const revoked = { licenses: 0 };
-          try {
-            const lics = await env.DB.prepare(
-              'SELECT license_key FROM license_issues WHERE order_id = ?'
-            ).bind(o.id).all();
-            for (const li of lics.results || []) {
-              await env.DB.prepare('UPDATE licenses SET revoked = 1 WHERE key = ?')
-                .bind(li.license_key).run();
-              revoked.licenses++;
-            }
-          } catch { /* bảng có thể không có order_id */ }
-
-          // (ĐÃ BỎ) Thu hồi key kho — bảng `product_keys` không còn.
-
-          /*
-           * ===== CỘNG TIỀN + CHỐT SỔ TRONG MỘT TRANSACTION =====
-           * Cùng cấu trúc với adminRefund: cộng ví, ghi sổ cái, đánh dấu
-           * state='done' (ĐÃ cộng tiền), chốt đơn 'refunded'. Batch của D1
-           * là một transaction nên không có trạng thái "đã cộng mà sổ pending".
-           */
-          await env.DB.batch([
-            env.DB.prepare('UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?')
-              .bind(amount, now, o.user_id),
-            env.DB.prepare(
-              `INSERT INTO wallet_transactions
-                 (id, user_id, type, amount, balance_after, status, reference, description, created_at)
-               VALUES (?,?,'refund',?,(SELECT balance FROM users WHERE id = ?),'success',?,?,?)`
-            ).bind(uuid(), o.user_id, amount, o.user_id, o.code,
-              `Hoàn tiền đơn ${o.code} (qua Telegram)`, now),
-            env.DB.prepare(
-              `UPDATE refund_ledger SET state = 'done', revoked = ?,
-                      claim_token = NULL, at = ?
-                WHERE order_id = ? AND state = 'pending' AND claim_token = ?`
-            ).bind(revoked.licenses, now, o.id, claimToken),
-            env.DB.prepare("UPDATE orders SET status='refunded' WHERE id = ?").bind(o.id),
-          ]);
-
-          return { ok: true, refunded: amount };
+          if (!r.ok) return { ok: false, error: r.message || 'Không hoàn được đơn' };
+          return {
+            ok: true,
+            amount: r.amount,
+            state: r.state,
+            note: 'Đã thu hồi quyền. Chuyển khoản cho khách rồi chốt trong web.',
+          };
         } catch (e) {
           return { ok: false, error: e.message };
         }

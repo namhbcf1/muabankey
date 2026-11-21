@@ -1,4 +1,5 @@
 import { q, q1, Client, BASE } from './q.mjs';
+import { adminCredentials } from './qa-guard.mjs';
 
 console.log('# ═══ KIỂM TRA CUỐI ═══\n');
 
@@ -67,6 +68,6 @@ console.log(`   payment TEST còn lại: ${tPay.n} ${tPay.n === 0 ? '✅' : '❌
 
 /* admin API paranoia check */
 const adm = new Client();
-await adm.req('/api/auth/login', { method: 'POST', body: { username: 'namhbcf', password: 'namhbcf123' } });
+await adm.req('/api/auth/login', { method: 'POST', body: adminCredentials() });
 const pm = await adm.req('/api/admin/payments');
 console.log('\n#API stats sau fix:', JSON.stringify(pm.json.stats), '\n statsAll:', JSON.stringify(pm.json.statsAll));

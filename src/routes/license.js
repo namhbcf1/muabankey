@@ -568,7 +568,7 @@ export async function adminLicenseAction(env, request, key, action) {
    */
   if (action === 'extend' && String(lic.plan || '').toLowerCase() === 'trial') {
     throw new AE(400,
-      'Đây là license dùng thử — không gia hạn được. Khách cần dùng tiếp thì mua key chính thức.',
+      'Đây là license dùng thử — không gia hạn được. Khách cần dùng tiếp thì mua gói chính thức.',
       'TRIAL_NOT_EXTENDABLE');
   }
 
