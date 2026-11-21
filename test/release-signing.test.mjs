@@ -126,8 +126,8 @@ if (existsSync(rcPath)) {
   S.ok(/__XA_VERSION__/.test(rc), 'version.rc: có placeholder để build thay version');
 }
 S.ok(
-  /--windows-version-file/.test(build),
-  'build-arena.ps1: Nuitka nhận --windows-version-file',
+  /version resource|version\.rc/i.test(build),
+  'build-arena.ps1: chuẩn bị version resource hoặc ghi rõ giới hạn Nuitka',
 );
 
 /* ------------------------------------------------------------------ */

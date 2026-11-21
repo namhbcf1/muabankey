@@ -140,7 +140,7 @@ if (-not $mode) {
 }
 
 # ---- Ky ----
-$ts = 'https://timestamp.digicert.com'
+$ts = 'https://timestamp.sectigo.com'
 
 Write-Host ''
 Write-Host '=== Dang ky ===' -ForegroundColor Cyan

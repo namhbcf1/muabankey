@@ -8,6 +8,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 for (const f of ['tool/build-arena.ps1','tool/sign/sign-exe.ps1']) {
   const s = readFileSync(join(ROOT, f), 'utf8');
   S.ok(!/http:\/\/timestamp\.digicert\.com/.test(s), `${f}: không dùng timestamp HTTP`);
-  S.ok(/https:\/\/timestamp\.digicert\.com/.test(s), `${f}: dùng timestamp HTTPS`);
+  S.ok(/https:\/\/timestamp\.(digicert|sectigo)\.com/.test(s), `${f}: dùng timestamp HTTPS`);
 }
 process.exit(S.summary() ? 0 : 1);

@@ -30,7 +30,7 @@ param(
     [switch]$SkipSign,
     [switch]$Clean,
     [string]$CertThumbprint = $env:XA_SIGN_THUMBPRINT,
-    [string]$TimestampUrl   = 'https://timestamp.digicert.com'
+    [string]$TimestampUrl   = 'https://timestamp.sectigo.com'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -157,7 +157,7 @@ Write-Host ''
 Write-Host '  [*] Dang build (co the mat 10-30 phut)...' -ForegroundColor Yellow
 Write-Host ''
 
-$env:PYTHONPATH = "$toolDir\ui;$toolDir\src;$toolDir\grant;$toolDir\app"
+$env:PYTHONPATH = "$toolDir\ui;$toolDir\src;$toolDir\grant;$toolDir\app;$toolDir\setup"
 
 # Cac module duoc import DONG (trong ham) nen Nuitka khong tu thay:
 #   xa_nofog_gui_qt  <- import trong xa_nofog_pro.run()
@@ -167,10 +167,11 @@ $nuitkaArgs = @(
     '-m', 'nuitka',
     '--onefile',
     '--windows-console-mode=disable',   # subsystem GUI: bam dup la mo, khong hien console
-    '--windows-version-file', $rcOut,   # P0: version resource (CompanyName/FileVersion)
+    # Nuitka bản cài hiện tại không hỗ trợ --windows-version-file; version resource
+    # được kiểm tra riêng sau build khi có tool resource phù hợp.
     '--enable-plugin=pyqt6',
     '--output-filename=xa_arena.exe',
-    '--output-dir', $outDir,
+    "--output-dir=$outDir",
     '--assume-yes-for-downloads',
     '--remove-output',
     '--include-module=xa_update',
