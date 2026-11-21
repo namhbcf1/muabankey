@@ -188,7 +188,7 @@ export function qaClient(opts = {}) {
  * Đọc tài khoản admin QA từ biến môi trường. NÉM LỖI nếu thiếu.
  *
  * VÌ SAO: 15 file QA trong repo đang hardcode
- *     { username: 'namhbcf', password: 'namhbcf123' }
+ *     { username: process.env.QA_ADMIN_USER, password: process.env.QA_ADMIN_PASSWORD }
  * và tất cả đều được git theo dõi. Đây là tài khoản admin THẬT của shop:
  * ai có repo là đăng nhập được vào trang quản trị, sửa giá, cấp quyền,
  * xem toàn bộ đơn hàng.

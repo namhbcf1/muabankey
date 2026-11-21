@@ -3,7 +3,7 @@ import { rec, newUser, makeOrder, getQr, dump } from './lib.mjs';
 import fs from 'node:fs';
 
 const cA = new Client(); // user A
-const regA = await cA.req('/api/auth/register', { method: 'POST', body: { username: 'qaSecA' + Date.now().toString(36).slice(-6), password: 'QaPassw0rd!23' } });
+const regA = await cA.req('/api/auth/register', { method: 'POST', body: { username: 'qaSecA' + Date.now().toString(36).slice(-6), password: process.env.QA_TEST_PASSWORD || `Qa-${Date.now()}-Pass!` } });
 cA.cookie; cA.username = regA.json.user.username; cA.userId = regA.json.user.id;
 
 const ordA = await makeOrder(cA, 'p-lic-month', 1);
@@ -41,7 +41,7 @@ rec(32, 'User thường gọi admin -> 403', all403, userRes.join(' '));
 
 /* ---------- 33. đọc đơn người khác -> 404 ---------- */
 const cB = new Client();
-const regB = await cB.req('/api/auth/register', { method: 'POST', body: { username: 'qaSecB' + Date.now().toString(36).slice(-6), password: 'QaPassw0rd!23' } });
+const regB = await cB.req('/api/auth/register', { method: 'POST', body: { username: 'qaSecB' + Date.now().toString(36).slice(-6), password: process.env.QA_TEST_PASSWORD || `Qa-${Date.now()}-Pass!` } });
 cB.cookie; cB.username = regB.json.user.username; cB.userId = regB.json.user.id;
 
 const steal1 = await cB.req(`/api/orders/${orderA.id}`);

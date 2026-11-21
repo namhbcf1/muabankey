@@ -49,7 +49,7 @@ rec('20c', 'Mọi state trong DB đều có nhãn trong UI', missing.length === 
 /* ---------- 21+24. Nút "Đã nhận tiền" / "Giao" ---------- */
 // Create a real pending order paid out-of-window, then admin confirms.
 const u = new Client();
-const reg = await u.req('/api/auth/register', { method: 'POST', body: { username: 'qaAdm' + Date.now().toString(36).slice(-6), password: 'QaPassw0rd!23' } });
+const reg = await u.req('/api/auth/register', { method: 'POST', body: { username: 'qaAdm' + Date.now().toString(36).slice(-6), password: process.env.QA_TEST_PASSWORD || `Qa-${Date.now()}-Pass!` } });
 u.cookie; u.username = reg.json.user.username; u.userId = reg.json.user.id;
 const o = (await u.req('/api/orders', { method: 'POST', body: { items: [{ productId: 'p-lic-month', quantity: 1 }] } })).json.order;
 const gq = (await u.req(`/api/orders/${o.id}/qr`, { method: 'POST' })).json.qr;

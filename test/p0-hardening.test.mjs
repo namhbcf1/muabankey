@@ -282,7 +282,7 @@ S.ok(
 S.section('Không còn secret / mật khẩu admin trong mã');
 
 const WEBHOOK_SECRET_LITERAL = /sk_[a-f0-9]{32,}/;
-const ADMIN_PASS_LITERAL = /namhbcf123/;
+const ADMIN_PASS_LITERAL = /\b(?:admin_password|password)\s*[:=]\s*['"][^'"]{8,}['"]/i;
 
 function stripComments(src) {
   return src

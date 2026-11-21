@@ -57,7 +57,7 @@ export async function newUser(tag) {
   const name = `qa${tag}${Date.now().toString(36).slice(-6)}`;
   const r = await c.req('/api/auth/register', {
     method: 'POST',
-    body: { username: name, password: 'QaPassw0rd!23' },
+    body: { username: name, password: process.env.QA_TEST_PASSWORD || `Qa-${Date.now()}-Pass!` },
   });
   if (r.status !== 201) throw new Error(`register failed ${r.status} ${r.text}`);
   c.username = name;
