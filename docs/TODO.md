@@ -16,6 +16,9 @@
 - Entitlement không còn fallback khi batch lỗi tùy ý; chỉ fallback khi xác định thiếu bảng `entitlement_grants`, tránh double-grant khi UNIQUE/transient error.
 - Global rate limiter fail-closed khi D1/KV lỗi.
 - Product image URL chỉ nhận HTTPS hợp lệ, tránh CSP mismatch và URL scheme nguy hiểm.
+- XA ARENA build timestamp dùng HTTPS; remote migration fail-closed; global limiter fail-closed.
+- Trial account INSERT race được xử lý idempotent khi hai request mở app đồng thời.
+- Python coordinator test đã được đưa vào `npm run verify`.
 - XA ARENA updater fail-closed khi không kiểm tra được release metadata.
 - Thêm test migration command, global rate limit và updater policy; tổng verify hiện tại 20/20 suite pass.
 
