@@ -14,7 +14,7 @@
     "tail": "wrangler tail",
     "test": "node test/run.mjs",
     "test:watch": "node --watch test/run.mjs",
-    "verify": "node test/run.mjs && node scripts/check-syntax.mjs",
+    "verify": "node test/run.mjs && node scripts/check-syntax.mjs && python test/app-coordinator.test.py",
     "clean:css": "node scripts/clean-css.mjs",
     "clean:css:media": "node scripts/clean-css-media.mjs",
     "audit:license-days": "node scripts/audit-license-days.mjs"
