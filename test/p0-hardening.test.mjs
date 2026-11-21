@@ -218,8 +218,8 @@ S.ok(
   'products.js: ném lỗi LICENSE_DAYS_REQUIRED khi thiếu số ngày',
 );
 S.ok(
-  /deliveryType === 'license' && !\(Number\(licenseDays\) >= 1\)/.test(prodSrc),
-  'products.js: chặn sản phẩm license có số ngày < 1',
+  /deliveryType === 'license' && licenseDays === null/.test(prodSrc),
+  'products.js: chỉ chặn khi số ngày KHÔNG xác định (null), không chặn 0 cố ý',
 );
 S.ok(
   /SELECT license_days FROM products WHERE id = \?/.test(prodSrc),
@@ -231,15 +231,16 @@ S.ok(
  * (Không import route vì nó cần cả tầng HTTP; ta kiểm bằng bảng quyết định.)
  */
 function resolveLicenseDays({ sent, current, isEdit, deliveryType }) {
+  const daysProvided = sent !== undefined && sent !== null && sent !== '';
   let days;
-  if (sent !== undefined && sent !== null && sent !== '') {
+  if (daysProvided) {
     days = Number(sent);
   } else if (isEdit) {
-    days = current !== null && current !== undefined ? Number(current) : 0;
+    days = current !== null && current !== undefined ? Number(current) : null;
   } else {
     days = deliveryType === 'license' ? null : 0;
   }
-  const rejected = deliveryType === 'license' && !(Number(days) >= 1);
+  const rejected = deliveryType === 'license' && days === null;
   return { days, rejected };
 }
 
@@ -249,8 +250,16 @@ S.ok(!r.rejected && r.days === 30, 'SỬA sản phẩm không gửi số ngày -
 r = resolveLicenseDays({ sent: undefined, current: undefined, isEdit: false, deliveryType: 'license' });
 S.ok(r.rejected, 'TẠO MỚI bỏ trống số ngày -> BỊ TỪ CHỐI (không bán vĩnh viễn oan)');
 
+/*
+ * QUAN TRỌNG: 0 do người dùng NHẬP RÕ phải đi qua.
+ * Dữ liệu thật có "Gói Vĩnh Viễn" 1.290.000đ (p-lic-forever, đã bán 2) —
+ * chặn 0 sẽ làm admin không sửa được gói đó nữa.
+ */
 r = resolveLicenseDays({ sent: 0, current: 30, isEdit: true, deliveryType: 'license' });
-S.ok(r.rejected, 'TẠO/SỬA với 0 -> BỊ TỪ CHỐI (muốn vĩnh viễn phải là hành động rõ ràng)');
+S.ok(!r.rejected && r.days === 0, 'nhập RÕ 0 -> ĐƯỢC PHÉP (gói vĩnh viễn có chủ đích)', `days=${r.days}`);
+
+r = resolveLicenseDays({ sent: 0, current: undefined, isEdit: false, deliveryType: 'license' });
+S.ok(!r.rejected && r.days === 0, 'tạo mới với 0 rõ ràng -> ĐƯỢC PHÉP');
 
 r = resolveLicenseDays({ sent: 365, current: 30, isEdit: true, deliveryType: 'license' });
 S.ok(!r.rejected && r.days === 365, 'gửi 365 -> nhận 365');

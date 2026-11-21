@@ -1,5 +1,5 @@
 /** Trang tài khoản người dùng. */
-import { api, esc, fmtVnd, fmtNum, toast, navigate, loadingBlock } from '../lib.js';
+import { api, esc, fmtVnd, fmtNum, toast, navigate, loadingBlock, timeAgo, confirmDialog } from '../lib.js';
 import { icon } from '../icons.js';
 import { state, notify, loadUser } from '../state.js';
 
@@ -173,6 +173,16 @@ export async function mountAccount(root) {
             </div>
           </div>
         </div>
+
+        <!--
+          THIẾT BỊ ĐANG ĐĂNG NHẬP (F16)
+          Trước đây khối này chỉ có chữ tĩnh "Cookie HttpOnly". Khách không
+          biết mình đang đăng nhập ở đâu và không đá được máy lạ ra.
+        -->
+        <div class="panel mt-2" id="acc-devices">
+          <h2 class="panel-title">${icon('monitor', { size: 15 })} Thiết bị đang đăng nhập</h2>
+          <div data-dev-list>${loadingBlock('Đang tải danh sách thiết bị...')}</div>
+        </div>
       </div>
     </div>
   `;
@@ -263,6 +273,93 @@ export async function mountAccount(root) {
       });
       toast('Đã đổi mật khẩu. Các phiên khác đã bị đăng xuất.', 'success');
       host.querySelector('#pwd-form').reset();
+      loadDevices();
     } catch (err) { toast(err.message, 'error'); }
   };
+
+  /* ------------------------------------------------------------------
+   * THIẾT BỊ ĐANG ĐĂNG NHẬP (F16)
+   *
+   * Bảng `sessions` vốn đã có ip/ua/thời gian, nhưng trước đây không có
+   * đường nào đọc ra. Nay khách thấy được mình đang đăng nhập ở đâu và đá
+   * được từng máy.
+   * ------------------------------------------------------------------ */
+  async function loadDevices() {
+    const box = host.querySelector('[data-dev-list]');
+    if (!box) return;
+    let data;
+    try {
+      data = await api('/api/auth/sessions');
+    } catch (err) {
+      // Không chặn phần còn lại của trang nếu API này lỗi.
+      box.innerHTML = `<div class="empty-state"><p>${esc(err.message || 'Không tải được danh sách thiết bị')}</p></div>`;
+      return;
+    }
+    const list = data.sessions || [];
+    if (!list.length) {
+      box.innerHTML = '<div class="empty-state"><p>Chưa có thiết bị nào.</p></div>';
+      return;
+    }
+
+    const rowOf = (s) => `
+      <div class="dev-row${s.current ? ' dev-row-current' : ''}">
+        <div class="dev-main">
+          <span class="dev-name">${esc(s.device)}</span>
+          ${s.current ? '<span class="pill pill-green">Thiết bị này</span>' : ''}
+        </div>
+        <div class="dev-meta">
+          ${s.ip ? `<span class="mono">${esc(s.ip)}</span> · ` : ''}
+          Đăng nhập ${esc(timeAgo(s.created_at))}
+        </div>
+        ${s.current
+          ? '<span class="dev-hint">Đây là máy bạn đang dùng</span>'
+          : `<button class="btn btn-ghost btn-sm" data-revoke="${esc(s.id)}">Đăng xuất</button>`}
+      </div>`;
+
+    box.innerHTML = `
+      <div class="dev-list">${list.map(rowOf).join('')}</div>
+      ${list.filter((s) => !s.current).length
+        ? '<div class="dev-actions"><button class="btn btn-ghost btn-sm" data-revoke-others>'
+          + 'Đăng xuất tất cả thiết bị khác</button></div>'
+        : ''}
+      ${data.manyActive
+        ? '<p class="dev-warn">Có nhiều thiết bị cùng đăng nhập. Nếu bạn không nhận ra '
+          + 'thiết bị nào, hãy đăng xuất nó và đổi mật khẩu.</p>'
+        : ''}`;
+
+    box.querySelectorAll('[data-revoke]').forEach((btn) => {
+      btn.onclick = async () => {
+        const okToDo = await confirmDialog(
+          'Đăng xuất thiết bị',
+          'Thiết bị này sẽ phải đăng nhập lại. Tiếp tục?',
+          'Đăng xuất',
+        );
+        if (!okToDo) return;
+        try {
+          await api('/api/auth/sessions/' + encodeURIComponent(btn.dataset.revoke), { method: 'DELETE' });
+          toast('Đã đăng xuất thiết bị', 'success');
+          loadDevices();
+        } catch (err) { toast(err.message, 'error'); }
+      };
+    });
+
+    const othersBtn = box.querySelector('[data-revoke-others]');
+    if (othersBtn) {
+      othersBtn.onclick = async () => {
+        const okToDo = await confirmDialog(
+          'Đăng xuất tất cả thiết bị khác',
+          'Mọi máy khác sẽ phải đăng nhập lại. Thiết bị này vẫn giữ đăng nhập.',
+          'Đăng xuất hết',
+        );
+        if (!okToDo) return;
+        try {
+          const r = await api('/api/auth/sessions/revoke-others', { method: 'POST' });
+          toast(r.message || 'Đã đăng xuất các thiết bị khác', 'success');
+          loadDevices();
+        } catch (err) { toast(err.message, 'error'); }
+      };
+    }
+  }
+
+  loadDevices();
 }

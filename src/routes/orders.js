@@ -189,9 +189,18 @@ export async function deliverOrderItems(env, order) {
 
   // ===== BƯỚC 1: KIỂM TRA TRƯỚC KHI GIỮ HÀNG =====
   for (const item of items || []) {
-    const product = await env.DB.prepare(
-      'SELECT id, name, delivery_type, license_prefix, license_days FROM products WHERE id = ?'
-    ).bind(item.product_id).first();
+    let product;
+    try {
+      // `pid` có ở DB production mới; fallback giữ tương thích schema cũ.
+      product = await env.DB.prepare(
+        'SELECT id, name, delivery_type, pid, license_prefix, license_days FROM products WHERE id = ?'
+      ).bind(item.product_id).first();
+    } catch (e) {
+      if (!/no such column: pid/i.test(String(e?.message || e))) throw e;
+      product = await env.DB.prepare(
+        'SELECT id, name, delivery_type, license_prefix, license_days FROM products WHERE id = ?'
+      ).bind(item.product_id).first();
+    }
 
     if (!product) {
       throw new Error(`Sản phẩm "${item.product_name}" không còn tồn tại`);

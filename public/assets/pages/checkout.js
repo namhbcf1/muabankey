@@ -424,24 +424,79 @@ export function showQrPayment(host, data, created) {
   cdTimer = setInterval(tick, 1000);
   tick();
 
+  /*
+   * ===== PHÂN BIỆT 4 TRẠNG THÁI — KHÔNG gộp "đã thu tiền" với "đã cấp quyền" =====
+   *
+   * Bản cũ:
+   *     if (st === 'delivered' || st === 'paid') { showSuccess(...) }
+   * coi `paid` và `delivered` là MỘT. Nhưng `paid` nghĩa là TIỀN ĐÃ VÀO, còn
+   * quyền có được cấp hay chưa thì chưa biết — `paid` cũng là trạng thái mà
+   * cron đẩy về khi worker chết giữa lúc giao, hoặc khi giao thất bại và cần
+   * admin xử lý tay.
+   *
+   * Hệ quả thật: khách thấy "Thanh toán thành công — mở app là có", mở app
+   * không thấy gì, rồi gọi hỗ trợ. Tệ hơn: khách tưởng đã xong nên không bấm
+   * "Tôi đã chuyển khoản" và không biết mình đang chờ xử lý.
+   *
+   * Nay bốn trạng thái riêng, mỗi cái nói đúng sự thật:
+   *   delivered / active  -> quyền ĐÃ cấp        -> màn thành công
+   *   processing          -> đang cấp quyền      -> chờ, tự cập nhật
+   *   paid                -> tiền đã nhận, CHƯA cấp -> nói rõ đang chờ xử lý
+   *   refund*             -> cần hỗ trợ
+   */
   const poll = async () => {
     if (stopped) return;
     try {
       const o = await api(`/api/orders/${order.id}`);
       const st = o.order?.status;
-      if (st === 'delivered' || st === 'paid') {
+
+      if (st === 'delivered') {
         stopped = true;
         clearInterval(pollTimer);
         clearInterval(cdTimer);
         showSuccess(host, o.order);
         return;
       }
+
+      if (st === 'processing') {
+        stEl.innerHTML = '<div class="ck-st ck-st-wait">'
+          + '<strong>Đã nhận được tiền — đang cấp quyền…</strong>'
+          + '<span>Thường chỉ mất vài giây. Trang này tự cập nhật.</span></div>';
+        return;
+      }
+
+      if (st === 'paid') {
+        /*
+         * Tiền đã vào nhưng quyền chưa cấp (giao thất bại, hoặc worker chết
+         * giữa chừng và cron đẩy về đây). KHÔNG được nói "thành công".
+         */
+        stEl.innerHTML = '<div class="ck-st ck-st-warn">'
+          + '<strong>Đã nhận được tiền của bạn</strong>'
+          + '<span>Hệ thống đang hoàn tất cấp quyền. Nếu quá 15 phút chưa thấy '
+          + 'trong app, hãy gửi mã đơn <b>' + esc(order.code) + '</b> cho hỗ trợ.</span>'
+          + '<a class="btn btn-ghost btn-sm" href="#/support">Liên hệ hỗ trợ</a></div>';
+        return;
+      }
+
       if (st === 'cancelled' || st === 'expired') {
         stopped = true;
         clearInterval(pollTimer);
         clearInterval(cdTimer);
-        stEl.innerHTML = '<div style="font-size:13px;font-weight:700;color:#f87171">'
-          + 'Đơn đã đóng</div>';
+        stEl.innerHTML = '<div class="ck-st ck-st-err">'
+          + '<strong>Đơn đã đóng</strong>'
+          + '<span>Nếu bạn đã chuyển khoản, đừng lo — gửi mã đơn <b>'
+          + esc(order.code) + '</b> cho hỗ trợ để được cấp quyền.</span>'
+          + '<a class="btn btn-ghost btn-sm" href="#/support">Liên hệ hỗ trợ</a></div>';
+        return;
+      }
+
+      if (typeof st === 'string' && st.startsWith('refund')) {
+        stopped = true;
+        clearInterval(pollTimer);
+        clearInterval(cdTimer);
+        stEl.innerHTML = '<div class="ck-st ck-st-warn">'
+          + '<strong>Đơn đang được hoàn tiền</strong>'
+          + '<span>Bộ phận hỗ trợ sẽ liên hệ. Mã đơn <b>' + esc(order.code) + '</b>.</span></div>';
       }
     } catch { /* mạng lỗi -> thử lại */ }
   };

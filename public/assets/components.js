@@ -63,11 +63,35 @@ export function renderHeader() {
   </header>`;
 }
 
+/**
+ * Header được vẽ lại mỗi lần đăng nhập/đăng xuất, và `bindHeader()` gắn
+ * listener lên `window`/`document` — những thứ KHÔNG bị xoá khi header
+ * được thay bằng innerHTML.
+ *
+ * Trước đây không có gì gỡ chúng: mỗi lần refresh header lại cộng thêm một
+ * listener scroll + hai listener document, và chúng giữ tham chiếu tới các
+ * node header ĐÃ BỊ XOÁ. Sau vài lần đăng nhập/đăng xuất trong một phiên,
+ * một cú scroll kéo theo hàng chục handler chạy trên node mồ côi.
+ *
+ * Nay: giữ danh sách hàm gỡ và gọi hết trước khi gắn bộ mới.
+ */
+let headerDisposers = [];
+
+function disposeHeader() {
+  for (const off of headerDisposers) {
+    try { off(); } catch { /* node đã bị xoá — bỏ qua */ }
+  }
+  headerDisposers = [];
+}
+
 export function bindHeader() {
+  disposeHeader();
+
   const header = document.getElementById('main-header');
   if (header) {
     const onScroll = () => header.classList.toggle('scrolled', window.scrollY > 10);
     window.addEventListener('scroll', onScroll, { passive: true });
+    headerDisposers.push(() => window.removeEventListener('scroll', onScroll));
     onScroll();
   }
 
@@ -121,16 +145,22 @@ export function bindHeader() {
     mobileNav.querySelectorAll('a').forEach((a) => {
       a.addEventListener('click', () => setOpen(false));
     });
-    document.addEventListener('click', (e) => {
+    const onDocClick = (e) => {
       if (!mobileNav.classList.contains('open')) return;
       if (mobileNav.contains(e.target) || navToggle.contains(e.target)) return;
       setOpen(false);
-    });
-    document.addEventListener('keydown', (e) => {
+    };
+    const onDocKey = (e) => {
       if (e.key === 'Escape' && mobileNav.classList.contains('open')) {
         setOpen(false);
         navToggle.focus();
       }
+    };
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onDocKey);
+    headerDisposers.push(() => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onDocKey);
     });
   }
 }

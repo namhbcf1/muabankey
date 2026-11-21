@@ -351,3 +351,62 @@ export async function changePassword(env, request) {
   await audit(env, user.id, 'user.change_password', user.id, {});
   return ok({ message: 'Đã đổi mật khẩu' });
 }
+
+/* ==========================================================================
+ * QUẢN LÝ PHIÊN ĐĂNG NHẬP (F16)
+ *
+ * Trước đây khách không có cách nào biết mình đang đăng nhập ở đâu, và không
+ * có cách nào đá một máy ra. Đây là phần thiếu thật sự — bảng `sessions` vốn
+ * đã lưu ip/ua/thời gian.
+ * ========================================================================== */
+
+/** GET /api/auth/sessions — danh sách phiên còn hiệu lực. */
+export async function listSessions(env, request) {
+  const user = await requireUser(env, request);
+  const { listUserSessions } = await import('../lib/auth.js');
+  const sessions = await listUserSessions(env, user.id, request);
+  return ok({
+    sessions,
+    count: sessions.length,
+    /*
+     * Cảnh báo mềm: nhiều phiên đang sống cùng lúc có thể là dấu hiệu chia sẻ
+     * tài khoản. Không chặn gì — chỉ để khách thấy mà tự xử lý.
+     */
+    manyActive: sessions.length > 3,
+  });
+}
+
+/**
+ * DELETE /api/auth/sessions/:id — thu hồi MỘT phiên.
+ *
+ * Chỉ thu hồi được phiên của chính tài khoản đang đăng nhập (truy vấn luôn
+ * kèm user_id). Nếu thu hồi đúng phiên đang dùng thì cookie hiện tại cũng
+ * mất hiệu lực — trả `self: true` để client đưa khách về trang đăng nhập.
+ */
+export async function revokeSession(env, request, sessionId) {
+  const user = await requireUser(env, request);
+  const { revokeUserSession } = await import('../lib/auth.js');
+  const { removed, self } = await revokeUserSession(env, user.id, sessionId, request);
+  if (!removed) {
+    throw new ApiError(404, 'Không tìm thấy phiên này', 'SESSION_NOT_FOUND');
+  }
+  await audit(env, user.id, 'user.revoke_session', sessionId, { self });
+  return ok({
+    message: self ? 'Đã đăng xuất thiết bị này' : 'Đã đăng xuất thiết bị',
+    self,
+  });
+}
+
+/** POST /api/auth/sessions/revoke-others — đăng xuất mọi máy khác. */
+export async function revokeOtherSessionsRoute(env, request) {
+  const user = await requireUser(env, request);
+  const { revokeOtherSessions } = await import('../lib/auth.js');
+  const { removed } = await revokeOtherSessions(env, user.id, request);
+  await audit(env, user.id, 'user.revoke_other_sessions', user.id, { removed });
+  return ok({
+    message: removed
+      ? `Đã đăng xuất ${removed} thiết bị khác`
+      : 'Không có thiết bị nào khác đang đăng nhập',
+    removed,
+  });
+}

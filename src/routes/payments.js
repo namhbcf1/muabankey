@@ -530,10 +530,25 @@ export async function confirmOrderPaid(env, opts = {}) {
   }
 
   if (order.status === 'paid') {
-
-    // Đã xác nhận tiền, đang chờ giao tay -> thử giao lại
-    return await deliverAndFinish(env, order, { amount, source, adminId, now, txnRef });
-
+    /*
+     * GIÀNH ĐƠN NGUYÊN TỬ trước khi giao lại.
+     *
+     * Bản cũ gọi thẳng deliverAndFinish(). Hai webhook/admin request đồng thời
+     * đều thấy `paid`, cùng đọc delivered_keys còn rỗng, cùng grantFeature()
+     * rồi cùng chốt đơn -> cộng hạn hai lần và sinh hai license.
+     *
+     * Nay paid -> processing chỉ thành công cho MỘT request. Request còn lại
+     * thấy changes=0 và không được bước vào giao hàng.
+     */
+    const claim = await env.DB.prepare(
+      `UPDATE orders SET status = 'processing', processing_started_at = ?
+       WHERE id = ? AND status = 'paid'`
+    ).bind(now, order.id).run();
+    if (!claim.meta || claim.meta.changes !== 1) {
+      return { ok: true, duplicated: true, reason: 'DELIVERY_IN_PROGRESS', order };
+    }
+    const claimedOrder = { ...order, status: 'processing', processing_started_at: now };
+    return await deliverAndFinish(env, claimedOrder, { amount, source, adminId, now, txnRef });
   }
 
   // Nhận cả 'cancelled': tiền về muộn vẫn phải ghi sổ + báo admin,

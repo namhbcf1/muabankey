@@ -51,17 +51,12 @@ export function productCard(p) {
   </article>`;
 }
 
-/* Giỏ hàng đã bỏ: app.js bắt [data-add] -> Mua ngay. */
-export function bindProductCards(root, products) {
-  root.querySelectorAll('[data-add]').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const p = products.find((x) => x.id === btn.dataset.add);
-      if (p) void (p, 1);
-    });
-  });
-}
+/*
+ * `bindProductCards` đã xoá: thân hàm chỉ là no-op (`void (p, 1)`) từ khi giỏ
+ * hàng bị gỡ. Nút mua được xử lý tập trung ở `bindBuyNow()` (app.js) qua pha
+ * CAPTURE trên document, và `bindBuyNowCards()` (checkout.js) cho nút đã gắn
+ * listener riêng.
+ */
 
 export function renderHome() {
   return `
@@ -585,7 +580,6 @@ async function applyFeatured(root, products, bundleFailed) {
       });
     } else {
       featuredHost.innerHTML = `<div class="grid-products">${list.map(productCard).join('')}</div>`;
-      bindProductCards(featuredHost, list);
     }
 
     const popHost = root.querySelector('#home-popular');
@@ -593,7 +587,6 @@ async function applyFeatured(root, products, bundleFailed) {
     const popular = list.filter((p) => p.sold > 0).slice(0, 4);
     if (popular.length) {
       popHost.innerHTML = `<div class="grid-products">${popular.map(productCard).join('')}</div>`;
-      bindProductCards(popHost, popular);
     } else {
       const sec = popHost.closest('section');
       if (sec) sec.style.display = 'none';

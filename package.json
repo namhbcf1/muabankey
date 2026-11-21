@@ -2,6 +2,7 @@
   "name": "muabankey",
   "version": "1.1.0",
   "private": true,
+  "type": "module",
   "description": "MuaBanKey - Nền tảng mua bán bản quyền số tự động trên Cloudflare Workers",
   "scripts": {
     "dev": "wrangler dev",
@@ -12,7 +13,10 @@
     "tail": "wrangler tail",
     "test": "node test/run.mjs",
     "test:watch": "node --watch test/run.mjs",
-    "verify": "node test/run.mjs && node scripts/check-syntax.mjs"
+    "verify": "node test/run.mjs && node scripts/check-syntax.mjs",
+    "clean:css": "node scripts/clean-css.mjs",
+    "clean:css:media": "node scripts/clean-css-media.mjs",
+    "audit:license-days": "node scripts/audit-license-days.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

@@ -628,10 +628,10 @@ function openProductEditor(host, p) {
         </select></div>
       <div class="field"><label class="label" for="ed-licprefix">Tiền tố license</label>
         <input class="input" id="ed-licprefix" value="${esc(p && p.licensePrefix ? p.licensePrefix : 'AOE1')}" placeholder="AOE1"></div>
-      <div class="field"><label class="label" for="ed-licdays">Số ngày (bắt buộc &ge; 1)</label>
-        <input class="input" id="ed-licdays" type="number" min="1" step="1"
+      <div class="field"><label class="label" for="ed-licdays">Số ngày</label>
+        <input class="input" id="ed-licdays" type="number" min="0" step="1"
           value="${p && p.licenseDays !== undefined && p.licenseDays !== null ? p.licenseDays : 30}">
-        <span class="hint">Bỏ trống là LỖI. Muốn bán vĩnh viễn thì nhập đúng số <b>0</b>.</span></div>
+        <span class="hint">Nhập <b>0</b> nếu bán vĩnh viễn. Bỏ trống sẽ bị từ chối (tránh bán vĩnh viễn do quên).</span></div>
     </div>
     <div class="adm-check-row">
       <label class="adm-check" for="ed-active">

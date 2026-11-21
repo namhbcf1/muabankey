@@ -48,6 +48,15 @@ r.post('/api/auth/logout', auth.logout);
 r.get('/api/auth/me', auth.me);
 r.patch('/api/auth/profile', auth.updateProfile);
 r.post('/api/auth/change-password', auth.changePassword);
+/*
+ * QUẢN LÝ PHIÊN (F16).
+ *
+ * Trước đây khách không thấy mình đang đăng nhập ở đâu và không đá được máy
+ * lạ ra. Bảng `sessions` vốn đã lưu ip/ua/thời gian — chỉ thiếu phần đọc ra.
+ */
+r.get('/api/auth/sessions', auth.listSessions);
+r.post('/api/auth/sessions/revoke-others', auth.revokeOtherSessionsRoute);
+r.delete('/api/auth/sessions/:id', (env, req, p) => auth.revokeSession(env, req, p.id));
 
 /* ---------- Catalog ---------- */
 r.get('/api/stats', (env) => stats.publicStats(env));
@@ -238,8 +247,6 @@ r.post('/api/admin/topups/:id/reject', (env, req, p) => wallet.adminRejectTopup(
  */
 r.post('/api/admin/wallet/adjust', wallet.adminAdjustBalance);
 
-/* Xác nhận thanh toán TAY khi webhook trượt — đường cứu để không treo đơn. */
-r.post('/api/admin/orders/:id/confirm-payment', (env, req, p) => payments.adminConfirmPayment(env, req, p.id));
 
 /* Mã hoá key đã giao còn plaintext — chạy một lần sau khi bật KEY_ENC. */
 r.post('/api/admin/migrate-delivered-keys', orders.adminMigrateDeliveredKeys);

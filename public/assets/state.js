@@ -1,5 +1,5 @@
 /** Quản lý state toàn cục. */
-import { store, api, toast } from './lib.js';
+import { api } from './lib.js';
 
 export const state = {
   user: null,
@@ -11,111 +11,28 @@ export const state = {
    * mất sau ~650ms (nhấp nháy trạng thái sai).
    */
   authReady: false,
-  cart: store.get('mbk_cart', []),
   categories: [],
-  aiOpen: false,
   aiHistory: [],
 };
 
 const listeners = new Set();
+
+/**
+ * Theo dõi thay đổi state.
+ *
+ * Ghi chú: hiện chỉ `loadUser`/`loadCategories` gọi `notify()`; header tự vẽ
+ * lại qua sự kiện `app:refresh-header` (app.js). Hàm này giữ lại cho nơi khác
+ * cần phản ứng với state mà không phải thêm sự kiện DOM.
+ */
 export function subscribe(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
+
 export function notify() {
   for (const fn of listeners) {
     try { fn(state); } catch (e) { console.error(e); }
   }
-}
-
-/* ---------- Giỏ hàng ---------- */
-export function cartCount() {
-  return state.cart.reduce((s, i) => s + i.quantity, 0);
-}
-
-export function cartSubtotal() {
-  return state.cart.reduce((s, i) => s + i.price * i.quantity, 0);
-}
-
-export function saveCart() {
-  store.set('mbk_cart', state.cart);
-  notify();
-  renderCartBadge();
-}
-
-export function addToCart(product, qty = 1) {
-  // Sản phẩm hết hàng (kiểu key/account) thì không cho thêm vào giỏ
-  if (!product.inStock && product.deliveryType !== 'license' && product.deliveryType !== 'manual') {
-    toast('Sản phẩm đã hết hàng', 'error');
-    return false;
-  }
-
-  const existing = state.cart.find((i) => i.productId === product.id);
-  const isLicense = product.deliveryType === 'license';
-  const maxQty = isLicense ? 10 : product.deliveryType === 'manual' ? 20 : Math.max(0, product.stock);
-  if (maxQty < 1) {
-    toast('Sản phẩm đã hết hàng', 'error');
-    return false;
-  }
-  if (existing) {
-    const next = Math.min(existing.quantity + qty, maxQty, 20);
-    if (next === existing.quantity) {
-      toast(`Chỉ còn ${maxQty} sản phẩm trong kho`, 'error');
-      return false;
-    }
-    existing.quantity = next;
-  } else {
-    if (qty > maxQty) {
-      toast(`Chỉ còn ${maxQty} sản phẩm trong kho`, 'error');
-      return false;
-    }
-    state.cart.push({
-      productId: product.id,
-      slug: product.slug,
-      name: product.name,
-      price: product.price,
-      imageUrl: product.imageUrl,
-      quantity: qty,
-      stock: product.stock,
-      deliveryType: product.deliveryType,
-    });
-  }
-  saveCart();
-  toast(`Đã thêm "${product.name}" vào giỏ`, 'success');
-  return true;
-}
-
-export function updateCartQty(productId, qty) {
-  const item = state.cart.find((i) => i.productId === productId);
-  if (!item) return;
-  const max = item.deliveryType === 'license'
-    ? 10
-    : item.deliveryType === 'manual' ? 20 : Math.max(1, item.stock || 1);
-  if (qty <= 0) {
-    state.cart = state.cart.filter((i) => i.productId !== productId);
-  } else {
-    item.quantity = Math.min(qty, max);
-  }
-  saveCart();
-}
-
-export function removeFromCart(productId) {
-  state.cart = state.cart.filter((i) => i.productId !== productId);
-  saveCart();
-}
-
-export function clearCart() {
-  state.cart = [];
-  saveCart();
-}
-
-/* ---------- Badge ---------- */
-export function renderCartBadge() {
-  const badge = document.getElementById('cart-badge');
-  if (!badge) return;
-  const n = cartCount();
-  badge.textContent = n > 99 ? '99+' : String(n);
-  badge.style.display = n > 0 ? 'grid' : 'none';
 }
 
 /* ---------- Auth ---------- */
@@ -133,7 +50,6 @@ export async function loadUser() {
   notify();
   return state.user;
 }
-
 
 export async function loadCategories() {
   try {

@@ -415,14 +415,24 @@ export async function adminSaveProduct(env, request, productId = null) {
    * Hệ quả thật: khách trả tiền một gói 30 ngày và nhận quyền vĩnh viễn.
    *
    * Nay:
-   *   - Sản phẩm giao bằng license BẮT BUỘC có số ngày >= 1.
-   *   - Khi CẬP NHẬT mà client không gửi `licenseDays`, GIỮ NGUYÊN giá trị
-   *     đang có trong CSDL (không ghi đè bằng 0).
-   *   - Muốn bán vĩnh viễn thì phải nói rõ bằng `licenseDays: 0` — vẫn được
-   *     phép, nhưng là hành động có chủ đích chứ không phải do bỏ trống.
+   *   - CẬP NHẬT mà client không gửi `licenseDays` -> GIỮ NGUYÊN giá trị đang
+   *     có (không ghi đè bằng 0). Đây là lỗi gốc: sửa tên sản phẩm cũng làm
+   *     nó thành vĩnh viễn.
+   *   - TẠO MỚI mà bỏ trống -> TỪ CHỐI, bắt nhập số cụ thể.
+   *   - `licenseDays: 0` gửi RÕ RÀNG -> được phép, nghĩa là vĩnh viễn.
+   *
+   * VÌ SAO PHẢI CHO PHÉP 0:
+   *   Dữ liệu thật có sản phẩm "XARENA MAP SÁNG — Gói Vĩnh Viễn"
+   *   (`p-lic-forever`, 1.290.000đ, đã bán 2). Chặn hết mọi trường hợp 0 sẽ
+   *   làm admin không thể sửa giá/tên gói đó nữa. Cái cần chặn là 0 PHÁT
+   *   SINH DO BỎ TRỐNG, không phải 0 do người dùng cố ý nhập.
    */
   let licenseDays;
-  if (body.licenseDays !== undefined && body.licenseDays !== null && body.licenseDays !== '') {
+  const daysProvided =
+    body.licenseDays !== undefined && body.licenseDays !== null && body.licenseDays !== '';
+
+  if (daysProvided) {
+    // Người dùng nhập rõ — 0 là hợp lệ và có nghĩa "vĩnh viễn".
     licenseDays = int(body.licenseDays, 'licenseDays', { min: 0, max: 3650 });
   } else if (productId) {
     // Cập nhật mà không gửi số ngày -> giữ nguyên giá trị hiện có.
@@ -431,19 +441,23 @@ export async function adminSaveProduct(env, request, productId = null) {
     ).bind(productId).first();
     licenseDays = cur && cur.license_days !== null && cur.license_days !== undefined
       ? Number(cur.license_days)
-      : 0;
+      : null;
   } else {
     // Tạo mới mà bỏ trống -> không có giá trị cũ để giữ.
     licenseDays = deliveryType === 'license' ? null : 0;
   }
 
-  if (deliveryType === 'license' && !(Number(licenseDays) >= 1)) {
+  /*
+   * Chỉ từ chối khi KHÔNG XÁC ĐỊNH ĐƯỢC số ngày (null). Giá trị 0 do người
+   * dùng nhập rõ ràng thì đi qua — đó là gói vĩnh viễn có chủ đích.
+   */
+  if (deliveryType === 'license' && licenseDays === null) {
     throw new ApiError(
       400,
-      'Sản phẩm bán theo kỳ hạn phải có số ngày >= 1. ' +
-      'Để trống sẽ bị hiểu là vĩnh viễn — hãy nhập số ngày cụ thể.',
+      'Sản phẩm bán theo kỳ hạn phải có số ngày. ' +
+      'Nhập số ngày cụ thể, hoặc nhập 0 nếu muốn bán vĩnh viễn.',
       'LICENSE_DAYS_REQUIRED',
-      { licenseDays: licenseDays === null ? 'missing' : licenseDays }
+      { licenseDays: 'missing' }
     );
   }
 
