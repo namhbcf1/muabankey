@@ -34,9 +34,10 @@ Quy trình: đo hit 14 ngày → ẩn UI → trả 410 kèm hướng dẫn → g
 - Tách thêm trang eager thành lazy chunks khi có build pipeline ổn định.
 - Giảm inline style sau khi snapshot visual regression.
 
-## App EXE
+## App EXE — còn lại có kiểm soát
 
-- Tách dần `xa_nofog_pro.py`, `xa_grant.py`, `xa_arena_gui.py` thành `core/`, `features/`, `ui/` với test import ở mỗi bước.
-- Hợp nhất HWID/DPAPI/update client thành một implementation dùng chung.
+- Không tách cơ học `xa_nofog_pro.py`/`xa_grant.py`/`xa_arena_gui.py` trong cùng một release: đây là engine native/game, cần branch riêng + golden smoke test trước mỗi module move.
+- Tách dần HWID/DPAPI/update client thành implementation dùng chung, mỗi bước giữ API adapter cũ và có test import.
 - Gọi integrity/anti-tamper theo policy đã công bố; không fail-open im lặng.
 - Ma trận Windows 10/11, DPI, standard user, mạng lỗi, update rollback.
+- Chứng chỉ Authenticode thật + build/release manifest là điều kiện bên ngoài code; pipeline hiện đã fail-closed khi thiếu cert.
