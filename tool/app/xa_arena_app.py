@@ -339,7 +339,7 @@ def update_enforce():
         pb.show()
         st, msg = U.enforce_update(
             'https://xienhl.com', 'arena', APP_VERSION, exe,
-            on_status=_status)
+            on_status=_status, allow_offline=False)
     except Exception as e:
         pb.close()
         _ulog('enforce: EXCEPTION %s' % e)
