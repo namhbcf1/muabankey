@@ -52,7 +52,9 @@ npx wrangler deploy
 
 ### 0.3 Còn lại từ kế hoạch (chưa làm)
 
-`F10` admin tabs · `F11` checkout phân biệt trạng thái · `F12` SPA lifecycle · `F16` session inventory · `F17` xoá legacy (~2.500 dòng) · §6.1 dọn 96 MB rác · §6.3 gộp 19 file `.md` → 6 · §7 web polish · §8.1 tách module app.
+Đã hoàn tất: **F10** admin đã có tab Quyền tài khoản/Trial/Đối soát/Hoàn tiền; **F11** checkout tách delivered/processing/paid/refund; **F12** AbortController + cleanup header listener + confirmDialog; **F16** session inventory/revoke với 3 API + UI Tài khoản; **F17** cart module + 80+ CSS rule chết + route confirm-payment trùng đã xoá. Đã dọn output local và chuyển backup/keys khách ra ngoài repo.
+
+Còn lại: legacy backend routes chỉ được 410/xoá sau telemetry; gộp 19 file `.md` → 6; polish web sâu; tách module app EXE; mua chứng chỉ code signing để phát hành thật.
 
 ---
 
