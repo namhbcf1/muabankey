@@ -23,8 +23,8 @@ import { join } from 'node:path';
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8791';
 const DB = 'muabankey-db';
-const ADMIN_USER = process.env.ADMIN_USER || 'namhbcf';
-const ADMIN_PW = process.env.ADMIN_PASSWORD || 'namhbcf123';
+const ADMIN_USER = process.env.ADMIN_USER || '${QA_ADMIN_USER}';
+const ADMIN_PW = process.env.ADMIN_PASSWORD || '${QA_ADMIN_PASSWORD}';
 
 let pass = 0, fail = 0;
 const fails = [];

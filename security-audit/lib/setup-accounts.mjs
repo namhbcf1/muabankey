@@ -21,7 +21,7 @@ async function post(path, body, headers = {}) {
 }
 
 const accounts = [
-  { email: 'admin@muabankey.vn', password: 'namhbcf123', fullName: 'Nguyen Thanh Nam', role: 'admin', username: 'namhbcf' },
+  { email: 'admin@muabankey.vn', password: '${QA_ADMIN_PASSWORD}', fullName: 'Nguyen Thanh Nam', role: 'admin', username: '${QA_ADMIN_USER}' },
   { email: 'demo@muabankey.vn', password: 'Demo@123456', fullName: 'Khach Demo', role: 'user', username: 'demo', balance: 500000 },
   { email: 'staff@muabankey.vn', password: 'Staff@123456', fullName: 'Nhan Vien', role: 'staff', username: 'staff' },
   { email: 'user2@muabankey.vn', password: 'User2@123456', fullName: 'Khach Hai', role: 'user', username: 'user2' },

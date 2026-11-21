@@ -18,7 +18,7 @@ export function record(id, vector, verdict, severity, evidence, fix) {
 export function note(s) { notes.push(s); console.log('   .. ' + s); }
 
 export const ACCOUNTS = {
-  admin: { email: 'admin@muabankey.vn', password: 'namhbcf123', username: 'namhbcf' },
+  admin: { email: 'admin@muabankey.vn', password: '${QA_ADMIN_PASSWORD}', username: '${QA_ADMIN_USER}' },
   demo: { email: 'demo@muabankey.vn', password: 'Demo@123456', username: 'demo' },
   staff: { email: 'staff@muabankey.vn', password: 'Staff@123456', username: 'staff' },
   user2: { email: 'user2@muabankey.vn', password: 'User2@123456', username: 'user2' },

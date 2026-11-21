@@ -1,5 +1,5 @@
 -- Seed cho D1 LOCAL. Dùng hash PBKDF2 thật để test được luồng login.
--- admin: namhbcf / namhbcf123   |   demo: demo / Demo@123456
+-- admin: ${QA_ADMIN_USER} / ${QA_ADMIN_PASSWORD}   |   demo: demo / Demo@123456
 -- Nếu hash mẫu không khớp, script mjs sẽ tự đăng ký user mới qua API.
 
 DELETE FROM rate_limits;

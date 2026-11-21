@@ -9,8 +9,8 @@
  * Chạy: node scripts/test-login-lockout.mjs [baseUrl]
  */
 const BASE = process.argv[2] || 'http://127.0.0.1:8798';
-const USER = process.env.ADMIN_USER || 'namhbcf';
-const RIGHT = process.env.ADMIN_PASSWORD || 'namhbcf123';
+const USER = process.env.ADMIN_USER || '${QA_ADMIN_USER}';
+const RIGHT = process.env.ADMIN_PASSWORD || '${QA_ADMIN_PASSWORD}';
 const LIMIT = 10;
 
 let pass = 0, fail = 0;

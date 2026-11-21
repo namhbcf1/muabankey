@@ -38,7 +38,7 @@ const p = new Map();
   await ev(`(function(){
     var e=document.querySelector('#lg-email'), p=document.querySelector('#lg-pwd');
     if(!e) return 0;
-    e.value='namhbcf'; p.value='namhbcf123';
+    e.value='${QA_ADMIN_USER}'; p.value='${QA_ADMIN_PASSWORD}';
     e.dispatchEvent(new Event('input',{bubbles:true}));
     p.dispatchEvent(new Event('input',{bubbles:true}));
     document.querySelector('#login-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));

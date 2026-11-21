@@ -28,15 +28,15 @@ const TABS = [
   await B.send('Network.clearBrowserCookies');
   await B.goto('/login', 3000);
   await B.ev(`(function(){
-    document.querySelector('#lg-email').value='namhbcf';
-    document.querySelector('#lg-pwd').value='namhbcf123';
+    document.querySelector('#lg-email').value='${QA_ADMIN_USER}';
+    document.querySelector('#lg-pwd').value='${QA_ADMIN_PASSWORD}';
     document.querySelector('#login-submit').click();
     return 1;
   })()`);
   await B.wait(5500);
 
   const who = await B.ev(`fetch('/api/auth/me',{credentials:'same-origin'}).then(r=>r.json()).then(d=>d.user?{u:d.user.username,role:d.user.role}:null).catch(()=>null)`);
-  R.ok(16, 'Đăng nhập admin bằng namhbcf', who && who.u === 'namhbcf' && who.role === 'admin',
+  R.ok(16, 'Đăng nhập admin bằng ${QA_ADMIN_USER}', who && who.u === '${QA_ADMIN_USER}' && who.role === 'admin',
     who ? `${who.u}/${who.role}` : 'THẤT BẠI — không lấy được /api/auth/me');
   if (!who || who.role !== 'admin') {
     R.print(); writeFileSync('_qa_shots/report-C.json', JSON.stringify(R.rows, null, 2));

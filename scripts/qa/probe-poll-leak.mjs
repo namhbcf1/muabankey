@@ -10,7 +10,7 @@ import { connect } from './harness.mjs';
   await B.ev(`localStorage.clear(); 1`);
   await B.send('Network.clearBrowserCookies');
   await B.goto('/login', 3000);
-  await B.ev(`(function(){document.querySelector('#lg-email').value='namhbcf';document.querySelector('#lg-pwd').value='namhbcf123';document.querySelector('#login-submit').click();return 1})()`);
+  await B.ev(`(function(){document.querySelector('#lg-email').value='${QA_ADMIN_USER}';document.querySelector('#lg-pwd').value='${QA_ADMIN_PASSWORD}';document.querySelector('#login-submit').click();return 1})()`);
   await B.wait(5000);
 
   // tạo đơn -> trang QR

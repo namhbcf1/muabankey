@@ -1,7 +1,7 @@
 import { makeClient } from './lib/http.mjs';
 
 const c = makeClient('smoke');
-const r = await c.login('admin@muabankey.vn', 'namhbcf123');
+const r = await c.login('admin@muabankey.vn', '${QA_ADMIN_PASSWORD}');
 console.log('admin login:', r.status, JSON.stringify(r.json));
 console.log('cookie:', (c.cookie() || '').slice(0, 40));
 
