@@ -111,22 +111,22 @@ cả `tool/app/xa_arena_app.py` và `src/routes/arena-installer.js`.
 
 ---
 
-## 4. API license cho client
+## 4. API app hiện hành
 
-Giữ nguyên giao thức cũ, client không cần sửa gì ngoài `API_BASE`:
+Mô hình hiện hành là **tài khoản + entitlement**, không yêu cầu khách giữ hay nhập key. App dùng các endpoint sau:
 
-| Endpoint | Body | Trả về |
-|---|---|---|
-| `POST /api/activate` | `{key, hwid, app}` | `{ok, expires_at, activated_at, plan, forever, grace_hours, first_bind}` |
-| `POST /api/check` | `{key, hwid, app}` | như trên (không có `first_bind` khi đã bind) |
-| `POST /api/rebind` | `{key, hwid}` | `{ok, rebinds_left, expires_at}` |
-| `GET /api/license/health` | — | `{ok, at, licenses, server}` |
+| Endpoint | Dùng cho |
+|---|---|
+| `POST /api/auth/login` | Đăng nhập tài khoản |
+| `POST /api/auth/register` | Tạo tài khoản ngay trong app |
+| `POST /api/trial/session` | Bắt đầu/tiếp tục trial 1 ngày, idempotent |
+| `POST /api/account/token` | Nhận token theo quyền tài khoản + thiết bị hiện tại |
+| `GET /api/entitlement` | Đọc quyền từng tính năng |
+| `GET /api/app/version` | Kiểm tra manifest phát hành |
 
-**Quy tắc hạn dùng:** tính từ **lần kích hoạt đầu tiên** (`activated_at`), không phải lúc tạo key.
+Các endpoint `/api/activate`, `/api/check`, `/api/rebind`, `/api/xg/*` là **legacy adapter** cho bản app cũ; không dùng khi phát triển tính năng mới. Chỉ trả 410/xoá sau khi telemetry chứng minh không còn client cũ.
 
-**Grace offline:** 24 giờ kể từ lần check thành công cuối.
-
-**Ràng buộc máy:** 1 key = 1 HWID. HWID = SHA-256(`MachineGuid | BIOS serial | CPU brand | volume serial`).
+**Quyền:** trial 1 ngày hoặc gói mua được ghi vào `account_entitlements`; app nhận token theo feature `nofog`/`grant`. Ràng buộc thiết bị nằm ở `account_devices` và được áp dụng cả trên `/api/account/token`.
 
 ---
 
@@ -171,10 +171,10 @@ Thông tin ngân hàng đã cấu hình:
 > duy nhất đúng — QR sinh ra từ đó. Đổi TK thì sửa `/#/admin?tab=settings`,
 > đừng chỉ sửa tài liệu.
 
-1. Khách vào `/#/wallet`, nhập số tiền
-2. Hệ thống tạo mã `NAP<5 ký tự>` + QR vietqr.io
-3. Khách chuyển khoản đúng nội dung
-4. Webhook `POST /api/webhooks/sepay` xác thực bằng `Apikey <WEBHOOK_SECRET>` rồi cộng tiền
+1. Khách chọn sản phẩm và tạo đơn tại trang thanh toán
+2. Hệ thống tạo QR theo mã đơn + số tiền
+3. Khách chuyển khoản đúng nội dung đơn
+4. Webhook `POST /api/webhooks/sepay`/PayOS xác thực giao dịch, đối soát rồi cấp quyền tài khoản
 
 **Cần cấu hình:** trỏ webhook của SePay/Casso về
 ```
@@ -226,11 +226,11 @@ npx wrangler@4 r2 object put "muabankey-assets/files/xa_arena.exe" `
 node scripts/e2e.mjs https://muabankey.bangachieu2.workers.dev
 
 # 45 test license (mua → sinh key → client kích hoạt → admin)
-$env:WEBHOOK_SECRET=(Get-Content .webhook-secret.txt -Raw).Trim()
+$env:QA_WEBHOOK_SECRET = Read-Host 'QA webhook secret'
 node scripts/e2e-license.mjs
 ```
 
-Kết quả hiện tại: **57/57 + 45/45 = 102/102 PASS**.
+Kết quả bộ kiểm thử offline hiện tại: **17/17 suite PASS, 0 lỗi**. Các E2E production phải chạy với `QA_BASE` staging và credential qua biến môi trường.
 
 ---
 
@@ -238,7 +238,7 @@ Kết quả hiện tại: **57/57 + 45/45 = 102/102 PASS**.
 
 - Mật khẩu: PBKDF2-SHA256, **100.000 vòng** (giới hạn tối đa của Workers)
 - Session: cookie `HttpOnly; Secure; SameSite=Lax`, TTL 30 ngày
-- Rate limit: KV-based (đăng ký 20/h, đăng nhập 30/15p, toàn cục 300/phút)
+- Rate limit: KV/D1 fallback; đăng ký 300/giờ, đăng nhập 500/15 phút, toàn cục 3000/phút; bộ đếm có mốc hết hạn riêng
 - SQL: 100% prepared statement, không nối chuỗi
 - XSS: escape toàn bộ output qua `esc()`
 - Webhook: so sánh timing-safe
@@ -271,7 +271,7 @@ muabankey/
 │   ├── assets/pages/      # home, products, product-detail, auth,
 │   │                      # checkout, account, orders, wallet,
 │   │                      # licenses, support, admin
-│   └── img/               # 19 SVG sản phẩm
+│   └── img/               # 21 SVG sản phẩm
 ├── tool/                  # Source app XA ARENA (Python + PyQt6)
 │   ├── app/               # xa_arena_app/api/gui, trial_rules
 │   ├── grant/             # engine cộng tài nguyên
