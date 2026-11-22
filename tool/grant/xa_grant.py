@@ -1553,6 +1553,10 @@ def verify_build(h, base):
     dllch = struct.unpack('<H', dllch)[0]
     if dllch & 0x40:
         raise GrantError('DYNAMIC_BASE bat -> dia chi co the doi. DUNG.')
+    # X6: neu chua nap token -> SIG rong -> bo qua so sanh byte nguy hiem.
+    # Fail-closed: tu choi vao game khi khong co chu ky byte tu token.
+    if not SIG:
+        raise GrantError('chua nap chu ky byte tu token (SIG rong) — khong duoc vao game.')
     log('build', 'DllCharacteristics=0x%04X (ASLR %s, DEP %s)'
         % (dllch, 'OFF' if not dllch & 0x40 else 'ON',
            'OFF' if not dllch & 0x100 else 'ON'))
@@ -2804,7 +2808,9 @@ def do_grant_hidden(h, base, res, amount, dry_run=False, so=None):
     before = vals.get(res, 0.0)
     before = 0.0 if before is None else float(before)
 
-    _call_dispatch(h, sender, rec)
+    # X4: khoá engine tránh race ghi chéo [session+8] với GrantWorker/RefundWatcher.
+    with _ENGINE_LOCK:
+        _call_dispatch(h, sender, rec)
     log('hidden', 'da gui record 0x67/2')
 
     # doi engine ap dung (ring drain), roi doc lai
@@ -2934,7 +2940,10 @@ def do_farm(h, base, amount, dry_run=False, one_id=None):
     for f in farms:
         try:
             rec = build_record_obj_resource(f['id'], RES_ID_FOOD, amount)
-            _call_dispatch(h, sender, rec)
+            # X4: khoá engine tránh race ghi chéo [session+8] giữa các đối tượng
+            # và với GrantWorker/RefundWatcher đang chạy song song.
+            with _ENGINE_LOCK:
+                _call_dispatch(h, sender, rec)
             ok += 1
             print('  [ok] object %-10d +%d thit' % (f['id'], amount))
         except GrantError as e:

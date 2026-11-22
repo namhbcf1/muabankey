@@ -2746,6 +2746,13 @@ except Exception:
     _GAME_LOCK = _threading.RLock()
 
 
+class MODULEINFO(ctypes.Structure):
+    """Thong tin module lay tu GetModuleInformation (dung de kiem tra pham vi ghi)."""
+    _fields_ = [('lpBaseOfDll', ctypes.c_void_p),
+                ('SizeOfImage', ctypes.c_size_t),
+                ('EntryPoint', ctypes.c_void_p)]
+
+
 def game_lock():
     """Khoá ghi game — dùng CHUNG với module tài nguyên khi có."""
     return _GAME_LOCK
@@ -2769,6 +2776,11 @@ def _write_at_locked(h, addr, data):
     ok = False
     try:
         ok = wr(h, addr, data)
+        # N2: doc lai xac nhan byte da ghi dung khong (chong ghi biu/that bai im lang)
+        if ok:
+            _verify = rd(h, addr, len(data))
+            if _verify != data:
+                ok = False
     finally:
         d = wt.DWORD()
         kernel32.VirtualProtectEx(h, ctypes.c_void_p(addr), len(data), old.value,
@@ -2843,6 +2855,15 @@ def patch(h, base, site, restore=False):
     orig = bytes.fromhex(orig_s)
     pat = bytes.fromhex(pat_s)
     addr = base + (va - PREFERRED_BASE)
+    # N1: kiem tra dia chi ghi nam trong pham vi module game (khong ghi vao ngoai .text)
+    _mi = MODULEINFO()
+    if kernel32.GetModuleInformation(h, ctypes.c_void_p(base),
+                                     ctypes.byref(_mi), ctypes.sizeof(_mi)):
+        _mod_base = int(_mi.lpBaseOfDll)
+        _mod_end = _mod_base + int(_mi.SizeOfImage)
+        if addr < _mod_base or addr + len(want) > _mod_end:
+            return 'out-of-bounds: 0x%08X (module 0x%08X-0x%08X)' % (
+                addr, _mod_base, _mod_end)
     want = orig if restore else pat
     other = pat if restore else orig
     cur = rd(h, addr, len(want))

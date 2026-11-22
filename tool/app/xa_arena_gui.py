@@ -676,9 +676,17 @@ class PatchWorker(QThread):
                     try:
                         import xa_arena_api as _API
                         okS, whyS = _API.server_recheck(self._ent)
-                    except Exception:
-                        okS, whyS = True, ''     # lỗi -> không cắt oan
+                    except Exception as e:
+                        _tech_file('server_recheck exception: %s' % e)
+                        okS, whyS = False, 'network'
                     if not okS:
+                        terminal = str(whyS or '').lower() in {
+                            'session_moved', 'revoked', 'expired', 'account_locked',
+                            'no_licence', 'trial_expired',
+                        }
+                        if not terminal:
+                            _tech_file('server_recheck technical: %s' % whyS)
+                            continue
                         self._expired = True
                         # Chi tiết (mã lỗi server) chỉ ghi ra file; khách
                         # nhận câu tiếng Việt cụ thể, không phải mã kỹ thuật.
@@ -783,13 +791,16 @@ class PatchWorker(QThread):
         # Đây là điểm then chốt: license hết hạn mà không trả byte thì
         # map vẫn sáng tới khi tắt game -> lộ hoàn toàn.
         if self.patched and self.h:
-            try:
-                NF.apply_set(self.h, self.base, self.sites, True, 'all',
-                             quiet=True)
+            changed, bad = NF.apply_set(self.h, self.base, self.sites, True,
+                                        'all', quiet=True)
+            if not bad:
                 self.log.emit('Tắt map sáng.')
-            except Exception:
-                pass
-            self.patched = False
+                self.patched = False
+            else:
+                # N3: khong nuot loi khoi phuc byte — gui biet bo nhieu game
+                # van con byte da va, tranh gui thong tin sai cho GUI.
+                self.log.emit('Khong tra duoc byte goc: %s'
+                              % ' '.join(bad))
         self._close()
 
         # Báo GUI nếu dừng vì hết hạn (không phải do người dùng tắt)
@@ -1195,6 +1206,115 @@ class LoginDialog(QDialog):
         return self.mode == 'register'
 
 
+class LoginWindow(LoginDialog):
+    """CỬA SỔ ĐĂNG NHẬP RIÊNG — mở TRƯỚC app, không lộ gì của app.
+
+    CHỦ SHOP CHỐT: "chưa đăng nhập thì che toàn màn hình, chỉ còn form đăng
+    nhập/đăng ký" và "cửa sổ riêng, mở trước app".
+
+    Khác `LoginDialog` (hộp thoại đè lên cửa sổ chính) ở hai điểm:
+
+      1. Đây là cửa sổ ĐẦU TIÊN — `ArenaWindow` chưa được tạo. Từ chối =
+         thoát app, không có màn hình app nào phía sau.
+      2. Chỉ `accept()` KHI ĐĂNG NHẬP THÀNH CÔNG. `LoginDialog` accept ngay
+         khi bấm nút rồi để bên gọi tự chạy worker; ở đây worker chạy ngay
+         trong cửa sổ này, sai mật khẩu thì cửa sổ ở lại cho nhập lại.
+
+    Dùng lại NGUYÊN form của `LoginDialog` (cùng ô nhập, cùng kiểm tra phía
+    client, cùng nút chuyển chế độ) để không có hai bản logic lệch nhau.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent, mode='login')
+        self.setWindowTitle('XA ARENA')
+        self.setModal(True)
+        self._worker = None
+        self._busy = False
+        self._cancel_pending = False
+
+    def _set_busy(self, busy, text=''):
+        self._busy = bool(busy)
+        for w in (self.e_user, self.e_pass, self.e_pass2,
+                  self.btn_ok, self.btn_switch):
+            try:
+                w.setEnabled(not busy)
+            except Exception:
+                pass
+        try:
+            self.btn_ok.setText(text or ('Đang xử lý…' if busy else
+                                         ('Tạo tài khoản'
+                                          if self.mode == 'register'
+                                          else 'Đăng nhập')))
+        except Exception:
+            pass
+
+    def _on_ok(self):
+        """Kiểm tra phía client, rồi ĐĂNG NHẬP THẬT trong luồng nền."""
+        if self._busy:
+            return
+        u = self.e_user.text().strip()
+        p = self.e_pass.text()
+        if not u or not p:
+            self.lbl_err.setText('Nhập đủ tên đăng nhập và mật khẩu.')
+            return
+        is_reg = self.mode == 'register'
+        if is_reg:
+            if len(u) < 3:
+                self.lbl_err.setText('Tên đăng nhập phải có ít nhất 3 ký tự.')
+                return
+            if len(p) < 6:
+                self.lbl_err.setText('Mật khẩu phải có ít nhất 6 ký tự.')
+                return
+            if p != self.e_pass2.text():
+                self.lbl_err.setText('Hai lần nhập mật khẩu không khớp.')
+                return
+
+        self.lbl_err.setText('')
+        self._set_busy(True)
+        self._worker = LoginWorker(u, p, self, register=is_reg)
+        self._worker.done.connect(self._on_done)
+        self._worker.start()
+
+    def reject(self):
+        """Cancel safely; never delete a dialog while its worker is running."""
+        worker = getattr(self, '_worker', None)
+        if worker is not None and worker.isRunning():
+            self._cancel_pending = True
+            self._set_busy(True, 'Đang dừng…')
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        self.reject()
+        if getattr(self, '_worker', None) is not None and self._worker.isRunning():
+            event.ignore()
+        else:
+            event.accept()
+
+    def _on_done(self, ok, msg):
+        if getattr(self, '_cancel_pending', False):
+            self._worker = None
+            super().reject()
+            return
+        # MẤT MẠNG ngay ở bước đăng nhập -> cùng chính sách: báo rồi thoát.
+        # Không có ngoại lệ "thử lại khi có mạng", vì app chưa từng chạy.
+        if not ok and str(msg or '').strip().lower() in (
+                'network', 'timeout', 'offline'):
+            self._set_busy(False)
+            QMessageBox.warning(
+                self, 'Cần kết nối mạng',
+                'Phần mềm bắt buộc phải có mạng để đăng nhập và sử dụng.\n\n'
+                'Không kết nối được máy chủ. Kiểm tra mạng rồi mở lại '
+                'phần mềm.\n\nPhần mềm sẽ đóng sau khi bấm OK.')
+            self.reject()
+            return
+        if ok:
+            self.accept()
+            return
+        self._set_busy(False)
+        self.lbl_err.setText(msg or 'Không đăng nhập được. Thử lại.')
+
+
 # ---------------------------------------------------------------------------
 # Cửa sổ chính
 # ---------------------------------------------------------------------------
@@ -1233,11 +1353,12 @@ class ArenaWindow(QWidget):
         self._quota_exp = 0
         self._free_state = ''
         self._free_over = False
-        self._ent_sig = None
-        self._last_rt = 0.0
-        self._toast_seq = 0
+        self._quota = {}
+        self._quota_res = {}
+        self._quota_exp = 0
         self._quota_visible = False
-        self._first_apply = True
+        self._is_trial_ent = False
+        self._trial_state = ''
         # ------------------------------------------------------------------
         # _kicked     : tài khoản đang dùng ở MÁY KHÁC -> máy này bị đá ra.
         #               Khi True: ẩn hết chức năng + khối dùng thử, chỉ còn
@@ -1361,13 +1482,14 @@ class ArenaWindow(QWidget):
         top.addWidget(brana, 1, Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_login = T.btn('Đăng nhập', 'primary')
-        self.btn_login.setFixedWidth(116)
+        self.btn_login.setFixedWidth(124)
         self.btn_login.clicked.connect(self._do_login)
         top.addWidget(self.btn_login, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Nút ĐĂNG XUẤT: chỉ hiện khi đã đăng nhập.
         self.btn_logout = T.btn('Thoát', 'ghost')
-        self.btn_logout.setFixedWidth(72)
+        self.btn_logout.setMinimumWidth(96)
+        self.btn_logout.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.btn_logout.setToolTip('Đăng xuất tài khoản')
         self.btn_logout.clicked.connect(self._do_logout)
         self.btn_logout.hide()
@@ -1400,17 +1522,8 @@ class ArenaWindow(QWidget):
         self.btn_buy.hide()
         top.addWidget(self.btn_buy, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        # Nút ĐĂNG NHẬP / ĐĂNG XUẤT
-        self.btn_key = T.btn('Đăng nhập', 'ghost')
-        self.btn_key.setFixedWidth(88)
-        self.btn_key.setToolTip('Đăng nhập tài khoản — app tự lấy quyền')
-        self.btn_key.clicked.connect(self._do_login)
-        top.addWidget(self.btn_key, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        # Thanh trên cao CỐ ĐỊNH: nếu để layout tự co giãn, khoảng trống
-        # thừa sẽ dồn xuống dưới header (đã thấy khi chạy thật).
         hdr = QWidget()
-        hdr.setFixedHeight(48)
+        hdr.setMinimumHeight(48)
         hdr.setLayout(top)
         top.setContentsMargins(0, 0, 0, 0)
         root.addWidget(hdr, 0)
@@ -1421,7 +1534,7 @@ class ArenaWindow(QWidget):
         sl = QVBoxLayout(st)
         sl.setContentsMargins(14, 10, 14, 10)
         sl.setSpacing(3)
-        self.lbl_state = T.label('● Đang kiểm tra…', 'warn')
+        self.lbl_state = T.label('● Đang kiểm tra…', 'warn', wrap=True)
         f = self.lbl_state.font()
         f.setBold(True)
         f.setPointSize(11)
@@ -1429,7 +1542,7 @@ class ArenaWindow(QWidget):
         sl.addWidget(self.lbl_state)
         st_row = QHBoxLayout()
         st_row.setSpacing(8)
-        self.lbl_right = T.label('Chưa có quyền', 'mute')
+        self.lbl_right = T.label('Chưa có quyền', 'mute', wrap=True)
         st_row.addWidget(self.lbl_right, 1)
         # Chỉ hiện khi lần kiểm tra trước THẤT BẠI — để câu hướng dẫn
         # "bấm Kiểm tra lại" luôn có nút thật mà bấm.
@@ -1451,53 +1564,31 @@ class ArenaWindow(QWidget):
         self.box_toast.hide()
         root.addWidget(self.box_toast, 0)
 
-        # ===== DÙNG THỬ: CÒN BAO NHIÊU LƯỢT =====
-        # Chủ shop: "hiện rõ còn bao nhiêu lần free ... hết free hiện lên
-        # nút nhận thêm lượt". MỘT khối riêng, chữ to, không giấu trong
-        # tooltip. Khối này CHỈ nói số liệu thật, không đoán.
+        # ===== TRẠNG THÁI QUYỀN — MỘT DÒNG DUY NHẤT =====
+        #
+        # CHỦ SHOP CHỐT: bỏ "trial theo giao diện" — không còn card
+        # "Map sáng ● 0/10", "Tài nguyên ● 3/10", không còn nút
+        # "Nhận thêm lượt". Trial giờ là quyền của TÀI KHOẢN (1 ngày, cả 2
+        # sản phẩm), nên chỉ cần một dòng cho khách biết còn bao lâu.
+        #
+        # Nội dung do `_render_quota()` đặt:
+        #   Dùng thử · còn 23h12m
+        #   Đã mua · còn 27 ngày
+        #   Đã hết dùng thử
+        #   Máy này đã dùng đủ 3 lượt thử
         self.box_quota = T.card()
         self.box_quota.hide()
         ql = QVBoxLayout(self.box_quota)
         ql.setContentsMargins(14, 9, 14, 9)
         ql.setSpacing(3)
 
-        q_top = QHBoxLayout()
-        q_top.setSpacing(8)
-        q_top.addWidget(T.label('Dùng thử', 'dim'), 0)
-        q_top.addStretch(1)
-        # "1 lượt = 1 giờ" — khách phải biết TRƯỚC khi bấm nhận.
-        self.lbl_trial_sec = T.label('', 'mute')
-        q_top.addWidget(self.lbl_trial_sec, 0)
-        ql.addLayout(q_top)
-
-        # Hai dòng sản phẩm: mỗi dòng "Tên  ● 10/10"
-        self.lbl_q_nofog = T.label('', 'dim')
-        self.lbl_q_grant = T.label('', 'dim')
-        ql.addWidget(self.lbl_q_nofog)
-        ql.addWidget(self.lbl_q_grant)
-
-        q_top2 = QHBoxLayout()
-        q_top2.setSpacing(8)
-        q_top2.addWidget(T.label('', 'dim'), 0)
-        self.lbl_quota = T.label('chưa bật', 'warn')
-        _qfont = self.lbl_quota.font()
+        self.lbl_quota_line = T.label('', 'dim', wrap=True)
+        _qfont = self.lbl_quota_line.font()
         _qfont.setBold(True)
-        _qfont.setPointSize(12)
-        self.lbl_quota.setFont(_qfont)
-        q_top2.addWidget(self.lbl_quota, 0)
-        ql.addLayout(q_top2)
+        self.lbl_quota_line.setFont(_qfont)
+        ql.addWidget(self.lbl_quota_line)
 
-        self.lbl_quota_sub = T.label('', 'mute')
-        ql.addWidget(self.lbl_quota_sub)
-
-        # Nút CHÍNH khi hết lượt. Chữ đúng như chủ shop yêu cầu.
-        self.btn_more = T.btn('Nhận thêm lượt', 'primary')
-        self.btn_more.setFixedHeight(38)
-        self.btn_more.setToolTip('Xin thêm lượt dùng thử cho máy này')
-        self.btn_more.clicked.connect(self._do_more)
-        self.btn_more.hide()
-        ql.addWidget(self.btn_more)
-        _fix_height(self.box_quota, 16)
+        _fix_height(self.box_quota, 12)
         root.addWidget(self.box_quota, 0)
 
         # ===== KHỐI MAP SÁNG (ẩn nếu không có quyền) =====
@@ -1945,48 +2036,65 @@ class ArenaWindow(QWidget):
         return TR.quota_line(w, q, run_sec, API.fmt_quota, API.fmt_left)
 
     def _render_quota(self):
-        """Vẽ khối DÙNG THỬ: thời lượng + CẢ HAI sản phẩm. Không bịa số."""
-        
-        # --- Nhãn thời lượng: "1 lượt = 1 giờ" (từ server) ---
+        """Vẽ MỘT DÒNG trạng thái quyền. Không bịa số, không hiện lượt.
+
+        CHỦ SHOP CHỐT: bỏ hẳn "trial theo giao diện" (card 0/10 + nút
+        "Nhận thêm lượt"). Nay chỉ một dòng:
+
+            Dùng thử · còn 23h12m
+            Đã mua · còn 27 ngày
+            Đã hết dùng thử
+            Máy này đã dùng đủ N lượt thử
+
+        Số liệu lấy từ QUYỀN TÀI KHOẢN (`expires_at` server trả trong
+        /api/entitlement), KHÔNG đọc bảng đếm lượt theo HWID cũ nữa.
+        """
+        line = ''
+        role = 'dim'
+
         try:
-            _lbl = TR.sec_label((self._quota, self._quota_res))
-            self.lbl_trial_sec.setText(
-                ('1 lượt = %s' % _lbl) if _lbl else '')
+            if getattr(self, '_kicked', False):
+                line, role = '', 'dim'
+            elif self._free_state in ('device_limit', 'exhausted', 'banned',
+                                      'used_before', 'not_eligible'):
+                # Không được trial vì đúng lý do nào -> nói đúng lý do đó.
+                if self._free_state == 'device_limit':
+                    line = 'Máy này đã dùng đủ lượt thử'
+                elif self._free_state == 'not_eligible':
+                    line = 'Tài khoản không thuộc diện dùng thử'
+                else:
+                    line = 'Đã hết dùng thử'
+                role = 'err'
+            else:
+                left_sec = self._left_sec_now()
+                is_trial = False
+                try:
+                    is_trial = bool(getattr(self, '_is_trial_ent', False))
+                except Exception:
+                    is_trial = False
+                if left_sec > 0:
+                    line = ('Dùng thử · còn ' if is_trial else 'Đã mua · còn ') \
+                        + API.fmt_left(left_sec)
+                    role = 'ok' if not is_trial else 'warn'
+                elif self._free_state == 'expired':
+                    line, role = 'Đã hết dùng thử', 'err'
+                elif self.nofog_ready or self.grant_ready:
+                    line, role = 'Đã mua', 'ok'
+        except Exception:
+            line = ''
+
+        try:
+            self.lbl_quota_line.setText(line)
+            self.lbl_quota_line.setProperty(
+                'role', {'ok': 'ok', 'warn': 'warn', 'err': 'err'}
+                .get(role, 'dim'))
+            self.lbl_quota_line.style().unpolish(self.lbl_quota_line)
+            self.lbl_quota_line.style().polish(self.lbl_quota_line)
         except Exception:
             pass
 
-        # --- Hai dòng sản phẩm ---
-        try:
-            for which, lbl in (('nofog', getattr(self, 'lbl_q_nofog', None)),
-                               ('xagrant', getattr(self, 'lbl_q_grant', None))):
-                if lbl is None:
-                    continue
-                txt, role, has = self._quota_line(which)
-                self._set_role_text(lbl, txt, role)
-                lbl.setVisible(has)
-        except Exception:
-            pass
-
-        # --- Dòng tổng (giữ lại cho tương thích; ẩn nếu đã có 2 dòng trên) ---
-        try:
-            self.lbl_quota.setText('')
-            self.lbl_quota.setVisible(False)
-        except Exception:
-            pass
-
-        sub = self._quota_res_text()
-        try:
-            self.lbl_quota_sub.setText(sub)
-            self.lbl_quota_sub.setVisible(bool(sub))
-        except Exception:
-            pass
-
-        # Khối dùng thử chỉ có nghĩa khi khách CHƯA có đủ quyền trả phí.
-        # Bị đá sang máy khác thì KHÔNG hiện khối này: máy này không còn
-        # quyền dùng tài khoản, hiện "còn N lượt" chỉ gây hiểu nhầm.
-        show = TR.trial_card_visible(
-            bool(self.nofog_ready), bool(self.grant_ready),
-            bool(getattr(self, '_kicked', False)))
+        # Chỉ hiện dòng khi có gì để nói; bị đá sang máy khác thì ẩn.
+        show = bool(line) and not bool(getattr(self, '_kicked', False))
         if show != self._quota_visible:
             self._quota_visible = show
             try:
@@ -2022,7 +2130,6 @@ class ArenaWindow(QWidget):
         # ------------------------------------------------------------------
         if getattr(self, '_kicked', False):
             try:
-                self.btn_more.setVisible(False)
                 self.btn_buy.setVisible(False)
                 self.btn_recheck.setVisible(False)
                 self.btn_login.setText('Đăng nhập lại')
@@ -2032,44 +2139,21 @@ class ArenaWindow(QWidget):
             self._rt_retune()
             return
         # ------------------------------------------------------------------
-        # LỖI ĐÃ SỬA: trước đây chỉ hiện nút khi ĐÃ HẾT lượt.
+        # CHỈ CÒN MỘT NÚT: "Mua" (chủ shop chốt — bỏ nút "Nhận thêm lượt").
         #
-        # Khách còn 10/10 lượt dùng thử tài nguyên (chưa dùng lần nào)
-        # nhưng chưa có quyền tài nguyên ⇒ KHÔNG có nút nào ⇒ không thể
-        # bật dùng thử ⇒ tưởng "bản dùng thử không có tài nguyên".
-        #
-        # Nay: hiện nút khi hết lượt, HOẶC còn lượt cho sản phẩm chưa có.
+        # Trial giờ là quyền của TÀI KHOẢN, cấp tự động 1 lần; không có
+        # chuyện "xin thêm lượt" nữa. Hết quyền -> mở web mua gói.
         # ------------------------------------------------------------------
-        # ------------------------------------------------------------------
-        # NÚT PHẢI THEO SẢN PHẨM CÒN THIẾU, KHÔNG THEO `ready`.
-        #
-        # LỖI ĐÃ SỬA: `ready = nofog_ready or grant_ready`. Khách có map
-        # sáng (ready=True) mà thiếu tài nguyên ⇒ `need_more` luôn False
-        # ⇒ KHÔNG BAO GIỜ có nút nhận dùng thử tài nguyên. Đó đúng là
-        # trường hợp chủ shop gặp: "không có cộng gỗ thịt vàng".
-        # ------------------------------------------------------------------
-        # Toàn bộ quyết định nằm ở `xa_trial_rules.primary_buttons` —
-        # file này chỉ lấy trạng thái rồi đưa vào hàm thuần.
-        need_more, need_buy = TR.primary_buttons(
-            bool(self.nofog_ready), bool(self.grant_ready),
-            bool(self._free_over), self._trial_claimable(),
-            self._missing_product())
-        try:
-            self.btn_more.setVisible(need_more)
-        except Exception:
-            pass
+        need_buy = not (bool(self.nofog_ready) or bool(self.grant_ready))
         try:
             self.btn_buy.setVisible(need_buy)
-            role = 'ghost' if need_more else 'primary'
+            role = 'primary'
             if str(self.btn_buy.property('role') or '') != role:
                 self.btn_buy.setProperty('role', role)
                 self.btn_buy.style().unpolish(self.btn_buy)
                 self.btn_buy.style().polish(self.btn_buy)
         except Exception:
             pass
-        # LỖI ĐÃ SỬA: hiện/ẩn btn_more làm chiều cao khối đổi, nhưng không
-        # ai tính lại layout ⇒ nút bị cắt (đo được: cao 71 trong khi
-        # sizeHint cần 96). Phải _relayout() sau khi đổi.
         try:
             self._relayout()
         except Exception:
@@ -2245,6 +2329,29 @@ class ArenaWindow(QWidget):
         except Exception:
             pass
 
+    def _begin_shutdown(self):
+        """Idempotent shutdown preparation for every exit path."""
+        if getattr(self, '_shutdown_started', False):
+            return
+        self._shutdown_started = True
+        self._closing = True
+        try:
+            self._x2_off()
+        except Exception:
+            pass
+        for name in ('_tick', '_rt'):
+            timer = getattr(self, name, None)
+            try:
+                if timer is not None:
+                    timer.stop()
+            except Exception:
+                pass
+        try:
+            self._stop_patcher_wait()
+        except Exception:
+            pass
+        self._stop_all_workers()
+
     def _state(self, text, kind='info'):
         # LỖI ĐÃ SỬA: 'info' trước đây map sang 'warn' -> trạng thái bình
         # thường ("Đang chờ game…") hiện màu cảnh báo.
@@ -2255,6 +2362,57 @@ class ArenaWindow(QWidget):
         self.lbl_state.style().unpolish(self.lbl_state)
         self.lbl_state.style().polish(self.lbl_state)
         self._sync_toggle(text)
+
+    # ---------------- mất mạng -> báo rồi TẮT app ----------------
+
+    def _fatal_offline(self, why=''):
+        """Mất mạng: báo "bắt buộc phải có mạng", khách bấm OK là THOÁT app.
+
+        CHỦ SHOP CHỐT: "offline thì báo phần mềm bắt buộc phải có mạng và ok
+        xong tắt phần mềm, không cho sử dụng nữa". Áp cho MỌI gói, kể cả
+        khách đã trả tiền — không còn cửa sổ ân hạn offline nào.
+
+        Vì sao phải là hộp thoại CHẶN (modal) chứ không phải dòng log: nếu chỉ
+        ghi log rồi ẩn giao diện, khách vẫn có thể bấm sang chức năng khác
+        trong lúc app chưa thoát. Hộp thoại buộc khách đọc lý do, bấm OK rồi
+        app mới đóng.
+
+        Chống gọi lặp: đặt cờ `_closing` TRƯỚC khi hiện hộp thoại, để các
+        worker/đồng hồ đang chạy không gọi lại hàm này và chồng nhiều hộp.
+        """
+        if getattr(self, '_closing', False):
+            return
+        self._fatal_pending = True
+        self._say('Mất kết nối máy chủ.')
+        try:
+            self._tech('offline: %s' % (why or ''))
+        except Exception:
+            pass
+        try:
+            self._begin_shutdown()
+        except Exception:
+            pass
+        try:
+            QMessageBox.warning(
+                self,
+                'Cần kết nối mạng',
+                'Phần mềm bắt buộc phải có mạng để sử dụng.\n\n'
+                'Không kết nối được máy chủ. Kiểm tra mạng (Wi-Fi, dây '
+                'mạng, tường lửa) rồi mở lại phần mềm.\n\n'
+                'Phần mềm sẽ đóng sau khi bấm OK.',
+            )
+        except Exception:
+            pass
+        try:
+            self.close()
+        except Exception:
+            pass
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+        except Exception:
+            pass
 
     def _sync_toggle(self, text):
         """Nút map sáng phản ánh TRẠNG THÁI THẬT, không phải ý định.
@@ -2445,28 +2603,26 @@ class ArenaWindow(QWidget):
                 except Exception:
                     has_sess = False
                 # ------------------------------------------------------------------
-                # MÁY ĐÃ CÓ KEY (mua hoặc dùng thử cũ) -> KHÔNG xin dùng thử.
+                # MÁY ĐÃ CÓ KEY — ĐÃ BỎ KHỎI MÔ HÌNH (chủ shop chốt:
+                # "xóa mọi thứ về KEY đi, giờ gán gói vào tài khoản luôn").
                 #
-                # LỖI ĐÃ SỬA: trước đây chỉ xét `token_ok()`. Token hết hạn
-                # (hoặc máy vừa cài lại) là app đi xin dùng thử NGAY, tiêu
-                # mất 1 lượt của khách dù trong máy đã có key trả phí chờ
-                # kích hoạt. Nay có key là đi thẳng vào đường kích hoạt.
+                # Trước đây nhánh này cho phép vào app khi máy có key cũ
+                # (TR-/XAGR-) mà KHÔNG cần đăng nhập — trái yêu cầu "bắt buộc
+                # đăng nhập". Nay bỏ hẳn: mọi máy đều phải có phiên đăng nhập.
+                #
+                # `has_tok` vẫn đọc để biết đã có token cục bộ (dùng cho
+                # đường tài khoản bên dưới), nhưng KHÔNG còn dùng để bỏ qua
+                # bước đăng nhập.
                 # ------------------------------------------------------------------
-                has_key = False
-                try:
-                    has_key = bool(_A.local_token_key() or _A.load_manual_key())
-                except Exception:
-                    has_key = False
 
                 # ----------------------------------------------------------
                 # BẮT BUỘC ĐĂNG NHẬP (chủ shop chốt).
                 #
-                # Trước đây không đăng nhập vẫn xin được dùng thử theo máy.
-                # Nay dùng thử tính theo TÀI KHOẢN, nên không có phiên thì
-                # không có gì để tính -> phải đăng nhập (hoặc tạo tài khoản
-                # ngay trong app).
+                # Dùng thử tính theo TÀI KHOẢN, nên không có phiên thì không
+                # có gì để tính -> phải đăng nhập (hoặc tạo tài khoản ngay
+                # trong app). Không có ngoại lệ cho key cũ.
                 # ----------------------------------------------------------
-                if not has_sess and not has_key:
+                if not has_sess:
                     need_login = True
                 else:
                     # ------------------------------------------------------------------
@@ -2558,18 +2714,13 @@ class ArenaWindow(QWidget):
             getattr(self, '_trial_pref', ''))
 
     def _do_more(self):
-        """Nút "Nhận thêm lượt": xin thêm lượt dùng thử cho máy này.
+        """ĐÃ BỎ — không còn nút "Nhận thêm lượt" (chủ shop chốt).
 
-        Server giữ luật (tối đa 10 lượt mỗi máy, mỗi sản phẩm) nên đây chỉ
-        là việc XIN LẠI — không phá được giới hạn. Nếu server từ chối thì
-        app nói đúng lý do và đưa nút Mua ra.
+        Trial là quyền của tài khoản, cấp tự động một lần. Giữ hàm rỗng để
+        mọi chỗ gọi cũ không gây AttributeError; nếu lỡ được gọi thì chỉ
+        hỏi lại quyền (đường chỉ-đọc), không xin thêm lượt.
         """
-        if self._workers_busy():
-            return
-        self.btn_more.setEnabled(False)
-        _set_button_text(self.btn_more, 'Đang xin thêm…')
-        self._state('Đang xin thêm lượt…', 'warn')
-        self._start_free_trial()
+        self._refresh_entitlement(allow_free=False, quiet=True)
 
     def _after_free_trial(self, r, key=None):
         """Xin dùng thử xong: báo cho khách biết còn bao nhiêu, rồi hỏi quyền."""
@@ -2577,13 +2728,6 @@ class ArenaWindow(QWidget):
         state = str(r.get('state') or '')
         msg = str(r.get('msg') or '')
         self._free_state = state or 'error'
-
-        # Nút phải LUÔN bấm lại được, dù kết quả nào.
-        try:
-            self.btn_more.setEnabled(True)
-            _set_button_text(self.btn_more, 'Nhận thêm lượt')
-        except Exception:
-            pass
 
         # Số lượt server vừa trả -> hiện ngay, không chờ vòng làm mới sau.
         q = dict(self._quota or {})
@@ -2633,6 +2777,26 @@ class ArenaWindow(QWidget):
         self.ent = d or {}
         self.has_nofog = bool(d.get('hasNofog'))
         self.has_grant = bool(d.get('hasGrant'))
+
+        # ------------------------------------------------------------------
+        # TRẠNG THÁI DÙNG THỬ THEO TÀI KHOẢN -> MỘT DÒNG DUY NHẤT.
+        #
+        # Server trả `trial` trong /api/entitlement (shapeAccountEntitlements):
+        #   { state: 'active'|'ended'|'available', expires_at, left_sec }
+        # Nguồn này THAY cho bảng đếm lượt theo HWID cũ (đã bị xoá).
+        # ------------------------------------------------------------------
+        try:
+            _tr = d.get('trial') or {}
+            _state = str(_tr.get('state') or '')
+            self._is_trial_ent = (_state == 'active')
+            _exp = int(_tr.get('expires_at') or 0)
+            if _exp > 0:
+                self._quota_exp = _exp
+            self._trial_state = _state
+            if _state == 'ended':
+                self._free_state = 'expired'
+        except Exception:
+            pass
 
         # ------------------------------------------------------------------
         # BỊ ĐÁ SANG MÁY KHÁC -> ĐI ĐƯỜNG RIÊNG, KHÔNG rơi vào nhánh thường.
@@ -2782,6 +2946,17 @@ class ArenaWindow(QWidget):
             if code == 'NEED_LOGIN_OR_KEY':
                 self._say('Bấm "Đăng nhập" để bắt đầu.')
                 self.btn_recheck.hide()
+            elif _code_low == 'network':
+                # ------------------------------------------------------------------
+                # MẤT MẠNG -> BÁO RỒI TẮT APP (chủ shop chốt).
+                #
+                # Không còn "Kiểm tra lại" hay ân hạn offline: phần mềm bắt
+                # buộc phải có mạng. Hàm này tự đặt cờ _closing để không bị
+                # gọi lặp từ các worker đang chạy song song.
+                # ------------------------------------------------------------------
+                self._fatal_offline(d.get('error') or d.get('msg') or code)
+                self._release_worker('ent_worker')
+                return
             elif code:
                 # Lỗi khi hỏi quyền: nêu bước tiếp theo theo ĐÚNG nguyên nhân
                 # và hiện nút "Kiểm tra lại" để câu hướng dẫn có chỗ bấm.
@@ -2798,7 +2973,7 @@ class ArenaWindow(QWidget):
                     self._tech('entitlement: %s' % (
                         d.get('error') or d.get('msg') or code))
                     self._say('Không lấy được quyền. Thử lại sau.')
-                self.btn_recheck.setVisible(_code_low == 'network')
+                self.btn_recheck.setVisible(False)
 
         self._refresh_license_label()
         # Trạng thái đã đổi -> cân lại nút chính + nhịp tự làm mới.
@@ -2879,7 +3054,7 @@ class ArenaWindow(QWidget):
         self._state(API.state_text_for('session_moved'), 'err')
         self.btn_recheck.hide()
         self.btn_logout.hide()
-        self.btn_more.hide()
+        # btn_more đã bỏ cùng nút "Nhận thêm lượt" — không còn widget này.
         self.btn_buy.hide()
         try:
             self.box_toast.hide()
@@ -2937,10 +3112,11 @@ class ArenaWindow(QWidget):
         if str(self._free_state or '') in ('exhausted', 'banned'):
             return False        # server đã từ chối -> không xin lại liên tục
         try:
-            if API.has_paid_licence(d) or API.token_ok():
-                return False
-            # Máy đã có KEY trong tay -> đi đường kích hoạt, đừng tiêu lượt.
-            if API.local_token_key() or API.load_manual_key():
+            # Quyền của TÀI KHOẢN là nguồn sự thật duy nhất. Token/key còn
+            # sót trên đĩa KHÔNG được dùng để chặn dùng thử: chúng có thể
+            # là của tài khoản trước, và server mới là bên quyết định tài
+            # khoản này đã từng nhận trial hay chưa.
+            if API.has_paid_licence(d):
                 return False
             # Tài khoản ĐÃ có quyền (mô hình mới) -> không xin dùng thử.
             if bool(d.get('hasNofog')) or bool(d.get('hasGrant')):
@@ -3361,6 +3537,18 @@ class ArenaWindow(QWidget):
         code = _API.error_code_of(code or msg)
         step = _API.next_step_for(code)
 
+        # ------------------------------------------------------------------
+        # MẤT MẠNG -> BÁO RỒI TẮT APP (chủ shop chốt: bắt buộc online).
+        #
+        # Xét TRƯỚC khi tính hiện/ẩn chức năng: nếu không có mạng thì mọi
+        # kết luận "chưa có quyền" bên dưới đều vô nghĩa, và khách phải thấy
+        # đúng lý do thật (mất mạng), không phải "license sai máy".
+        # ------------------------------------------------------------------
+        if str(code or '').lower() in ('network', 'offline',
+                                       'offline_grace_expired'):
+            self._fatal_offline(msg)
+            return
+
         if getattr(self, 'has_nofog', False):
             try:
                 nofog_ready = _API.token_ok()
@@ -3404,8 +3592,12 @@ class ArenaWindow(QWidget):
         self.grant_ready = False
         # Đăng xuất là khách CHỦ ĐỘNG -> không còn ở trạng thái bị đá.
         self._kicked = False
-        self._allow_free = False
-        self._free_state = ''
+        self._quota = {}
+        self._quota_res = {}
+        self._quota_exp = 0
+        self._quota_visible = False
+        self._is_trial_ent = False
+        self._trial_state = ''
         # TẮT "Mua 2 tính 1" — nếu không, watcher vẫn chạy 200ms/lần và
         # vẫn hoàn tài nguyên dù khách đã đăng xuất (mất quyền).
         try:
@@ -4471,21 +4663,7 @@ class ArenaWindow(QWidget):
                 return
             self._tech('close: patcher still running')
 
-        self._closing = True
-        # Dừng 2 đồng hồ TRƯỚC khi dọn worker: không để nó xếp thêm việc.
-        # Tắt "Mua 2 tính 1" trước khi đóng
-        try:
-            self._x2_off()
-        except Exception:
-            pass
-        for _attr in ('_tick', '_rt'):
-            try:
-                _w = getattr(self, _attr, None)
-                if _w is not None:
-                    _w.stop()
-            except Exception:
-                pass
-        self._stop_all_workers()
+        self._begin_shutdown()
         ev.accept()
 
 
@@ -4502,6 +4680,34 @@ def run_gui():
         pass
     app = QApplication.instance() or QApplication(sys.argv)
     T.apply_theme(app)
+
+    # ------------------------------------------------------------------
+    # CỔNG ĐĂNG NHẬP — CỬA SỔ RIÊNG, MỞ TRƯỚC APP.
+    #
+    # CHỦ SHOP CHỐT: "mọi thứ bảo phải đăng kí hay đăng nhập khi vào app",
+    # "che toàn màn hình, chỉ còn form đăng nhập/đăng ký", "cửa sổ riêng,
+    # mở trước app".
+    #
+    # `ArenaWindow` CHƯA được tạo ở đây, nên khách không thấy bất kỳ phần
+    # nào của app trước khi đăng nhập. Huỷ = thoát hẳn, không có chế độ
+    # dùng-không-tài-khoản.
+    #
+    # Đã có phiên (nhớ đăng nhập) -> vào thẳng, không bắt gõ lại.
+    # ------------------------------------------------------------------
+    try:
+        has_session = bool(API.session_cookie())
+    except Exception:
+        has_session = False
+
+    if not has_session:
+        lw = LoginWindow()
+        if lw.exec() != QDialog.DialogCode.Accepted:
+            return 0                 # huỷ đăng nhập = không mở app
+        try:
+            lw.deleteLater()
+        except Exception:
+            pass
+
     w = ArenaWindow()
     w.show()
     return app.exec()
