@@ -1487,10 +1487,12 @@ class ArenaWindow(QWidget):
         top.addWidget(self.btn_login, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Nút ĐĂNG XUẤT: chỉ hiện khi đã đăng nhập.
-        self.btn_logout = T.btn('Thoát', 'ghost')
+        # Nhấn thì xoá session + quyền, hiện lại nút Đăng nhập để khách đăng
+        # nhập tài khoản khác (không đóng app).
+        self.btn_logout = T.btn('Đăng xuất', 'ghost')
         self.btn_logout.setMinimumWidth(96)
         self.btn_logout.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        self.btn_logout.setToolTip('Đăng xuất tài khoản')
+        self.btn_logout.setToolTip('Đăng xuất để đăng nhập tài khoản khác')
         self.btn_logout.clicked.connect(self._do_logout)
         self.btn_logout.hide()
         top.addWidget(self.btn_logout, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -1771,15 +1773,6 @@ class ArenaWindow(QWidget):
         self.log.setSizePolicy(QSizePolicy.Policy.Expanding,
                                QSizePolicy.Policy.Expanding)
         root.addWidget(self.log, 1)
-
-        # ===== Chân =====
-        foot = QHBoxLayout()
-        foot.addStretch(1)
-        self.btn_close = T.btn('Đóng', 'ghost')
-        self.btn_close.setFixedWidth(80)
-        self.btn_close.clicked.connect(self.close)
-        foot.addWidget(self.btn_close)
-        root.addLayout(foot)
 
         T.set_dark_titlebar(self)
         T.center_on_screen(self)
