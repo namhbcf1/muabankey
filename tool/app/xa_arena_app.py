@@ -54,7 +54,7 @@ APP_NAME = 'XA ARENA'
 #
 # 3.1.0.0 — BỎ HOÀN TOÀN KEY: quyền theo TÀI KHOẢN, đăng ký ngay trong app,
 #           dùng thử 1 ngày cho cả map sáng + tài nguyên.
-APP_VERSION = '3.1.0.0'
+APP_VERSION = '3.2.2.1'
 
 MUTEX_NAME = 'XArena_AllInOne_v1'
 
