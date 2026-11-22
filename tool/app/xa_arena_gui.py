@@ -2629,6 +2629,23 @@ class ArenaWindow(QWidget):
                     need_login = True
                 else:
                     # ------------------------------------------------------------------
+                    # ĐÃ CÓ PHIÊN -> HIỆN NÚT ĐĂNG XUẤT NGAY, KHÔNG CHỜ WORKER.
+                    #
+                    # LỖI ĐÃ SỬA: trước đây nút Đăng xuất chỉ hiện sau khi
+                    # EntitlementWorker trả về. Nếu worker bị lỗi network hay
+                    # server chậm, app tắt trước khi vẽ nút -> khách không thấy
+                    # nút Đăng xuất để đổi tài khoản. Nay: hiện nút ngay khi
+                    # phát hiện session, sau đó worker chạy ngầm để cập nhật
+                    # quyền.
+                    # ------------------------------------------------------------------
+                    try:
+                        self.btn_login.setText('Đã đăng nhập')
+                        self.btn_login.setEnabled(False)
+                        self.btn_logout.setVisible(True)
+                        self.btn_logout.setEnabled(True)
+                    except Exception:
+                        pass
+                    # ------------------------------------------------------------------
                     # F06 — ĐÃ ĐĂNG NHẬP MÀ CHƯA CÓ TOKEN: PHẢI THỬ QUYỀN ĐÃ MUA TRƯỚC
                     #
                     # Bản cũ đặt `need_free = (not has_tok) and has_sess` rồi đi
@@ -2951,13 +2968,20 @@ class ArenaWindow(QWidget):
                 self.btn_recheck.hide()
             elif _code_low == 'network':
                 # ------------------------------------------------------------------
-                # MẤT MẠNG -> BÁO RỒI TẮT APP (chủ shop chốt).
+                # MẤT MẠNG -> BÁO RỒI CHO NGƯỜI DÙNG THỬ LẠI, KHÔNG TẮT OÁN.
                 #
-                # Không còn "Kiểm tra lại" hay ân hạn offline: phần mềm bắt
-                # buộc phải có mạng. Hàm này tự đặt cờ _closing để không bị
-                # gọi lặp từ các worker đang chạy song song.
+                # Chủ shop chốt: phần mềm bắt buộc phải có mạng. Nhưng nếu app
+                # tắt ngay khi mở, khách không thể đăng nhập lại hoặc thử lại
+                # được. Nay: hiện hộp thoại lỗi, nút "Kiểm tra lại" để khách
+                # bấm khi mạng đã hồi phục. Chỉ tắt app nếu khách bấm "Đóng"
+                # hộp thoại hoặc bấm X cửa sổ.
                 # ------------------------------------------------------------------
-                self._fatal_offline(d.get('error') or d.get('msg') or code)
+                self._state('Mất kết nối mạng — vui lòng kiểm tra lại', 'err')
+                self._say('Không kết nối được máy chủ. Kiểm tra mạng rồi bấm "Kiểm tra lại".')
+                self.btn_recheck.setVisible(True)
+                self.btn_recheck.setText('Kiểm tra lại')
+                self.btn_recheck.clicked.disconnect() if self.btn_recheck.receivers(self.btn_recheck.clicked) > 0 else None
+                self.btn_recheck.clicked.connect(lambda _c=False: self._refresh_entitlement())
                 self._release_worker('ent_worker')
                 return
             elif code:
