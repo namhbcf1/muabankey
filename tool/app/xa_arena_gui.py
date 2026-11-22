@@ -285,25 +285,35 @@ def _fix_height(w, extra=0):
 
 
 def app_icon():
-    """Icon tia sét trên nền gradient."""
+    """Icon app: khôi Spartan xanh da trời + vàng (từ tool/app/xa_arena_icon.svg)."""
     pm = QPixmap(64, 64)
     pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    g = QLinearGradient(0, 0, 64, 64)
-    g.setColorAt(0, QColor(T.COLORS.get('accent', '#2f81f7')))
-    g.setColorAt(1, QColor(T.COLORS.get('accent_hi', '#5b9dff')))
-    p.setBrush(QBrush(g))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawRoundedRect(2, 2, 60, 60, 14, 14)
-    p.setBrush(QBrush(QColor('#ffffff')))
-    from PyQt6.QtGui import QPolygonF
-    from PyQt6.QtCore import QPointF
-    poly = QPolygonF([QPointF(36, 12), QPointF(22, 36),
-                      QPointF(31, 36), QPointF(27, 52),
-                      QPointF(43, 28), QPointF(34, 28)])
-    p.drawPolygon(poly)
-    p.end()
+    try:
+        svg_path = os.path.join(_HERE, 'xa_arena_icon.svg')
+        if os.path.exists(svg_path):
+            pm.load(svg_path)
+    except Exception:
+        pass
+    # Fallback: vẽ tia sét nếu không load được SVG
+    if pm.isNull():
+        pm = QPixmap(64, 64)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        g = QLinearGradient(0, 0, 64, 64)
+        g.setColorAt(0, QColor(T.COLORS.get('accent', '#2f81f7')))
+        g.setColorAt(1, QColor(T.COLORS.get('accent_hi', '#5b9dff')))
+        p.setBrush(QBrush(g))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(2, 2, 60, 60, 14, 14)
+        p.setBrush(QBrush(QColor('#ffffff')))
+        from PyQt6.QtGui import QPolygonF
+        from PyQt6.QtCore import QPointF
+        poly = QPolygonF([QPointF(36, 12), QPointF(22, 36),
+                          QPointF(31, 36), QPointF(27, 52),
+                          QPointF(43, 28), QPointF(34, 28)])
+        p.drawPolygon(poly)
+        p.end()
     return QIcon(pm)
 
 
